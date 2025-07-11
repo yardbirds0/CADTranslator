@@ -4,34 +4,27 @@ using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.GraphicsInterface;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace CADTranslator
 {
     public class SmartLayoutJig : DrawJig
     {
-        // 输入参数
-        private readonly string _originalText;
-        private readonly Point3d _basePoint; // 左上角基点
-        private readonly double _textHeight;
-        private readonly double _widthFactor;
-        private readonly ObjectId _textStyleId;
+        public List<Tuple<string, bool, bool, int>> FinalLineInfo { get; private set; }
+        public double FinalIndent { get; private set; }
 
-        // 内部状态
-        private Point3d _currentMousePoint; // 跟随鼠标移动的点
+        private readonly List<CadCommands.ParagraphInfo> _paragraphInfos;
 
-        // 输出结果
-        public double FinalWidth { get; private set; }
-        public string FinalFormattedText { get; private set; }
+        private readonly Point3d _basePoint;
+        private Point3d _currentPoint;
 
-        public SmartLayoutJig(string text, Point3d basePoint, double height, double widthFactor, ObjectId textStyleId)
+        public SmartLayoutJig(List<CadCommands.ParagraphInfo> paragraphInfos, Point3d basePoint)
         {
-            _originalText = text;
+            _paragraphInfos = paragraphInfos;
             _basePoint = basePoint;
-            _currentMousePoint = basePoint; // 初始鼠标点等于基点
-            _textHeight = height;
-            _widthFactor = widthFactor;
-            _textStyleId = textStyleId;
+            _currentPoint = basePoint;
+            FinalLineInfo = new List<Tuple<string, bool, bool, int>>();
         }
 
         protected override SamplerStatus Sampler(JigPrompts prompts)
@@ -42,56 +35,158 @@ namespace CADTranslator
                 UseBasePoint = true,
                 Cursor = CursorType.Crosshair
             };
-
             var result = prompts.AcquirePoint(options);
+            if (result.Status != PromptStatus.OK) return SamplerStatus.Cancel;
 
-            if (result.Status == PromptStatus.OK)
+            if (_currentPoint.IsEqualTo(result.Value, new Tolerance(1e-4, 1e-4)))
             {
-                // 仅当鼠标位置变化时才更新
-                if (_currentMousePoint.IsEqualTo(result.Value, new Tolerance(1e-4, 1e-4)))
-                {
-                    return SamplerStatus.NoChange;
-                }
-                _currentMousePoint = result.Value;
-                return SamplerStatus.OK;
+                return SamplerStatus.NoChange;
             }
-            return SamplerStatus.Cancel;
+            _currentPoint = result.Value;
+            return SamplerStatus.OK;
         }
 
-        // WorldDraw负责绘制实时预览
         protected override bool WorldDraw(WorldDraw draw)
         {
-            // 1. 计算当前排版宽度
-            double currentWidth = Math.Abs(_currentMousePoint.X - _basePoint.X);
-            if (currentWidth < 1e-4) currentWidth = 1.0; // 防止宽度为0
+            double currentWidth = Math.Abs(_currentPoint.X - _basePoint.X);
+            if (currentWidth < 1.0) currentWidth = 1.0;
 
-            // 2. 为了预览性能，我们使用一个MText来显示排版效果
-            using (var previewMText = new MText())
+            if (FinalIndent <= 0 && _paragraphInfos.Any())
             {
-                previewMText.Location = _basePoint;
-                previewMText.TextHeight = _textHeight;
-                previewMText.TextStyleId = _textStyleId;
-                previewMText.Width = currentWidth; // 设置MText的宽度，让它自动换行
-
-                // 3. 计算悬挂缩进值 (2个字符宽度)
-                double indentValue = 0;
-                using (var tempDbText = new DBText { TextString = "WW", Height = _textHeight, TextStyleId = _textStyleId, WidthFactor = _widthFactor })
+                using (var tempDbText = new DBText { TextString = "WW", Height = _paragraphInfos[0].Height, TextStyleId = _paragraphInfos[0].TextStyleId, WidthFactor = _paragraphInfos[0].WidthFactor })
                 {
-                    indentValue = tempDbText.GeometricExtents.MaxPoint.X - tempDbText.GeometricExtents.MinPoint.X;
+                    var extents = tempDbText.GeometricExtents;
+                    if (extents != null) FinalIndent = extents.MaxPoint.X - extents.MinPoint.X;
                 }
+            }
 
-                // 4. 应用MText的段落悬挂缩进格式
-                string formattingCode = $"\\pi0,{indentValue};";
-                previewMText.Contents = formattingCode + _originalText.Replace('\n', ' ');
+            FinalLineInfo.Clear();
+            Point3d currentDrawingPosition = _basePoint;
 
-                // 5. 绘制预览图形
-                draw.Geometry.Draw(previewMText);
+            for (int p_idx = 0; p_idx < _paragraphInfos.Count; p_idx++)
+            {
+                var paraInfo = _paragraphInfos[p_idx];
+                if (string.IsNullOrEmpty(paraInfo.Text)) continue;
 
-                // 保存最终结果，供Jig结束后使用
-                FinalWidth = currentWidth;
-                FinalFormattedText = previewMText.Contents; // 保存带格式代码的文本
+                var linesInParagraph = GetWrappedLines(paraInfo.Text, currentWidth, paraInfo.Height, paraInfo.WidthFactor, paraInfo.TextStyleId);
+                bool applyIndent = linesInParagraph.Count > 1;
+
+                for (int i = 0; i < linesInParagraph.Count; i++)
+                {
+                    string lineText = linesInParagraph[i];
+                    double xOffset = (i > 0 && applyIndent) ? FinalIndent : 0;
+
+                    using (var previewText = new DBText())
+                    {
+                        previewText.TextString = lineText;
+                        previewText.Height = paraInfo.Height;
+                        previewText.WidthFactor = paraInfo.WidthFactor;
+                        previewText.TextStyleId = paraInfo.TextStyleId;
+                        previewText.Position = currentDrawingPosition + new Vector3d(xOffset, 0, 0);
+                        previewText.HorizontalMode = TextHorizontalMode.TextLeft;
+                        previewText.VerticalMode = TextVerticalMode.TextTop;
+                        previewText.AlignmentPoint = previewText.Position;
+
+                        draw.Geometry.Draw(previewText);
+                    }
+
+                    FinalLineInfo.Add(new Tuple<string, bool, bool, int>(lineText, applyIndent, i == 0, p_idx));
+
+                    currentDrawingPosition += new Vector3d(0, -paraInfo.Height * 1.5, 0);
+                }
             }
             return true;
         }
+
+        // ▼▼▼ 核心修改：最终的、绝对可靠的换行算法 ▼▼▼
+        public static List<string> GetWrappedLines(string text, double maxWidth, double textHeight, double widthFactor, ObjectId textStyleId)
+        {
+            var lines = new List<string>();
+            if (string.IsNullOrEmpty(text)) return lines;
+
+            using (var tempText = new DBText { Height = textHeight, WidthFactor = widthFactor, TextStyleId = textStyleId })
+            {
+                int lineStart = 0;
+                while (lineStart < text.Length)
+                {
+                    // 1. 二分法高效查找最大容纳字符数
+                    int low = 1;
+                    int high = text.Length - lineStart;
+                    int fitCount = 0;
+
+                    while (low <= high)
+                    {
+                        int mid = low + (high - low) / 2;
+                        tempText.TextString = text.Substring(lineStart, mid);
+                        var extents = tempText.GeometricExtents;
+
+                        if (extents != null && (extents.MaxPoint.X - extents.MinPoint.X) <= maxWidth)
+                        {
+                            fitCount = mid;
+                            low = mid + 1;
+                        }
+                        else
+                        {
+                            high = mid - 1;
+                        }
+                    }
+
+                    if (fitCount == 0 && (text.Length - lineStart) > 0)
+                    {
+                        fitCount = 1;
+                    }
+
+                    int breakPos = lineStart + fitCount;
+
+                    // 2. 智能回溯，仅在需要时（即在英文单词或数字序列中间）触发
+                    if (breakPos < text.Length)
+                    {
+                        // 判断断点是否在一个连续的ASCII字母或数字序列的中间
+                        bool isMidWord = IsAsciiLetterOrDigit(text[breakPos]) && IsAsciiLetterOrDigit(text[breakPos - 1]);
+
+                        if (isMidWord)
+                        {
+                            // 如果是，才回溯寻找上一个非字母或数字的字符（通常是空格或标点）
+                            int lastWordBreak = -1;
+                            for (int i = breakPos - 1; i > lineStart; i--)
+                            {
+                                if (!IsAsciiLetterOrDigit(text[i]))
+                                {
+                                    lastWordBreak = i + 1;
+                                    break;
+                                }
+                            }
+
+                            // 如果找到了更早的断点，就在那里断开
+                            if (lastWordBreak > lineStart)
+                            {
+                                breakPos = lastWordBreak;
+                            }
+                            // 如果没找到（一个超长的英文单词），就只能在fitCount处硬换行
+                        }
+                    }
+
+                    // 3. Unicode代理项对安全检查
+                    if (breakPos > lineStart && breakPos < text.Length)
+                    {
+                        if (char.IsHighSurrogate(text[breakPos - 1]) && char.IsLowSurrogate(text[breakPos]))
+                        {
+                            breakPos--;
+                        }
+                    }
+
+                    lines.Add(text.Substring(lineStart, breakPos - lineStart));
+                    lineStart = breakPos;
+                }
+            }
+            return lines;
+        }
+
+        // 辅助方法，判断一个字符是否是ASCII字母或数字
+        private static bool IsAsciiLetterOrDigit(char c)
+        {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        }
+        // ▲▲▲ 修改结束 ▲▲▲
     }
 }

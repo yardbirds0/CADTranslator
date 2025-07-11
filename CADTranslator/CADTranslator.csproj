@@ -34,15 +34,15 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="accoremgd">
-      <HintPath>G:\2020\AutoCAD 2020\accoremgd.dll</HintPath>
+      <HintPath>E:\Softwares\Work\AutoCad2020\AutoCAD 2020\accoremgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="acdbmgd">
-      <HintPath>G:\2020\AutoCAD 2020\acdbmgd.dll</HintPath>
+      <HintPath>E:\Softwares\Work\AutoCad2020\AutoCAD 2020\acdbmgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="acmgd">
-      <HintPath>G:\2020\AutoCAD 2020\acmgd.dll</HintPath>
+      <HintPath>E:\Softwares\Work\AutoCad2020\AutoCAD 2020\acmgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
