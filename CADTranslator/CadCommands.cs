@@ -24,11 +24,10 @@ namespace CADTranslator
             public double Height { get; set; }
             public double WidthFactor { get; set; }
             public ObjectId TextStyleId { get; set; }
-            // ▼▼▼ 核心修改：用一个BlockId来管理所有关联的图形 ▼▼▼
             public ObjectId AssociatedGraphicsBlockId { get; set; } = ObjectId.Null;
-            // ▲▲▲ 修改结束 ▲▲▲
             public Point3d OriginalAnchorPoint { get; set; }
             public bool ContainsSpecialPattern { get; set; } = false;
+            public int OriginalSpaceCount { get; set; } = 0;
         }
 
         [CommandMethod("GJX")]
@@ -194,13 +193,16 @@ namespace CADTranslator
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
                     var graphicEntities = new List<Entity>();
-                    var textSelection = new List<SelectedObject>();
+                    var textObjectIds = new List<ObjectId>();
+                    var deletableObjectIds = new HashSet<ObjectId>();
+
                     foreach (SelectedObject selObj in selRes.Value)
                     {
                         var ent = tr.GetObject(selObj.ObjectId, OpenMode.ForRead) as Entity;
                         if (ent is DBText || ent is MText)
                         {
-                            textSelection.Add(selObj);
+                            textObjectIds.Add(ent.ObjectId);
+                            deletableObjectIds.Add(ent.ObjectId);
                         }
                         else if (ent != null)
                         {
@@ -208,16 +210,17 @@ namespace CADTranslator
                         }
                     }
 
-                    if (textSelection.Count == 0)
+                    if (textObjectIds.Count == 0)
                     {
                         editor.WriteMessage("\n选择的对象中未找到任何有效文字。");
                         return;
                     }
 
-                    List<TextBlockItem> rawTextBlocks = ExtractAndMergeText(doc, SelectionSet.FromObjectIds(textSelection.Select(s => s.ObjectId).ToArray()));
+                    List<TextBlockItem> rawTextBlocks = ExtractAndMergeText(doc, SelectionSet.FromObjectIds(textObjectIds.ToArray()));
 
                     var paragraphInfos = new List<ParagraphInfo>();
-                    string specialPattern = @"\s{6,}";
+                    string specialPattern = @"\s{3,}";
+                    string placeholder = "*图例位置*";
 
                     foreach (var block in rawTextBlocks)
                     {
@@ -230,6 +233,29 @@ namespace CADTranslator
 
                         var firstId = block.SourceObjectIds.FirstOrDefault(id => !id.IsNull && !id.IsErased);
                         var paraInfo = new ParagraphInfo();
+
+                        // ▼▼▼ 核心修改：统一计算段落的总边界和左上角锚点 ▼▼▼
+                        var paragraphBounds = new Extents3d(Point3d.Origin, Point3d.Origin);
+                        double maxLineHeight = 0;
+                        foreach (var textId in block.SourceObjectIds)
+                        {
+                            var textEnt = tr.GetObject(textId, OpenMode.ForRead) as Entity;
+                            if (textEnt != null && textEnt.Bounds.HasValue)
+                            {
+                                if (paragraphBounds.MinPoint == Point3d.Origin && paragraphBounds.MaxPoint == Point3d.Origin)
+                                {
+                                    paragraphBounds = textEnt.Bounds.Value;
+                                }
+                                else
+                                {
+                                    paragraphBounds.AddExtents(textEnt.Bounds.Value);
+                                }
+
+                                if (textEnt is DBText dbt) maxLineHeight = Math.Max(maxLineHeight, dbt.Height);
+                                else if (textEnt is MText mt) maxLineHeight = Math.Max(maxLineHeight, mt.TextHeight);
+                            }
+                        }
+
                         if (firstId != null)
                         {
                             var ent = tr.GetObject(firstId, OpenMode.ForRead);
@@ -241,7 +267,6 @@ namespace CADTranslator
                                 height = dbText.Height;
                                 widthFactor = dbText.WidthFactor;
                                 textStyleId = dbText.TextStyleId;
-                                paraInfo.OriginalAnchorPoint = (dbText.HorizontalMode == TextHorizontalMode.TextLeft && dbText.VerticalMode == TextVerticalMode.TextBase) ? dbText.Position : dbText.AlignmentPoint;
                             }
                             else if (ent is MText mText)
                             {
@@ -249,9 +274,10 @@ namespace CADTranslator
                                 vMode = TextVerticalMode.TextTop;
                                 height = mText.TextHeight;
                                 textStyleId = mText.TextStyleId;
-                                paraInfo.OriginalAnchorPoint = mText.Location;
                             }
                         }
+                        // ▲▲▲ 修改结束 ▲▲▲
+
                         paraInfo.Text = block.OriginalText;
                         paraInfo.TemplateEntity = template;
                         paraInfo.HorizontalMode = hMode;
@@ -260,11 +286,53 @@ namespace CADTranslator
                         paraInfo.WidthFactor = widthFactor;
                         paraInfo.TextStyleId = textStyleId;
 
-                        // ▼▼▼ 核心修改：将关联的图形“成组为块” ▼▼▼
-                        if (Regex.IsMatch(block.OriginalText, specialPattern) && template != null && template.Bounds.HasValue)
+                        // ▼▼▼ 核心修改：追踪“信标”位置 ▼▼▼
+                        var match = Regex.Match(block.OriginalText, specialPattern);
+                        if (match.Success)
                         {
                             paraInfo.ContainsSpecialPattern = true;
-                            var textBounds = template.Bounds.Value;
+                            paraInfo.OriginalSpaceCount = match.Length;
+
+                            // 1. 获取原始信标位置
+                            string textBeforePlaceholder = block.OriginalText.Substring(0, match.Index);
+                            using (var tempText = new DBText { TextString = textBeforePlaceholder, Height = paraInfo.Height, WidthFactor = paraInfo.WidthFactor, TextStyleId = paraInfo.TextStyleId })
+                            {
+                                // 必须先将临时文字加入数据库才能获取准确的几何信息
+                                var tempId = SymbolUtilityServices.GetBlockModelSpaceId(db);
+                                var btr = (BlockTableRecord)tr.GetObject(tempId, OpenMode.ForWrite);
+                                btr.AppendEntity(tempText);
+                                tr.AddNewlyCreatedDBObject(tempText, true);
+
+                                if (template is DBText originalDbText)
+                                {
+                                    tempText.HorizontalMode = originalDbText.HorizontalMode;
+                                    tempText.VerticalMode = originalDbText.VerticalMode;
+                                    if (tempText.HorizontalMode != TextHorizontalMode.TextLeft || tempText.VerticalMode != TextVerticalMode.TextBase)
+                                    {
+                                        tempText.AlignmentPoint = originalDbText.AlignmentPoint;
+                                        tempText.AdjustAlignment(db);
+                                    }
+                                    else
+                                    {
+                                        tempText.Position = originalDbText.Position;
+                                    }
+                                }
+
+                                // 获取文字“之前”部分的边界，其右上角就是信标的开始位置
+                                if (tempText.Bounds.HasValue)
+                                {
+                                    paraInfo.OriginalAnchorPoint = tempText.Bounds.Value.MaxPoint;
+                                }
+                                tempText.Erase(); // 用完后立即删除
+                            }
+
+                            // 2. 用信标替换空格
+                            paraInfo.Text = block.OriginalText.Substring(0, match.Index) + placeholder + block.OriginalText.Substring(match.Index + match.Length);
+
+                            // 3. 关联图形并“成块”
+                            //var searchBounds = paragraphBounds;
+                            //searchBounds.TransformBy(Matrix3d.Scaling(1.0, new Point3d(0, paragraphBounds.MinPoint.Y - maxLineHeight, 0)));
+                            //searchBounds.TransformBy(Matrix3d.Scaling(1.0, new Point3d(0, paragraphBounds.MaxPoint.Y + maxLineHeight, 0)));
 
                             var graphicsToGroup = new List<Entity>();
                             foreach (var graphic in graphicEntities)
@@ -272,14 +340,15 @@ namespace CADTranslator
                                 if (graphic.Bounds.HasValue)
                                 {
                                     var graphicBounds = graphic.Bounds.Value;
-                                    bool isContained = textBounds.MinPoint.X <= graphicBounds.MinPoint.X &&
-                                                       textBounds.MinPoint.Y <= graphicBounds.MinPoint.Y+2000 &&
-                                                       textBounds.MaxPoint.X >= graphicBounds.MaxPoint.X &&
-                                                       textBounds.MaxPoint.Y >= graphicBounds.MaxPoint.Y-2000;
+                                    bool isContained = paragraphBounds.MinPoint.X <= graphicBounds.MinPoint.X &&
+                                    (paragraphBounds.MinPoint.Y - maxLineHeight) <= graphicBounds.MinPoint.Y &&
+                                    paragraphBounds.MaxPoint.X >= graphicBounds.MaxPoint.X &&
+                                    (paragraphBounds.MaxPoint.Y + maxLineHeight) >= graphicBounds.MaxPoint.Y;
 
                                     if (isContained)
                                     {
-                                        graphicsToGroup.Add(graphic.Clone() as Entity);
+                                        graphicsToGroup.Add(graphic);
+                                        deletableObjectIds.Add(graphic.ObjectId);
                                     }
                                 }
                             }
@@ -287,14 +356,15 @@ namespace CADTranslator
                             if (graphicsToGroup.Any())
                             {
                                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForWrite);
-                                // 创建一个匿名的块定义
                                 BlockTableRecord btr = new BlockTableRecord();
                                 btr.Name = "TEMP_GRAPHIC_GROUP_" + Guid.NewGuid().ToString("N");
-                                btr.Origin = paraInfo.OriginalAnchorPoint; // 将块的基点设为文字的锚点
+                                btr.Origin = paraInfo.OriginalAnchorPoint;
 
                                 foreach (var ent in graphicsToGroup)
                                 {
-                                    btr.AppendEntity(ent);
+                                    var clonedEnt = ent.Clone() as Entity;
+                                    //clonedEnt.TransformBy(Matrix3d.Displacement(btr.Origin.GetVectorTo(Point3d.Origin)));
+                                    btr.AppendEntity(clonedEnt);
                                 }
                                 paraInfo.AssociatedGraphicsBlockId = bt.Add(btr);
                                 tr.AddNewlyCreatedDBObject(btr, true);
@@ -312,16 +382,17 @@ namespace CADTranslator
                     var dragResult = editor.Drag(jig);
                     if (dragResult.Status != PromptStatus.OK) { tr.Abort(); return; }
 
-                    foreach (SelectedObject selObj in selRes.Value)
+                    foreach (var id in deletableObjectIds)
                     {
-                        if (!selObj.ObjectId.IsErased)
+                        if (!id.IsErased)
                         {
-                            using (var entToErase = tr.GetObject(selObj.ObjectId, OpenMode.ForWrite)) { entToErase.Erase(); }
+                            using (var entToErase = tr.GetObject(id, OpenMode.ForWrite)) { entToErase.Erase(); }
                         }
                     }
 
                     var unifiedVerticalMode = paragraphInfos.FirstOrDefault()?.VerticalMode ?? TextVerticalMode.TextBase;
 
+                    // ▼▼▼ 核心修改：在创建最终文字时，计算新信标位置并进行变换 ▼▼▼
                     for (int i = 0; i < jig.FinalLineInfo.Count; i++)
                     {
                         var lineInfo = jig.FinalLineInfo[i];
@@ -332,10 +403,74 @@ namespace CADTranslator
 
                         var currentParaInfo = paragraphInfos[currentParaIndex];
 
+                        // 如果是特殊段落，且当前行包含信标，则计算新锚点并移动块
+                        if (currentParaInfo.ContainsSpecialPattern && lineText.Contains(placeholder))
+                        {
+                            // 1. 获取新锚点
+                            int placeholderIndex = lineText.IndexOf(placeholder);
+                            string textBeforePlaceholderInLine = lineText.Substring(0, placeholderIndex);
+
+                            using (var tempText = new DBText { TextString = textBeforePlaceholderInLine, Height = currentParaInfo.Height, WidthFactor = currentParaInfo.WidthFactor, TextStyleId = currentParaInfo.TextStyleId })
+                            {
+                                double yOffset = i * currentParaInfo.Height * 1.5;
+                                double xOffset = (paraNeedsIndent && !isFirstLineOfPara) ? jig.FinalIndent : 0;
+                                Point3d linePos = basePoint + new Vector3d(xOffset, -yOffset, 0);
+
+                                tempText.HorizontalMode = currentParaInfo.HorizontalMode;
+                                tempText.VerticalMode = unifiedVerticalMode;
+                                if (tempText.HorizontalMode != TextHorizontalMode.TextLeft || tempText.VerticalMode != TextVerticalMode.TextBase)
+                                {
+                                    tempText.AlignmentPoint = linePos;                                  
+                                }
+                                else
+                                    tempText.Position = linePos;
+                                tempText.AdjustAlignment(db);
+
+
+                                // 同样需要临时加入数据库来获取准确的几何信息
+                                var tempId = SymbolUtilityServices.GetBlockModelSpaceId(db);
+                                var btr = (BlockTableRecord)tr.GetObject(tempId, OpenMode.ForWrite);
+                                btr.AppendEntity(tempText);
+                                tr.AddNewlyCreatedDBObject(tempText, true);
+
+                                if (tempText.Bounds.HasValue)
+                                {
+                                    Point3d newAnchorPoint = tempText.Bounds.Value.MaxPoint;
+                                    Vector3d displacement = newAnchorPoint - currentParaInfo.OriginalAnchorPoint;
+                                    Matrix3d transformMatrix = Matrix3d.Displacement(displacement);
+
+                                    BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
+                                    using (var blockRef = new BlockReference(currentParaInfo.OriginalAnchorPoint, currentParaInfo.AssociatedGraphicsBlockId))
+                                    {
+                                        blockRef.TransformBy(transformMatrix);
+                                        modelSpace.AppendEntity(blockRef);
+                                        tr.AddNewlyCreatedDBObject(blockRef, true);
+
+                                        DBObjectCollection explodedObjects = new DBObjectCollection();
+                                        blockRef.Explode(explodedObjects);
+                                        foreach (DBObject obj in explodedObjects)
+                                        {
+                                            Entity explodedEntity = obj as Entity;
+                                            if (explodedEntity != null)
+                                            {
+                                                modelSpace.AppendEntity(explodedEntity);
+                                                tr.AddNewlyCreatedDBObject(explodedEntity, true);
+                                            }
+                                        }
+                                        blockRef.Erase();
+                                    }
+                                }
+                                tempText.Erase();
+                            }
+                            // 2. 将信标替换回原始空格
+                            lineText = lineText.Replace(placeholder, new string(' ', currentParaInfo.OriginalSpaceCount)); 
+                        }
+
+
                         using (var newText = new DBText())
                         {
                             if (currentParaInfo.TemplateEntity != null) newText.SetPropertiesFrom(currentParaInfo.TemplateEntity);
-                            newText.TextString = lineText;
+                            newText.TextString = lineText;;
                             newText.Height = currentParaInfo.Height;
                             newText.WidthFactor = currentParaInfo.WidthFactor;
                             newText.TextStyleId = currentParaInfo.TextStyleId;
@@ -361,40 +496,12 @@ namespace CADTranslator
                                 newText.Position = linePosition;
                             }
 
-                            // ▼▼▼ 核心修改：插入并炸开我们之前创建好的块 ▼▼▼
-                            if (isFirstLineOfPara && currentParaInfo.ContainsSpecialPattern && !currentParaInfo.AssociatedGraphicsBlockId.IsNull)
-                            {
-                                Point3d newAnchorPoint = (newText.HorizontalMode != TextHorizontalMode.TextLeft || newText.VerticalMode != TextVerticalMode.TextBase) ? newText.AlignmentPoint : newText.Position;
-                                BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
-
-                                using (var blockRef = new BlockReference(newAnchorPoint, currentParaInfo.AssociatedGraphicsBlockId))
-                                {
-                                    modelSpace.AppendEntity(blockRef);
-                                    tr.AddNewlyCreatedDBObject(blockRef, true);
-
-                                    // 关键一步：就地炸开块引用，将图形还原
-                                    DBObjectCollection explodedObjects = new DBObjectCollection();
-                                    blockRef.Explode(explodedObjects);
-                                    foreach (DBObject obj in explodedObjects)
-                                    {
-                                        Entity explodedEntity = obj as Entity;
-                                        if (explodedEntity != null)
-                                        {
-                                            modelSpace.AppendEntity(explodedEntity);
-                                            tr.AddNewlyCreatedDBObject(explodedEntity, true);
-                                        }
-                                    }
-                                    // 炸开后删除块引用本身
-                                    blockRef.Erase();
-                                }
-                            }
-                            // ▲▲▲ 新增结束 ▲▲▲
-
                             BlockTableRecord ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
                             ms.AppendEntity(newText);
                             tr.AddNewlyCreatedDBObject(newText, true);
                         }
                     }
+                    // ▲▲▲ 修改结束 ▲▲▲
                     tr.Commit();
                 }
             }
