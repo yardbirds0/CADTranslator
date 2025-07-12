@@ -1,9 +1,9 @@
 ﻿using Autodesk.AutoCAD.Geometry;
 using System;
 
-namespace CADTranslator
+namespace CADTranslator.AutoCAD.Helpers
 {
-    public static class BreakLineGeometry
+    public static class GeometryHelper
     {
         /// <summary>
         /// 根据起点和终点，创建截断线的顶点集合

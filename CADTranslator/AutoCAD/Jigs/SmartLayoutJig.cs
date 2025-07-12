@@ -6,20 +6,21 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using CADTranslator.Models;
 
-namespace CADTranslator
-{
+namespace CADTranslator.AutoCAD.Jigs
+    {
     public class SmartLayoutJig : DrawJig
     {
         public List<Tuple<string, bool, bool, int>> FinalLineInfo { get; private set; }
         public double FinalIndent { get; private set; }
 
-        private readonly List<CadCommands.ParagraphInfo> _paragraphInfos;
+        private readonly List<ParagraphInfo> _paragraphInfos;
 
         private readonly Point3d _basePoint;
         private Point3d _currentPoint;
 
-        public SmartLayoutJig(List<CadCommands.ParagraphInfo> paragraphInfos, Point3d basePoint)
+        public SmartLayoutJig(List<ParagraphInfo> paragraphInfos, Point3d basePoint)
         {
             _paragraphInfos = paragraphInfos;
             _basePoint = basePoint;

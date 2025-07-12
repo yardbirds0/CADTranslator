@@ -1,8 +1,9 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using CADTranslator.AutoCAD.Helpers;
 
-namespace CADTranslator
+namespace CADTranslator.AutoCAD.Jigs
 {
     public class BreakLineJig : EntityJig
     {
@@ -55,7 +56,7 @@ namespace CADTranslator
 
             using (var tempPline = new Polyline())
             {
-                Point3dCollection newVertices = BreakLineGeometry.CreateVertices(_startPoint, _currentEndPoint);
+                Point3dCollection newVertices = GeometryHelper.CreateVertices(_startPoint, _currentEndPoint);
                 for (int i = 0; i < newVertices.Count; i++)
                 {
                     tempPline.AddVertexAt(i, new Point2d(newVertices[i].X, newVertices[i].Y), 0, 0, 0);

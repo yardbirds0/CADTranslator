@@ -3,8 +3,8 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.GraphicsInterface;
 
-namespace CADTranslator
-{
+namespace CADTranslator.AutoCAD.Jigs
+    {
     public class TextLayoutJig : DrawJig
     {
         private Point3d _currentPosition;

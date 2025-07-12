@@ -1,6 +1,6 @@
 ﻿using System.Windows;
-namespace CADTranslator
-{
+namespace CADTranslator.UI.Views
+    {
     public partial class EditWindow : Window
     {
         public string EditedText { get; private set; }

@@ -1,6 +1,6 @@
 ﻿using System.Text;
 
-namespace CADTranslator
+namespace CADTranslator.AutoCAD.Common
 {
     public static class TextFormatter
     {

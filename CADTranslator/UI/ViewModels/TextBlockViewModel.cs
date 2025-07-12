@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Windows.Media; // 需要引入此命名空间来使用 Brush 类型
 
-namespace CADTranslator
+namespace CADTranslator.UI.ViewModels
 {
-    public class TextBlockItem : INotifyPropertyChanged
+    public class TextBlockViewModel : INotifyPropertyChanged
     {
         private string _originalText;
         private string _translatedText;
@@ -27,7 +27,14 @@ namespace CADTranslator
         public string TranslatedText
         {
             get => _translatedText;
-            set { if (_translatedText != value) { _translatedText = value; OnPropertyChanged(nameof(TranslatedText)); } }
+            set
+            {
+                if (_translatedText != value)
+                {
+                    _translatedText = value;
+                    OnPropertyChanged(nameof(TranslatedText)); // 确保有这一行！
+                }
+            }
         }
 
         public List<ObjectId> SourceObjectIds { get; set; } = new List<ObjectId>();
