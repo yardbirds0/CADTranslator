@@ -1,4 +1,5 @@
-﻿using GenerativeAI;
+﻿// ▼▼▼ 请用下面这个修正后的版本，完整替换 GeminiTranslator.cs 的现有全部代码 ▼▼▼
+using GenerativeAI;
 using System;
 using System.Threading.Tasks;
 
@@ -7,35 +8,30 @@ namespace CADTranslator.Services
     public class GeminiTranslator : ITranslator
         {
         private readonly string _apiKey;
-        // 我们可以指定一个默认模型，未来也可以从UI传入
-        private const string DefaultModel = "models/gemini-1.5-flash";
+        private readonly string _model; // 新增字段
 
-        public GeminiTranslator(string apiKey)
+        // 修正：构造函数接收模型参数
+        public GeminiTranslator(string apiKey, string model)
             {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentNullException(nameof(apiKey), "Gemini API Key cannot be null or empty.");
+            if (string.IsNullOrWhiteSpace(model))
+                throw new ArgumentNullException(nameof(model), "Gemini model cannot be null or empty.");
+
             _apiKey = apiKey;
+            _model = model; // 保存模型
             }
 
         public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage)
             {
             try
                 {
-                // 1. 初始化GoogleAI客户端
                 var googleAI = new GoogleAi(_apiKey);
-
-                // 2. 创建一个生成模型实例
-                var model = googleAI.CreateGenerativeModel(DefaultModel);
-
-                // 3. 构建翻译的Prompt
-                // 为了让模型更专注于翻译任务，我们使用一个结构化的Prompt
+                // 修正：使用传入的模型
+                var generativeModel = googleAI.CreateGenerativeModel(_model);
                 string prompt = $"Please translate the following text from {fromLanguage} to {toLanguage}. Do not add any extra explanations or introductory phrases, just return the translated text.\n\nText to translate:\n---\n{textToTranslate}\n---";
+                var response = await generativeModel.GenerateContentAsync(prompt);
 
-                // 4. 调用API生成内容
-                var response = await model.GenerateContentAsync(prompt);
-
-                // 5. 提取并返回结果
-                // 新库的Text()方法可以非常方便地获取纯文本结果
                 if (response != null && !string.IsNullOrEmpty(response.Text()))
                     {
                     return response.Text().Trim();
@@ -47,7 +43,6 @@ namespace CADTranslator.Services
                 }
             catch (Exception ex)
                 {
-                // 捕获并返回更详细的异常信息
                 return $"调用Gemini API时发生异常: {ex.Message}";
                 }
             }

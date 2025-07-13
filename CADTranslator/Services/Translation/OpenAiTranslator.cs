@@ -4,13 +4,14 @@ using System.Linq;
 using System.Threading.Tasks;
 using OpenAI.Chat;
 
+
 namespace CADTranslator.Services
     {
     public class OpenAiTranslator : ITranslator
         {
         private readonly ChatClient _client;
 
-        public OpenAiTranslator(string apiKey, string model = "gpt-3.5-turbo")
+        public OpenAiTranslator(string apiKey, string model)
             {
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ArgumentNullException(nameof(apiKey), "OpenAI API Key cannot be null or empty.");

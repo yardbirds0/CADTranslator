@@ -1,5 +1,5 @@
-﻿using System;
-using System.Linq;
+﻿// ▼▼▼ 请用这个最终版本，完整替换 CustomTranslator.cs 的全部代码 ▼▼▼
+using System;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -13,64 +13,74 @@ namespace CADTranslator.Services
         private readonly HttpClient _httpClient;
         private readonly string _endpoint;
         private readonly string _apiKey;
+        private readonly string _model;
 
-        public CustomTranslator(string apiEndpoint, string apiKey)
+        /// <summary>
+        /// 为兼容类OpenAI标准的自定义API创建一个翻译器实例.
+        /// </summary>
+        /// <param name="apiEndpoint">API的基础URL, 例如 "https://api.siliconflow.cn/v1"</param>
+        /// <param name="apiKey">API密钥</param>
+        /// <param name="model">要使用的模型名称</param>
+        public CustomTranslator(string apiEndpoint, string apiKey, string model)
             {
             if (string.IsNullOrWhiteSpace(apiEndpoint))
-                throw new ArgumentNullException(nameof(apiEndpoint), "Custom API Endpoint cannot be null or empty.");
-            // API Key可以是可选的，取决于具体服务
+                throw new ArgumentNullException(nameof(apiEndpoint), "自定义API终结点 (URL) 不能为空。");
+            if (string.IsNullOrWhiteSpace(apiKey))
+                throw new ArgumentNullException(nameof(apiKey), "自定义API密钥不能为空。");
+            if (string.IsNullOrWhiteSpace(model))
+                throw new ArgumentNullException(nameof(model), "自定义API模型名称不能为空。");
+
+            _endpoint = apiEndpoint.TrimEnd('/'); // 确保URL末尾没有斜杠
             _apiKey = apiKey;
-            _endpoint = apiEndpoint;
+            _model = model;
 
             _httpClient = new HttpClient();
-            // 只有在提供了API Key的情况下才添加认证头
-            if (!string.IsNullOrWhiteSpace(_apiKey))
-                {
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
-                }
+            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
             }
 
         public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage)
             {
             try
                 {
-                // 1. 构建请求体 (模仿您提供的代码)
+                // 1. 构建请求体，与您的示例完全一致，但 stream: false
                 var requestData = new
                     {
-                    // 模型可以从UI传入，这里我们暂时硬编码一个
-                    model = "deepseek-ai/DeepSeek-V2.5",
+                    model = _model,
                     messages = new[]
                     {
-                        new { role = "system", content = $"Translate the following text from {fromLanguage} to {toLanguage}. Return only the translated text." },
+                        // 我们可以提供一个更明确的系统指令
+                        new { role = "system", content = $"You are a professional translator. Translate the user's text from {fromLanguage} to {toLanguage}. Output only the translated content, without any additional explanatory text." },
                         new { role = "user", content = textToTranslate }
                     },
-                    stream = false // 我们需要一次性返回，所以设置为false
+                    stream = false // 设置为false以获取完整响应
                     };
 
                 string jsonPayload = JsonConvert.SerializeObject(requestData);
                 var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-                // 2. 发送POST请求
-                var response = await _httpClient.PostAsync(_endpoint, content);
+                // 2. 发送POST请求到/chat/completions终结点
+                string requestUrl = $"{_endpoint}/chat/completions";
+                var response = await _httpClient.PostAsync(requestUrl, content);
 
                 if (!response.IsSuccessStatusCode)
                     {
                     string errorBody = await response.Content.ReadAsStringAsync();
-                    return $"请求失败，状态码：{response.StatusCode}。详情: {errorBody}";
+                    return $"请求失败: {response.StatusCode}。URL: {requestUrl}。详情: {errorBody}";
                     }
 
-                // 3. 解析返回的JSON结果
+                // 3. 解析完整的JSON响应
                 string jsonResponse = await response.Content.ReadAsStringAsync();
                 var data = JObject.Parse(jsonResponse);
 
-                // 提取choices数组中的第一个元素的message.content
+                // 提取 choices[0].message.content 的内容
                 var translatedText = data["choices"]?[0]?["message"]?["content"]?.ToString();
 
-                return translatedText?.Trim() ?? "翻译失败：未能从API响应中解析出内容。";
+                return translatedText?.Trim() ?? "翻译失败：未能从API响应中解析出有效内容。";
                 }
             catch (Exception ex)
                 {
-                return $"调用自定义API时发生异常: {ex.Message}";
+                // 提供更详细的异常信息，帮助调试
+                return $"调用自定义API({_endpoint})时发生异常: {ex.Message}";
                 }
             }
         }

@@ -9,6 +9,8 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -20,12 +22,40 @@ namespace CADTranslator.UI.ViewModels
     {
     public class TranslatorViewModel : INotifyPropertyChanged
         {
+        // ▼▼▼ 在类的最开始（字段区域的上方或下方）添加这些代码 ▼▼▼
+        #region --- Win32 API 辅助 ---
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        private void SwitchToAutoCad()
+            {
+            try
+                {
+                SetForegroundWindow(Autodesk.AutoCAD.ApplicationServices.Application.MainWindow.Handle);
+                }
+            catch { /* 忽略可能的错误 */ }
+            }
+        #endregion
+
+
+
+
         #region --- 字段 (Fields) ---
 
         // 服务
         private readonly SettingsService _settingsService;
         private readonly CadTextService _cadTextService;
         private readonly CadLayoutService _cadLayoutService;
+
+        //API辅助
+        private string _statusMessage;
+        public string StatusMessage
+            {
+            get => _statusMessage;
+            set { _statusMessage = value; OnPropertyChanged(); }
+            }
+
 
         // UI辅助
         private readonly Brush[] _characterBrushes = new Brush[]
@@ -37,6 +67,14 @@ namespace CADTranslator.UI.ViewModels
             (Brush)new BrushConverter().ConvertFromString("#6741D9")
         };
         private int _brushIndex = 0;
+        private readonly Dictionary<ApiServiceType, ApiServiceConfig> _apiServiceConfigs = new Dictionary<ApiServiceType, ApiServiceConfig>
+            {
+            // 这里的配置严格按照您的参数列表来定义
+            [ApiServiceType.Baidu] = new ApiServiceConfig(requiresUserId: true, requiresApiKey: true, requiresModelList: false, requiresApiUrl: false),
+            [ApiServiceType.Gemini] = new ApiServiceConfig(requiresUserId: false, requiresApiKey: true, requiresModelList: true, requiresApiUrl: false),
+            [ApiServiceType.OpenAI] = new ApiServiceConfig(requiresUserId: false, requiresApiKey: true, requiresModelList: true, requiresApiUrl: false),
+            [ApiServiceType.Custom] = new ApiServiceConfig(requiresUserId: false, requiresApiKey: true, requiresModelList: true, requiresApiUrl: true)
+            };
 
         #endregion
 
@@ -61,7 +99,28 @@ namespace CADTranslator.UI.ViewModels
         public ApiProfile CurrentProfile
             {
             get => _currentProfile;
-            set { _currentProfile = value; OnPropertyChanged(); UpdateUiFromCurrentProfile(); }
+            set
+                {
+                if (_currentProfile != value)
+                    {
+                    // 在切换配置文件前，为旧的配置文件添加属性变更监听
+                    if (_currentProfile != null)
+                        {
+                        _currentProfile.PropertyChanged -= OnCurrentProfilePropertyChanged;
+                        }
+
+                    _currentProfile = value;
+
+                    // 为新的配置文件添加属性变更监听
+                    if (_currentProfile != null)
+                        {
+                        _currentProfile.PropertyChanged += OnCurrentProfilePropertyChanged;
+                        }
+
+                    OnPropertyChanged();
+                    UpdateUiFromCurrentProfile();
+                    }
+                }
             }
 
         private ApiServiceType _selectedApiService;
@@ -80,20 +139,34 @@ namespace CADTranslator.UI.ViewModels
             }
 
         public ObservableCollection<string> ModelList { get; set; }
+        public string CurrentModelInput { get; set; }
 
         // --- 语言和Prompt属性 ---
         public IEnumerable<ApiServiceType> ApiServiceOptions => Enum.GetValues(typeof(ApiServiceType)).Cast<ApiServiceType>();
 
-        public List<string> SupportedLanguages { get; } = new List<string> { "auto", "zh", "en", "ja", "ko", "fr", "de", "ru" };
+        public List<LanguageItem> SupportedLanguages { get; } = new List<LanguageItem>
+{
+    new LanguageItem { DisplayName = "自动检测", Value = "auto" },
+    new LanguageItem { DisplayName = "中文", Value = "zh" },
+    new LanguageItem { DisplayName = "英文", Value = "en" },
+    new LanguageItem { DisplayName = "日语", Value = "ja" },
+    new LanguageItem { DisplayName = "韩语", Value = "ko" },
+    new LanguageItem { DisplayName = "法语", Value = "fr" },
+    new LanguageItem { DisplayName = "德语", Value = "de" },
+    new LanguageItem { DisplayName = "俄语", Value = "ru" }
+};
+
         public string SourceLanguage { get; set; } = "auto";
         public string TargetLanguage { get; set; } = "en";
         public string GlobalPrompt { get; set; }
 
-        // --- 控制UI灰化状态的属性 ---
-        public bool IsUserIdRequired { get; private set; }
-        public bool IsApiKeyRequired { get; private set; }
-        public bool IsModelListVisible { get; private set; }
-        public bool IsCustomEndpointVisible { get; private set; }
+        private ApiServiceConfig CurrentServiceConfig => _apiServiceConfigs[SelectedApiService];
+
+        public bool IsUserIdEnabled => CurrentServiceConfig.RequiresUserId;
+        public bool IsApiKeyEnabled => CurrentServiceConfig.RequiresApiKey;
+        public bool IsModelListEnabled => CurrentServiceConfig.RequiresModelList;
+        public bool IsApiUrlEnabled => CurrentServiceConfig.RequiresApiUrl;
+
 
         #endregion
 
@@ -108,7 +181,6 @@ namespace CADTranslator.UI.ViewModels
         public ICommand EditCommand { get; }
         public ICommand GetModelsCommand { get; }
         public ICommand AddDefaultModelCommand { get; }
-        public ICommand SaveSettingsCommand { get; }
 
         #endregion
 
@@ -135,9 +207,8 @@ namespace CADTranslator.UI.ViewModels
             SplitCommand = new RelayCommand(OnSplit, p => p is TextBlockViewModel);
             AddCommand = new RelayCommand(OnAdd);
             EditCommand = new RelayCommand(OnEdit, p => p is TextBlockViewModel);
-            GetModelsCommand = new RelayCommand(OnGetModels, p => IsModelListVisible);
+            GetModelsCommand = new RelayCommand(OnGetModels, p => IsModelListEnabled);
             AddDefaultModelCommand = new RelayCommand(OnAddDefaultModel);
-            SaveSettingsCommand = new RelayCommand(SaveSettings);
 
             // 启动时加载设置
             LoadSettings();
@@ -185,53 +256,126 @@ namespace CADTranslator.UI.ViewModels
             OnPropertyChanged(nameof(SourceLanguage));
             OnPropertyChanged(nameof(TargetLanguage));
             OnPropertyChanged(nameof(GlobalPrompt));
+            CurrentModelInput = CurrentProfile.LastSelectedModel;
+            OnPropertyChanged(nameof(CurrentModelInput)); // 通知UI更新
             }
 
         private void UpdateApiControlStates()
             {
-            switch (SelectedApiService)
+            if (CurrentProfile == null) return;
+
+            // 如果选择的是百度翻译，并且当前配置是新建的或空的，则填入默认值
+            if (SelectedApiService == ApiServiceType.Baidu)
                 {
-                case ApiServiceType.Baidu:
-                    IsUserIdRequired = true; IsApiKeyRequired = true; IsModelListVisible = false; IsCustomEndpointVisible = false;
-                    break;
-                case ApiServiceType.Gemini:
-                case ApiServiceType.OpenAI:
-                    IsUserIdRequired = false; IsApiKeyRequired = true; IsModelListVisible = true; IsCustomEndpointVisible = false;
-                    break;
-                case ApiServiceType.Custom:
-                    IsUserIdRequired = true; IsApiKeyRequired = true; IsModelListVisible = true; IsCustomEndpointVisible = true;
-                    break;
+                if (string.IsNullOrWhiteSpace(CurrentProfile.UserId))
+                    {
+                    CurrentProfile.UserId = "20250708002400901"; // 默认App ID
+                    }
+                if (string.IsNullOrWhiteSpace(CurrentProfile.ApiKey))
+                    {
+                    CurrentProfile.ApiKey = "1L_Bso6ORO8torYgecjh"; // 默认App Key
+                    }
                 }
-            OnPropertyChanged(nameof(IsUserIdRequired));
-            OnPropertyChanged(nameof(IsApiKeyRequired));
-            OnPropertyChanged(nameof(IsModelListVisible));
-            OnPropertyChanged(nameof(IsCustomEndpointVisible));
+
+            // 将UI上的服务类型选择同步到当前配置文件
+            CurrentProfile.ServiceType = SelectedApiService;
+
+            // 更新模型列表
+            ModelList.Clear();
+            if (CurrentProfile.Models != null)
+                {
+                foreach (var model in CurrentProfile.Models)
+                    {
+                    ModelList.Add(model);
+                    }
+                }
+
+            // 触发所有相关属性的UI更新
+            OnPropertyChanged(nameof(CurrentProfile));
+            OnPropertyChanged(nameof(IsUserIdEnabled));
+            OnPropertyChanged(nameof(IsApiKeyEnabled));
+            OnPropertyChanged(nameof(IsModelListEnabled));
+            OnPropertyChanged(nameof(IsApiUrlEnabled)); 
+
+            // 自动保存
+            SaveSettings();
             }
 
+        private void OnCurrentProfilePropertyChanged(object sender, PropertyChangedEventArgs e)
+            {
+            // 当Profile的任何属性（如UserId, ApiKey等）改变时，自动保存
+            SaveSettings();
+            }
         #endregion
 
         #region --- 命令实现 (Command Implementations) ---
 
+        // ▼▼▼ 请用这个最终修正版，完整替换现有的 OnSelectText 方法 ▼▼▼
         private void OnSelectText(object parameter)
             {
+            // 1. 将参数转换为WPF窗口，这里的 'Window' 是 'System.Windows.Window'
+            if (!(parameter is System.Windows.Window mainWindow)) return;
+
             try
                 {
-                var doc = Application.DocumentManager.MdiActiveDocument;
-                if (doc == null) { MessageBox.Show("未找到活动的CAD文档。"); return; }
+                // 2. 这里的 'Application' 是指 'Autodesk.AutoCAD.ApplicationServices.Application' (由文件顶部的using别名定义)
+                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                if (doc == null)
+                    {
+                    System.Windows.MessageBox.Show("未找到活动的CAD文档。");
+                    return;
+                    }
+
+                // 3. 直接操作我们从参数中获取的确切的WPF窗口实例
+                mainWindow.Hide();
+
                 var ed = doc.Editor;
                 var selRes = ed.GetSelection();
-                if (selRes.Status != PromptStatus.OK) return;
+
+                // 4. 再次操作WPF窗口实例，使其显示和激活
+                mainWindow.Show();
+                mainWindow.Activate();
+
+                if (selRes.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK) return;
 
                 List<TextBlockViewModel> textBlocks = _cadTextService.ExtractAndMergeText(selRes.Value);
-                if (textBlocks.Count == 0) { MessageBox.Show("您选择的对象中未找到任何有效文字。"); return; }
+                if (textBlocks.Count == 0)
+                    {
+                    MessageBox.Show("您选择的对象中未找到任何有效文字。");
+                    return;
+                    }
 
                 LoadTextBlocks(textBlocks);
                 }
-            catch (System.Exception ex) { MessageBox.Show($"提取文字时出错: {ex.Message}"); }
+            catch (System.Exception ex)
+                {
+                MessageBox.Show($"提取文字时出错: {ex.Message}");
+                }
+            finally
+                {
+                // 最终保障：确保窗口在任何情况下都能显示回来
+                if (!mainWindow.IsVisible)
+                    {
+                    mainWindow.Show();
+                    mainWindow.Activate();
+                    }
+                }
             }
 
         private async void OnTranslate(object parameter)
             {
+            if (IsModelListEnabled && !string.IsNullOrWhiteSpace(CurrentModelInput))
+                {
+                // 优先使用用户实时输入的模型文本
+                CurrentProfile.LastSelectedModel = CurrentModelInput;
+
+                // 如果这个模型是全新的，则自动添加到当前配置的模型列表中
+                if (!ModelList.Contains(CurrentModelInput))
+                    {
+                    ModelList.Add(CurrentModelInput);
+                    CurrentProfile.Models.Add(CurrentModelInput);
+                    }
+                }
             if (parameter is PasswordBox passwordBox)
                 {
                 CurrentProfile.ApiKey = passwordBox.Password;
@@ -252,15 +396,16 @@ namespace CADTranslator.UI.ViewModels
                     translator = new BaiduTranslator(CurrentProfile.UserId, CurrentProfile.ApiKey);
                     break;
                 case ApiServiceType.Gemini:
-                    translator = new GeminiTranslator(CurrentProfile.ApiKey);
+                    // 修正：将模型传递给构造函数
+                    translator = new GeminiTranslator(CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
                     break;
                 case ApiServiceType.OpenAI:
-                    // 我们将用户在UI上选择的模型(LastSelectedModel)传递给翻译器
-                    string selectedModel = string.IsNullOrWhiteSpace(CurrentProfile.LastSelectedModel) ? "gpt-3.5-turbo" : CurrentProfile.LastSelectedModel;
+                    string selectedModel = string.IsNullOrWhiteSpace(CurrentProfile.LastSelectedModel) ? "gpt-4o" : CurrentProfile.LastSelectedModel;
                     translator = new OpenAiTranslator(CurrentProfile.ApiKey, selectedModel);
                     break;
                 case ApiServiceType.Custom:
-                    translator = new CustomTranslator(CurrentProfile.ApiEndpoint, CurrentProfile.ApiKey);
+                    // 修正：将模型传递给构造函数
+                    translator = new CustomTranslator(CurrentProfile.ApiEndpoint, CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
                     break;
                 default:
                     MessageBox.Show("当前选择的API服务尚未实现。");
@@ -285,9 +430,18 @@ namespace CADTranslator.UI.ViewModels
             finally { IsBusy = false; }
             }
 
-        private void OnApplyToCad(object parameter)
+        private async void OnApplyToCad(object parameter)
             {
-            _cadLayoutService.ApplyTranslationToCad(TextBlockList);
+            StatusMessage = ""; // 清空旧消息
+            SwitchToAutoCad(); // 切换到CAD窗口
+
+            // 将核心操作放到后台线程，防止UI卡顿
+            bool success = await Task.Run(() => _cadLayoutService.ApplyTranslationToCad(TextBlockList));
+
+            if (!success)
+                {
+                StatusMessage = "错误：应用到CAD失败，请检查CAD命令行获取详细信息。";
+                }
             }
 
         private void OnGetModels(object parameter)
@@ -297,7 +451,22 @@ namespace CADTranslator.UI.ViewModels
 
         private void OnAddDefaultModel(object parameter)
             {
-            MessageBox.Show("此功能待实现。");
+            if (CurrentProfile == null) return;
+
+            string newModel = "default-model"; // 示例模型
+            if (!ModelList.Contains(newModel))
+                {
+                ModelList.Add(newModel);
+                CurrentProfile.Models.Add(newModel); // 确保也更新到源数据
+                CurrentProfile.LastSelectedModel = newModel; // 自动选中新增的模型
+                OnPropertyChanged(nameof(CurrentProfile)); // 通知UI更新
+                SaveSettings(); // 自动保存
+                MessageBox.Show($"已成功为当前配置增加模型: {newModel}");
+                }
+            else
+                {
+                MessageBox.Show("默认模型已存在。");
+                }
             }
 
         // --- 表格操作命令 ---

@@ -28,9 +28,8 @@ namespace CADTranslator.Services
             }
 
         // 这是之前从后台代码移动过来的核心方法
-        public void ApplyTranslationToCad(ObservableCollection<TextBlockViewModel> textBlockList)
+        public bool ApplyTranslationToCad(ObservableCollection<TextBlockViewModel> textBlockList)
             {
-            // 方法内部不再需要获取doc、db、editor，因为它们已经是类的成员了
             try
                 {
                 using (_doc.LockDocument())
@@ -42,27 +41,21 @@ namespace CADTranslator.Services
                         foreach (var item in textBlockList)
                             {
                             if (string.IsNullOrWhiteSpace(item.TranslatedText) || item.SourceObjectIds == null || !item.SourceObjectIds.Any()) continue;
-
                             var firstObjectId = item.SourceObjectIds.First();
                             if (firstObjectId.IsNull || firstObjectId.IsErased) continue;
-
                             var baseEntity = tr.GetObject(firstObjectId, OpenMode.ForRead) as Entity;
                             if (baseEntity == null) continue;
-
                             foreach (var objectId in item.SourceObjectIds)
                                 {
                                 if (objectId.IsNull || objectId.IsErased) continue;
                                 var entityToErase = tr.GetObject(objectId, OpenMode.ForWrite) as Entity;
                                 entityToErase?.Erase();
                                 }
-
                             string singleLineText = item.TranslatedText.Replace('\n', ' ').Replace('\r', ' ');
-
                             using (DBText newText = new DBText())
                                 {
                                 newText.TextString = singleLineText;
                                 newText.SetPropertiesFrom(baseEntity);
-
                                 if (baseEntity is DBText originalDbText)
                                     {
                                     newText.Position = originalDbText.Position;
@@ -79,6 +72,7 @@ namespace CADTranslator.Services
                                         }
                                     }
                                 else if (baseEntity is MText originalMText)
+
                                     {
                                     newText.Position = originalMText.Location;
                                     newText.Height = originalMText.TextHeight;
@@ -89,19 +83,20 @@ namespace CADTranslator.Services
                                     }
 
                                 if (newText.Height <= 0) newText.Height = 2.5;
-
                                 modelSpace.AppendEntity(newText);
                                 tr.AddNewlyCreatedDBObject(newText, true);
                                 }
                             }
                         tr.Commit();
                         _editor.WriteMessage("\n所有翻译已成功应用到CAD图纸！");
+                        return true; // 操作成功，返回 true
                         }
                     }
                 }
             catch (System.Exception ex)
                 {
                 _editor.WriteMessage($"\n将翻译应用到CAD时发生严重错误: {ex.Message}");
+                return false; // 操作失败，返回 false
                 }
             }
         }
