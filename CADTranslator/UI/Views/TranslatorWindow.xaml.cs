@@ -11,8 +11,7 @@ namespace CADTranslator.UI.Views
         public TranslatorWindow()
             {
             InitializeComponent();
-
-            var viewModel = new TranslatorViewModel();
+            var viewModel = new TranslatorViewModel(this);
             this.DataContext = viewModel;
             }
 

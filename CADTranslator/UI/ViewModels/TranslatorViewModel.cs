@@ -47,6 +47,7 @@ namespace CADTranslator.UI.ViewModels
         private readonly SettingsService _settingsService;
         private readonly CadTextService _cadTextService;
         private readonly CadLayoutService _cadLayoutService;
+        private readonly Window _ownerWindow;
 
         //API辅助
         private string _statusMessage;
@@ -181,14 +182,16 @@ namespace CADTranslator.UI.ViewModels
         public ICommand EditCommand { get; }
         public ICommand GetModelsCommand { get; }
         public ICommand AddDefaultModelCommand { get; }
+        public ICommand ManageModelsCommand { get; } // 将 AddDefaultModelCommand 重命名
 
         #endregion
 
         #region --- 构造函数 (Constructor) ---
 
-        public TranslatorViewModel()
+        public TranslatorViewModel(Window owner)
             {
             // 初始化服务
+            _ownerWindow = owner;
             _settingsService = new SettingsService();
             _cadTextService = new CadTextService(Application.DocumentManager.MdiActiveDocument);
             _cadLayoutService = new CadLayoutService(Application.DocumentManager.MdiActiveDocument); // 传入Doc
@@ -207,8 +210,7 @@ namespace CADTranslator.UI.ViewModels
             SplitCommand = new RelayCommand(OnSplit, p => p is TextBlockViewModel);
             AddCommand = new RelayCommand(OnAdd);
             EditCommand = new RelayCommand(OnEdit, p => p is TextBlockViewModel);
-            GetModelsCommand = new RelayCommand(OnGetModels, p => IsModelListEnabled);
-            AddDefaultModelCommand = new RelayCommand(OnAddDefaultModel);
+            ManageModelsCommand = new RelayCommand(OnManageModels, p => IsModelListEnabled); // 绑定到新方法
 
             // 启动时加载设置
             LoadSettings();
@@ -444,28 +446,46 @@ namespace CADTranslator.UI.ViewModels
                 }
             }
 
-        private void OnGetModels(object parameter)
+        private void OnManageModels(object parameter)
             {
-            MessageBox.Show("此功能待实现：将调用API获取可用模型列表。");
-            }
-
-        private void OnAddDefaultModel(object parameter)
-            {
-            if (CurrentProfile == null) return;
-
-            string newModel = "default-model"; // 示例模型
-            if (!ModelList.Contains(newModel))
+            if (CurrentProfile == null)
                 {
-                ModelList.Add(newModel);
-                CurrentProfile.Models.Add(newModel); // 确保也更新到源数据
-                CurrentProfile.LastSelectedModel = newModel; // 自动选中新增的模型
-                OnPropertyChanged(nameof(CurrentProfile)); // 通知UI更新
-                SaveSettings(); // 自动保存
-                MessageBox.Show($"已成功为当前配置增加模型: {newModel}");
+                MessageBox.Show("请先选择一个API配置。");
+                return;
                 }
-            else
+
+            // 1. 创建视图模型时，传入当前配置的名称和模型列表
+            var modelManagementVM = new ModelManagementViewModel(CurrentProfile.ProfileName, CurrentProfile.Models);
+
+            // 2. 创建窗口
+            var modelWindow = new ModelManagementWindow(modelManagementVM)
                 {
-                MessageBox.Show("默认模型已存在。");
+                Owner = _ownerWindow
+                };
+
+            // 3. 显示对话框并处理结果
+            if (modelWindow.ShowDialog() == true)
+                {
+                var finalModels = modelManagementVM.GetFinalModels();
+
+                // 更新当前API配置的模型列表
+                CurrentProfile.Models.Clear();
+                finalModels.ForEach(m => CurrentProfile.Models.Add(m));
+
+                // 更新UI上的下拉列表
+                ModelList.Clear();
+                finalModels.ForEach(m => ModelList.Add(m));
+
+                // 检查并更新当前选中的模型
+                if (!string.IsNullOrWhiteSpace(CurrentModelInput) && !finalModels.Contains(CurrentModelInput))
+                    {
+                    CurrentModelInput = finalModels.FirstOrDefault();
+                    OnPropertyChanged(nameof(CurrentModelInput));
+                    }
+
+                // 保存所有配置到文件
+                SaveSettings();
+                StatusMessage = $"配置 '{CurrentProfile.ProfileName}' 的模型列表已成功保存！";
                 }
             }
 

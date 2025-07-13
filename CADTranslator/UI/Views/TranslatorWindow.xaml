@@ -145,9 +145,9 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
                                     <ui:Button Grid.Column="0"
-                                               Content="增加默认模型"
+                                               Content="管理模型..."
                                                Margin="0,0,4,0"
-                                               Command="{Binding AddDefaultModelCommand}"
+                                               Command="{Binding ManageModelsCommand}"
                                                IsEnabled="{Binding IsModelListEnabled}" />
                                     <ui:Button Grid.Column="1"
                                                Content="获取模型列表"

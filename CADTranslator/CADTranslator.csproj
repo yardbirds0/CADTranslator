@@ -188,6 +188,8 @@
     <Compile Include="Services\Translation\OpenAiTranslator.cs" />
     <Compile Include="UI\Helpers\InverseBooleanConverter.cs" />
     <Compile Include="UI\Helpers\PasswordBoxHelper.cs" />
+    <Compile Include="UI\ViewModels\ModelManagementViewModel.cs" />
+    <Compile Include="UI\ViewModels\ModelViewModel.cs" />
     <Compile Include="UI\ViewModels\RelayCommand.cs" />
     <Compile Include="UI\ViewModels\TranslatorViewModel.cs" />
     <Compile Include="UI\Views\EditWindow.xaml.cs">
@@ -203,6 +205,9 @@
     <Compile Include="UI\ViewModels\TextBlockViewModel.cs" />
     <Compile Include="Common\TextFormatter.cs" />
     <Compile Include="AutoCAD\Jigs\TextLayoutJig.cs" />
+    <Compile Include="UI\Views\ModelManagementWindow.xaml.cs">
+      <DependentUpon>ModelManagementWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="UI\Views\TranslatorWindow.xaml.cs">
       <DependentUpon>TranslatorWindow.xaml</DependentUpon>
     </Compile>
@@ -210,6 +215,10 @@
   </ItemGroup>
   <ItemGroup>
     <Page Include="UI\Views\EditWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="UI\Views\ModelManagementWindow.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
