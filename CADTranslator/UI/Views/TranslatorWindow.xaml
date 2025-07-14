@@ -244,6 +244,15 @@
                                                 IsReadOnly="False">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
+                                    <TextBlock Text="{Binding TranslatedText}"
+                                               TextWrapping="Wrap"
+                                               Margin="5"
+                                               Padding="2" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
                                     <TextBox Text="{Binding TranslatedText, UpdateSourceTrigger=PropertyChanged}"
                                              TextWrapping="Wrap"
                                              AcceptsReturn="True"
@@ -251,7 +260,7 @@
                                              Background="Transparent"
                                              Margin="5" />
                                 </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
                         </DataGridTemplateColumn>
                     </DataGrid.Columns>
                 </DataGrid>
@@ -272,9 +281,7 @@
                                    Margin="0,0,10,0"
                                    Command="{Binding SplitCommand}"
                                    CommandParameter="{Binding ElementName=dataGridBlocks, Path=SelectedItem}" />
-                        <ui:Button Content="新增"
-                                   Margin="0,0,10,0"
-                                   Command="{Binding AddCommand}" />
+          
                         <ui:Button Content="删除"
                                    Appearance="Danger"
                                    Command="{Binding DeleteCommand}"
@@ -321,9 +328,10 @@
                                   Grid.Column="0"
                                   VerticalScrollBarVisibility="Auto">
                         <ItemsControl ItemsSource="{Binding StatusLog}">
+
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBox Text="{Binding}"
+                                    <TextBox Text="{Binding Path=., Mode=OneWay}"
                                              TextWrapping="Wrap"
                                              IsReadOnly="True"
                                              BorderThickness="0"

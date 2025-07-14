@@ -147,7 +147,6 @@ namespace CADTranslator.UI.ViewModels
         public ICommand ApplyToCadCommand { get; }
         public ICommand MergeCommand { get; }
         public ICommand SplitCommand { get; }
-        public ICommand AddCommand { get; }
         public ICommand DeleteCommand { get; }
         public ICommand EditCommand { get; }
         public ICommand ManageModelsCommand { get; }
@@ -171,7 +170,6 @@ namespace CADTranslator.UI.ViewModels
             MergeCommand = new RelayCommand(OnMerge, p => p is IList<object> list && list.Count > 1);
             DeleteCommand = new RelayCommand(OnDelete, p => p is IList<object> list && list.Count > 0);
             SplitCommand = new RelayCommand(OnSplit, p => p is TextBlockViewModel);
-            AddCommand = new RelayCommand(OnAdd);
             EditCommand = new RelayCommand(OnEdit, p => p is TextBlockViewModel);
             ManageModelsCommand = new RelayCommand(OnManageModels, p => IsModelListEnabled);
 
@@ -183,107 +181,146 @@ namespace CADTranslator.UI.ViewModels
         #region --- 核心方法 ---
 
         private async void OnTranslate(object parameter)
-        {
-            // ... (省略前面的API配置检查代码，保持不变) ...
-            if (IsModelListEnabled && !string.IsNullOrWhiteSpace(CurrentModelInput))
             {
+            // --- API配置检查 ---
+            if (CurrentProfile == null)
+                {
+                MessageBox.Show("请先选择一个API配置。");
+                return;
+                }
+            if (IsModelListEnabled && !string.IsNullOrWhiteSpace(CurrentModelInput))
+                {
                 CurrentProfile.LastSelectedModel = CurrentModelInput;
                 if (!ModelList.Contains(CurrentModelInput))
-                {
+                    {
                     ModelList.Add(CurrentModelInput);
                     CurrentProfile.Models.Add(CurrentModelInput);
+                    }
                 }
-            }
             if (parameter is PasswordBox passwordBox)
-            {
+                {
                 CurrentProfile.ApiKey = passwordBox.Password;
-            }
-            if (CurrentProfile == null)
-            {
-                MessageBox.Show("请先完成API配置。");
-                return;
-            }
-
+                }
 
             IsBusy = true;
-            ITranslator translator;
-            // ... (省略创建 translator 实例的代码，保持不变) ...
-            switch (SelectedApiService)
-            {
-                case ApiServiceType.Baidu:
-                    translator = new BaiduTranslator(CurrentProfile.UserId, CurrentProfile.ApiKey);
-                    break;
-                case ApiServiceType.Gemini:
-                    translator = new GeminiTranslator(CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
-                    break;
-                case ApiServiceType.OpenAI:
-                    translator = new OpenAiTranslator(CurrentProfile.ApiKey, string.IsNullOrWhiteSpace(CurrentProfile.LastSelectedModel) ? "gpt-4o" : CurrentProfile.LastSelectedModel);
-                    break;
-                case ApiServiceType.Custom:
-                    translator = new CustomTranslator(CurrentProfile.ApiEndpoint, CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
-                    break;
-                default:
-                    MessageBox.Show("当前选择的API服务尚未实现。");
-                    IsBusy = false;
-                    return;
-            }
-
-            var itemsToTranslate = TextBlockList.Where(item => string.IsNullOrWhiteSpace(item.TranslatedText) && !string.IsNullOrWhiteSpace(item.OriginalText)).ToList();
-            int totalItems = itemsToTranslate.Count;
-            int completedItems = 0;
-
-            Log("任务开始", clearPrevious: true);
-            Log($"准备翻译 {totalItems} 个项目...");
-            ProgressValue = 0;
-            ProgressText = $"(0/{totalItems}) 0%";
-
-            foreach (var item in itemsToTranslate)
-            {
-                var stopwatch = new System.Diagnostics.Stopwatch();
-                string textToTranslate = string.IsNullOrWhiteSpace(GlobalPrompt) ? item.OriginalText : $"{GlobalPrompt}\n\n{item.OriginalText}";
-
-                string initialLog = $"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems + 1}/{totalItems} 项翻译正在进行...";
-                Log(initialLog, addNewLine: true, isListItem: true);
-
-                var translationTask = translator.TranslateAsync(textToTranslate, SourceLanguage, TargetLanguage);
-                stopwatch.Start();
-
-                while (!translationTask.IsCompleted)
+            try // ▼▼▼ 核心修改：所有主要逻辑都包裹在一个大的 try 块中 ▼▼▼
                 {
-                    await Task.Delay(500); // 每0.5秒更新一次计时
-                    UpdateLastLog($"{initialLog} 已进行 {stopwatch.Elapsed.Seconds} 秒");
+                var totalStopwatch = new System.Diagnostics.Stopwatch();
+                totalStopwatch.Start();
+
+                Log("任务开始", clearPrevious: true);
+
+                ITranslator translator;
+                try
+                    {
+                    // (创建 translator 实例的代码保持不变)
+                    switch (SelectedApiService)
+                        {
+                        case ApiServiceType.Baidu:
+                            translator = new BaiduTranslator(CurrentProfile.UserId, CurrentProfile.ApiKey);
+                            break;
+                        case ApiServiceType.Gemini:
+                            translator = new GeminiTranslator(CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
+                            break;
+                        case ApiServiceType.OpenAI:
+                            translator = new OpenAiTranslator(CurrentProfile.ApiKey, string.IsNullOrWhiteSpace(CurrentProfile.LastSelectedModel) ? "gpt-4o" : CurrentProfile.LastSelectedModel);
+                            break;
+                        case ApiServiceType.Custom:
+                            translator = new CustomTranslator(CurrentProfile.ApiEndpoint, CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
+                            break;
+                        default:
+                            MessageBox.Show("当前选择的API服务尚未实现。");
+                            return; // 直接返回，finally 块会自动执行
+                        }
+                    }
+                catch (ArgumentNullException ex)
+                    {
+                    string friendlyMessage = $"配置错误：{ex.ParamName} 不能为空，请在API设置中补充完整。";
+                    Log(friendlyMessage);
+                    MessageBox.Show(friendlyMessage, "配置不完整", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return; // 直接返回，finally 块会自动执行
+                    }
+
+                var itemsToTranslate = TextBlockList.Where(item => string.IsNullOrWhiteSpace(item.TranslatedText) && !string.IsNullOrWhiteSpace(item.OriginalText)).ToList();
+                int totalItems = itemsToTranslate.Count;
+                int completedItems = 0;
+
+                Log($"准备翻译 {totalItems} 个项目...");
+                ProgressValue = 0;
+                ProgressText = $"(0/{totalItems}) 0%";
+
+                foreach (var item in itemsToTranslate)
+                    {
+                    var stopwatch = new System.Diagnostics.Stopwatch();
+                    string textToTranslate = string.IsNullOrWhiteSpace(GlobalPrompt) ? item.OriginalText : $"{GlobalPrompt}\n\n{item.OriginalText}";
+                    string initialLog = $"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems + 1}/{totalItems} 项翻译正在进行...";
+                    Log(initialLog, addNewLine: true, isListItem: true);
+                    var translationTask = translator.TranslateAsync(textToTranslate, SourceLanguage, TargetLanguage);
+                    stopwatch.Start();
+
+                    // ▼▼▼ 核心修改：在等待翻译完成的同时，启动一个实时计时器 ▼▼▼
+                    while (!translationTask.IsCompleted)
+                        {
+                        // 每隔 500 毫秒（半秒）更新一次计时，让刷新看起来更平滑
+                        await Task.Delay(500);
+
+                        // 只有当任务仍在运行时才更新日志
+                        if (!translationTask.IsCompleted)
+                            {
+                            UpdateLastLog($"{initialLog} 已进行 {stopwatch.Elapsed.Seconds} 秒");
+                            }
+                        }
+                    // ▲▲▲ 修改结束 ▲▲▲
+
+                    stopwatch.Stop();
+
+                    try
+                        {
+                        // 获取已经完成的翻译任务的结果
+                        string result = await translationTask;
+
+                        if (result.StartsWith("翻译失败：") || result.StartsWith("调用") || result.StartsWith("请求失败:") || result.StartsWith("百度API返回错误:"))
+                            {
+                            throw new Exception(result);
+                            }
+
+                        item.TranslatedText = result;
+                        completedItems++;
+                        ProgressValue = (int)((double)completedItems / totalItems * 100);
+                        ProgressText = $"({completedItems}/{totalItems}) {ProgressValue}%";
+                        UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems}/{totalItems} 项翻译完成。总共用时 {stopwatch.Elapsed.TotalSeconds:F1} 秒");
+                        }
+                    catch (Exception ex)
+                        {
+                        // --- 统一的失败处理中心 ---
+                        if (stopwatch.IsRunning) stopwatch.Stop();
+
+                        string errorMessage = ex.Message.Replace('\t', ' ');
+                        UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] [翻译失败] 第 {completedItems + 1} 项，原因: {errorMessage}");
+                        Log("任务因错误而中断。");
+                        item.TranslatedText = errorMessage; // 将错误信息填入译文栏
+
+                        return; // 中断任务，提前退出方法。finally块依然会执行。
+                        }
+                    } // foreach 循环结束
+
+                totalStopwatch.Stop();
+                if (totalItems > 0)
+                    {
+                    Log($"全部翻译任务已成功完成！总共用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒");
+                    }
+                else
+                    {
+                    Log("没有需要翻译的新内容。");
+                    }
                 }
-
-                stopwatch.Stop();
-                string result = await translationTask;
-
-                if (result.Contains("异常") || result.Contains("失败") || result.Contains("Error"))
+            finally
                 {
-                    UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] [翻译失败] 第 {completedItems + 1} 项: {result}");
-                    Log("任务因错误而中断。");
-                    IsBusy = false;
-                    return; // 中断整个流程
+                // ▼▼▼ 无论发生什么，这里都将被执行，确保UI被解锁 ▼▼▼
+                IsBusy = false;
                 }
-
-                item.TranslatedText = result;
-                completedItems++;
-                ProgressValue = (int)((double)completedItems / totalItems * 100);
-                ProgressText = $"({completedItems}/{totalItems}) {ProgressValue}%";
-                UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems}/{totalItems} 项翻译完成。总共用时 {stopwatch.Elapsed.TotalSeconds:F1} 秒");
             }
 
-            if (totalItems > 0)
-            {
-                Log("全部翻译任务已成功完成！");
-            }
-            else
-            {
-                Log("没有需要翻译的新内容。");
-            }
-            IsBusy = false;
-        }
-
-        // ... (省略 OnSelectText, OnApplyToCad, OnManageModels 等其他方法，它们现在都将调用新的 Log 方法) ...
 
         private void OnSelectText(object parameter)
         {
@@ -377,6 +414,8 @@ namespace CADTranslator.UI.ViewModels
 
             var formattedMessage = isListItem ? message : $"[{DateTime.Now:HH:mm:ss}] {message}";
 
+            CadBridgeService.WriteToCommandLine(formattedMessage);
+
             if (addNewLine)
             {
                 _ownerWindow.Dispatcher.Invoke(() => StatusLog.Add(formattedMessage));
@@ -385,6 +424,7 @@ namespace CADTranslator.UI.ViewModels
 
         private void UpdateLastLog(string message)
         {
+            CadBridgeService.WriteToCommandLine(message);
             if (StatusLog.Any())
             {
                 _ownerWindow.Dispatcher.Invoke(() => StatusLog[StatusLog.Count - 1] = message);
@@ -511,18 +551,7 @@ namespace CADTranslator.UI.ViewModels
             }
             RenumberItems();
         }
-        private void OnAdd(object parameter)
-        {
-            int insertIndex = TextBlockList.Count;
-            var newItem = new TextBlockViewModel
-            {
-                OriginalText = "[请双击此处以编辑原文]",
-                Character = "N",
-                BgColor = _characterBrushes[_brushIndex++ % _characterBrushes.Length]
-            };
-            TextBlockList.Insert(insertIndex, newItem);
-            RenumberItems();
-        }
+
         private void OnEdit(object selectedItem)
         {
             if (!(selectedItem is TextBlockViewModel selectedVM)) return;

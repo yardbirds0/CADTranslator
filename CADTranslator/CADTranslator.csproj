@@ -179,6 +179,7 @@
     <Compile Include="Models\ApiProfile.cs" />
     <Compile Include="Models\ApiServiceConfig.cs" />
     <Compile Include="Models\LanguageItem.cs" />
+    <Compile Include="Services\CadBridgeService.cs" />
     <Compile Include="Services\CadLayoutService.cs" />
     <Compile Include="Services\CadTextService.cs" />
     <Compile Include="Services\SettingsService.cs" />

@@ -1,8 +1,11 @@
 ﻿// 1. 确保 using 声明中包含了 Wpf.Ui.Controls
 using CADTranslator.UI.ViewModels;
 using System;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Collections.Specialized;
 using Wpf.Ui.Controls;
 
 namespace CADTranslator.UI.Views
@@ -15,15 +18,39 @@ namespace CADTranslator.UI.Views
             InitializeComponent();
             var viewModel = new TranslatorViewModel(this);
             this.DataContext = viewModel;
+
+            if (viewModel.StatusLog is INotifyCollectionChanged collection)
+                {
+                collection.CollectionChanged += LogItems_CollectionChanged;
+                }
             }
 
         private void DataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
             {
-            if (this.DataContext is TranslatorViewModel viewModel && dataGridBlocks.SelectedItem != null)
+            // 检查事件源是否在 DataGridCell 内
+            var dependencyObject = (DependencyObject)e.OriginalSource;
+            while (dependencyObject != null && !(dependencyObject is DataGridCell))
                 {
-                if (viewModel.EditCommand.CanExecute(dataGridBlocks.SelectedItem))
+                dependencyObject = VisualTreeHelper.GetParent(dependencyObject);
+                }
+
+            if (dependencyObject is DataGridCell cell)
+                {
+                // 获取单元格所在的列
+                var column = cell.Column;
+
+                // 如果列的表头是“原文”，才执行编辑命令
+                if (column != null && column.Header?.ToString() == "原文")
                     {
-                    viewModel.EditCommand.Execute(dataGridBlocks.SelectedItem);
+                    if (this.DataContext is TranslatorViewModel viewModel && dataGridBlocks.SelectedItem != null)
+                        {
+                        if (viewModel.EditCommand.CanExecute(dataGridBlocks.SelectedItem))
+                            {
+                            viewModel.EditCommand.Execute(dataGridBlocks.SelectedItem);
+                            }
+                        }
+                    // 阻止事件继续传播，防止其他列（如译文的TextBox）的默认双击行为被触发
+                    e.Handled = true;
                     }
                 }
             }
@@ -54,5 +81,20 @@ namespace CADTranslator.UI.Views
             }
         }
 
-    }
+        private void LogItems_CollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+            {
+            // 当日志集合有新项被添加时
+            if (e.Action == NotifyCollectionChangedAction.Add)
+                {
+                // 使用Dispatcher确保操作在UI线程上安全执行
+                Dispatcher.BeginInvoke((Action)(() =>
+                {
+                    // 滚动到 ScrollViewer 的最底部
+                    LogScrollViewer.ScrollToEnd();
+                }));
+                }
+            }
+
+
+        }
     }

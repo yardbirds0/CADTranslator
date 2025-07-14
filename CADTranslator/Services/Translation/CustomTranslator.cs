@@ -80,7 +80,7 @@ namespace CADTranslator.Services
             catch (Exception ex)
                 {
                 // 提供更详细的异常信息，帮助调试
-                return $"调用自定义API({_endpoint})时发生异常: {ex.Message}";
+                return $"调用自定义API({_endpoint})时发生异常: {ex.Message.Replace('\t', ' ')}";
                 }
             }
         }

@@ -49,7 +49,7 @@ namespace CADTranslator.Services
                 }
             catch (Exception ex)
                 {
-                return $"调用OpenAI API时发生异常: {ex.Message}";
+                return $"调用OpenAI API时发生异常: {ex.Message.Replace('\t', ' ')}";
                 }
             }
         }

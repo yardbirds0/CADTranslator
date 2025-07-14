@@ -80,8 +80,8 @@ namespace CADTranslator.Services
                 }
                 else if (!string.IsNullOrEmpty(result?.ErrorCode))
                 {
-                    throw new Exception($"百度API返回错误: Code={result.ErrorCode}, Message={result.ErrorMessage}");
-                }
+                    return $"百度API返回错误: Code={result.ErrorCode}, Message={result.ErrorMessage?.Replace('\t', ' ')}";
+                    }
                 else
                 {
                     return "翻译失败：API未返回有效或可解析的结果。";
@@ -89,8 +89,8 @@ namespace CADTranslator.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"调用百度翻译API时出错: {ex.Message}", ex);
-            }
+                return $"调用百度翻译API时出错: {ex.Message.Replace('\t', ' ')}";
+                }
         }
 
         // MD5签名生成算法保持不变
