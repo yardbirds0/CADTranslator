@@ -21,10 +21,8 @@
                 <ui:ThemesDictionary Theme="Light" />
                 <ui:ControlsDictionary />
             </ResourceDictionary.MergedDictionaries>
-
             <helpers:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
             <helpers:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter" />
-
             <Style TargetType="{x:Type DataGridCell}"
                    BasedOn="{StaticResource {x:Type DataGridCell}}">
                 <Setter Property="SnapsToDevicePixels"
@@ -96,37 +94,31 @@
                             </Grid>
                         </ListBoxItem>
                     </ListBox>
-
                     <StackPanel Margin="20,15">
                         <TextBlock Text="API 设置"
                                    FontWeight="Bold"
                                    FontSize="16"
                                    Margin="0,0,0,15" />
-
                         <TextBlock Text="API 服务"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
                         <ComboBox ItemsSource="{Binding ApiServiceOptions}"
                                   SelectedItem="{Binding SelectedApiService}" />
-
                         <TextBlock Text="用户 ID"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
                         <TextBox Text="{Binding CurrentProfile.UserId, UpdateSourceTrigger=PropertyChanged}"
                                  IsEnabled="{Binding IsUserIdEnabled}" />
-
                         <TextBlock Text="API 密钥"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
                         <TextBox Text="{Binding CurrentProfile.ApiKey, UpdateSourceTrigger=PropertyChanged}"
                                  IsEnabled="{Binding IsApiKeyEnabled}" />
-
                         <TextBlock Text="API URL"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
                         <TextBox Text="{Binding CurrentProfile.ApiEndpoint, UpdateSourceTrigger=PropertyChanged}"
                                  IsEnabled="{Binding IsApiUrlEnabled}" />
-
                         <TextBlock Text="模型列表"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
@@ -158,7 +150,6 @@
                                 </Grid>
                             </StackPanel>
                         </Border>
-
                         <TextBlock Text="源语言"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
@@ -166,7 +157,6 @@
                                   DisplayMemberPath="DisplayName"
                                   SelectedValuePath="Value"
                                   SelectedValue="{Binding SourceLanguage}" />
-
                         <TextBlock Text="目标语言"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
@@ -174,7 +164,6 @@
                                   DisplayMemberPath="DisplayName"
                                   SelectedValuePath="Value"
                                   SelectedValue="{Binding TargetLanguage}" />
-
                         <TextBlock Text="提示词"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
@@ -191,20 +180,18 @@
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="40" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
+                <RowDefinition Height="2*" />
+                <RowDefinition Height="5" />
+                <RowDefinition Height="1*" />
             </Grid.RowDefinitions>
-
             <ui:TitleBar Grid.Row="0"
                          CanMaximize="False" />
-
             <Grid Grid.Row="1"
                   Margin="20,0,20,10">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-
                 <DataGrid Name="dataGridBlocks"
                           Grid.Row="0"
                           ColumnHeaderStyle="{StaticResource DataGridColumnHeaderStyleWithBorders}"
@@ -228,7 +215,6 @@
                                 </Style>
                             </DataGridTextColumn.ElementStyle>
                         </DataGridTextColumn>
-
                         <DataGridTextColumn Header="编号"
                                             Binding="{Binding Character}"
                                             Width="60"
@@ -269,55 +255,109 @@
                         </DataGridTemplateColumn>
                     </DataGrid.Columns>
                 </DataGrid>
-
-                <StackPanel Grid.Row="1"
-                            Orientation="Horizontal"
-                            HorizontalAlignment="Left"
-                            Margin="0,10,0,0">
-                    <ui:Button Content="合并"
-                               Margin="0,0,10,0"
-                               Command="{Binding MergeCommand}"
-                               CommandParameter="{Binding ElementName=dataGridBlocks, Path=SelectedItems}" />
-                    <ui:Button Content="拆分"
-                               Margin="0,0,10,0"
-                               Command="{Binding SplitCommand}"
-                               CommandParameter="{Binding ElementName=dataGridBlocks, Path=SelectedItem}" />
-                    <ui:Button Content="新增"
-                               Margin="0,0,10,0"
-                               Command="{Binding AddCommand}" />
-                    <ui:Button Content="删除"
-                               Margin="0,0,10,0"
-                               Appearance="Danger"
-                               Command="{Binding DeleteCommand}"
-                               CommandParameter="{Binding ElementName=dataGridBlocks, Path=SelectedItems}" />
-                </StackPanel>
+                <Grid Grid.Row="1"
+                      Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Left">
+                        <ui:Button Content="合并"
+                                   Margin="0,0,10,0"
+                                   Command="{Binding MergeCommand}"
+                                   CommandParameter="{Binding ElementName=dataGridBlocks, Path=SelectedItems}" />
+                        <ui:Button Content="拆分"
+                                   Margin="0,0,10,0"
+                                   Command="{Binding SplitCommand}"
+                                   CommandParameter="{Binding ElementName=dataGridBlocks, Path=SelectedItem}" />
+                        <ui:Button Content="新增"
+                                   Margin="0,0,10,0"
+                                   Command="{Binding AddCommand}" />
+                        <ui:Button Content="删除"
+                                   Appearance="Danger"
+                                   Command="{Binding DeleteCommand}"
+                                   CommandParameter="{Binding ElementName=dataGridBlocks, Path=SelectedItems}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Right">
+                        <ui:Button Content="选择CAD文字"
+                                   Appearance="Primary"
+                                   Icon="Scan24"
+                                   Command="{Binding SelectTextCommand}"
+                                   CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}" />
+                        <ui:Button Content="翻译全部"
+                                   Margin="10,0,0,0"
+                                   Command="{Binding TranslateCommand}" />
+                        <ui:Button Content="应用到CAD"
+                                   Margin="10,0,0,0"
+                                   Appearance="Success"
+                                   Command="{Binding ApplyToCadCommand}" />
+                    </StackPanel>
+                </Grid>
             </Grid>
 
-            <Border Grid.Row="2"
-                    Padding="20"
+            <GridSplitter Grid.Row="2"
+                          Height="5"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Center"
+                          Background="{DynamicResource ControlElevationBorderBrush}" />
+
+            <Border Grid.Row="3"
+                    Padding="15,10"
                     Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                     BorderThickness="0,1,0,0"
                     BorderBrush="{DynamicResource ControlElevationBorderBrush}">
                 <Grid>
-                    <TextBlock Text="{Binding StatusMessage}"
-                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                               HorizontalAlignment="Left"
-                               VerticalAlignment="Center"
-                               TextWrapping="Wrap" />
-                    <StackPanel HorizontalAlignment="Right">
-                        <StackPanel Orientation="Horizontal">
-                            <ui:Button Content="选择CAD文字"
-                                       Command="{Binding SelectTextCommand}"
-                                       CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}" />
-                            <ui:Button Content="翻译全部"
-                                       Margin="10,0,0,0"
-                                       Appearance="Primary"
-                                       Command="{Binding TranslateCommand}" />
-                            <ui:Button Content="应用到CAD"
-                                       Margin="10,0,0,0"
-                                       Appearance="Success"
-                                       Command="{Binding ApplyToCadCommand}" />
-                        </StackPanel>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="220" />
+                    </Grid.ColumnDefinitions>
+
+                    <ScrollViewer Name="LogScrollViewer"
+                                  Grid.Column="0"
+                                  VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding StatusLog}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBox Text="{Binding}"
+                                             TextWrapping="Wrap"
+                                             IsReadOnly="True"
+                                             BorderThickness="0"
+                                             Background="Transparent"
+                                             Margin="0,0,0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <VirtualizingStackPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <Border Grid.Column="1"
+                            Background="{DynamicResource ControlElevationBorderBrush}"
+                            Width="1"
+                            Margin="10,0" />
+
+                    <StackPanel Grid.Column="2"
+                                VerticalAlignment="Center">
+                        <TextBlock Text="当前任务进度"
+                                   Opacity="0.8"
+                                   Margin="0,0,0,5" />
+                        <Grid>
+                            <ProgressBar Value="{Binding ProgressValue}"
+                                         Height="20" />
+                            <TextBlock Text="{Binding ProgressText}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Foreground="White"
+                                       FontWeight="Bold" />
+                        </Grid>
                     </StackPanel>
                 </Grid>
             </Border>

@@ -233,5 +233,10 @@
   <ItemGroup>
     <Content Include="ILLink\ILLink.Descriptors.LibraryBuild.xml" />
   </ItemGroup>
+  <ItemGroup>
+    <Analyzer Include="E:\Softwares\Work\AutoCad2020\AutoCAD 2020\accoremgd.dll" />
+    <Analyzer Include="E:\Softwares\Work\AutoCad2020\AutoCAD 2020\acdbmgd.dll" />
+    <Analyzer Include="E:\Softwares\Work\AutoCad2020\AutoCAD 2020\acmgd.dll" />
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
