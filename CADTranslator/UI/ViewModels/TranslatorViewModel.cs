@@ -105,7 +105,8 @@ namespace CADTranslator.UI.ViewModels
                         ApiProfiles.Add(targetProfile);
                     }
                     CurrentProfile = targetProfile;
-                }
+                    SaveSettings();
+                    }
             }
         }
 
