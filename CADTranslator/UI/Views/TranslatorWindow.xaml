@@ -298,10 +298,31 @@
                         <ui:Button Content="翻译全部"
                                    Margin="10,0,0,0"
                                    Command="{Binding TranslateCommand}" />
-                        <ui:Button Content="应用到CAD"
-                                   Margin="10,0,0,0"
-                                   Appearance="Success"
-                                   Command="{Binding ApplyToCadCommand}" />
+
+                        <Border BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="8,5,8,5"
+                                Margin="10,0,0,0"
+                                VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button Content="应用到CAD"
+                                           Appearance="Success"
+                                           Command="{Binding ApplyToCadCommand}"
+                                           VerticalAlignment="Center" />
+
+                                <StackPanel VerticalAlignment="Center"
+                                            Margin="10,0,0,0">
+                                    <TextBlock Text="实时排版"
+                                               HorizontalAlignment="Center"
+                                               FontSize="10"
+                                               Opacity="0.8"
+                                               Margin="0,0,0,2" />
+                                    <ui:ToggleSwitch IsChecked="{Binding IsLiveLayoutEnabled}"
+                                                     VerticalAlignment="Center" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Grid>
             </Grid>

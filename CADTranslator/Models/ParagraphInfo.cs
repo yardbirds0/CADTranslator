@@ -1,5 +1,6 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using System.Collections.Generic;
 
 namespace CADTranslator.Models
 {
@@ -16,5 +17,6 @@ namespace CADTranslator.Models
         public Point3d OriginalAnchorPoint { get; set; }
         public bool ContainsSpecialPattern { get; set; } = false;
         public int OriginalSpaceCount { get; set; } = 0;
-    }
+        public List<ObjectId> SourceObjectIds { get; set; } = new List<ObjectId>();
+        }
 }

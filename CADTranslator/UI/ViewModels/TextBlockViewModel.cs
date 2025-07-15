@@ -1,12 +1,13 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using System.Collections.Generic;
 using System.ComponentModel;
+using Autodesk.AutoCAD.Geometry;
 using System.Windows.Media; // 需要引入此命名空间来使用 Brush 类型
 
 namespace CADTranslator.UI.ViewModels
-{
-    public class TextBlockViewModel : INotifyPropertyChanged
     {
+    public class TextBlockViewModel : INotifyPropertyChanged
+        {
         private string _originalText;
         private string _translatedText;
 
@@ -19,31 +20,37 @@ namespace CADTranslator.UI.ViewModels
         public int Id { get; set; }
 
         public string OriginalText
-        {
+            {
             get => _originalText;
             set { if (_originalText != value) { _originalText = value; OnPropertyChanged(nameof(OriginalText)); } }
-        }
+            }
 
         public string TranslatedText
-        {
+            {
             get => _translatedText;
             set
-            {
-                if (_translatedText != value)
                 {
+                if (_translatedText != value)
+                    {
                     _translatedText = value;
                     OnPropertyChanged(nameof(TranslatedText)); // 确保有这一行！
+                    }
                 }
             }
-        }
 
         public List<ObjectId> SourceObjectIds { get; set; } = new List<ObjectId>();
+
+        // ▼▼▼ 在这里添加新属性，用于携带图例信息 ▼▼▼
+        public ObjectId AssociatedGraphicsBlockId { get; set; } = ObjectId.Null;
+        public Point3d OriginalAnchorPoint { get; set; }
+
+
 
         public event PropertyChangedEventHandler PropertyChanged;
 
         protected void OnPropertyChanged(string propertyName)
-        {
+            {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            }
         }
     }
-}
