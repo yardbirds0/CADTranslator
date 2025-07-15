@@ -40,6 +40,7 @@ namespace CADTranslator.UI.ViewModels
         #endregion
 
         #region --- 字段 ---
+        private List<ObjectId> _deletableSourceIds = new List<ObjectId>();
         private readonly SettingsService _settingsService;
         private readonly AdvancedTextService _advancedTextService;
         private readonly CadLayoutService _cadLayoutService;
@@ -332,32 +333,44 @@ namespace CADTranslator.UI.ViewModels
                 mainWindow.Hide();
                 var ed = doc.Editor;
                 var selRes = ed.GetSelection();
-                mainWindow.Show();
-                mainWindow.Activate();
 
-                if (selRes.Status != PromptStatus.OK) return;
-
-                List<ParagraphInfo> paragraphInfos = _advancedTextService.ExtractAndProcessParagraphs(selRes.Value);
-
-                if (paragraphInfos.Count == 0)
+                // 【【【核心修改点：在这里加锁！】】】
+                // 在所有数据库操作开始前，先锁定文档
+                using (doc.LockDocument())
                     {
-                    Log("在选定对象中未找到任何有效文字。");
-                    MessageBox.Show("您选择的对象中未找到任何有效文字。");
-                    return;
-                    }
+                    // LockDocument 会自动处理光标切换，并确保后续操作的安全性
 
-                // ▼▼▼ 修正1：在这里转换数据时，把 OriginalAnchorPoint 也一并传递过来 ▼▼▼
-                var textBlocks = paragraphInfos.Select(p => new TextBlockViewModel
-                    {
-                    OriginalText = p.Text,
-                    SourceObjectIds = p.SourceObjectIds,
-                    AssociatedGraphicsBlockId = p.AssociatedGraphicsBlockId,
-                    OriginalAnchorPoint = p.OriginalAnchorPoint // <-- 新增的数据传递
-                    }).ToList();
-                // ▲▲▲ 修正结束 ▲▲▲
+                    if (selRes.Status != PromptStatus.OK)
+                        {
+                        // 如果用户取消了选择，也要在 Lock 内部处理，然后安全退出
+                        mainWindow.Show();
+                        mainWindow.Activate();
+                        return;
+                        }
 
-                LoadTextBlocks(textBlocks);
-                Log($"成功提取并分析了 {textBlocks.Count} 个段落（已包含图例信息）。");
+                    // 现在可以安全地调用我们的服务了
+                    List<ParagraphInfo> paragraphInfos = _advancedTextService.ExtractAndProcessParagraphs(selRes.Value, out _deletableSourceIds);
+
+                    if (paragraphInfos.Count == 0)
+                        {
+                        Log("在选定对象中未找到任何有效文字。");
+                        MessageBox.Show("您选择的对象中未找到任何有效文字。");
+                        }
+                    else
+                        {
+                        var textBlocks = paragraphInfos.Select(p => new TextBlockViewModel
+                            {
+                            OriginalText = p.Text,
+                            SourceObjectIds = p.SourceObjectIds,
+                            AssociatedGraphicsBlockId = p.AssociatedGraphicsBlockId,
+                            OriginalAnchorPoint = p.OriginalAnchorPoint
+                            }).ToList();
+
+                        LoadTextBlocks(textBlocks);
+                        Log($"成功提取并分析了 {textBlocks.Count} 个段落（已包含图例信息）。");
+                        }
+                    } // using 语句结束时，文档会自动解锁
+
                 }
             catch (Exception ex)
                 {
@@ -366,6 +379,7 @@ namespace CADTranslator.UI.ViewModels
                 }
             finally
                 {
+                // 确保窗口总是能重新显示
                 if (!mainWindow.IsVisible)
                     {
                     mainWindow.Show();
@@ -390,7 +404,7 @@ namespace CADTranslator.UI.ViewModels
                     // “实时排版”是交互式命令，必须在主线程上运行
                     // 所以我们直接调用它，不再使用 Task.Run
                     Log("“实时排版”已启用，将执行智能布局...");
-                    success = _cadLayoutService.ApplySmartLayoutToCad(TextBlockList);
+                    success = _cadLayoutService.ApplySmartLayoutToCad(TextBlockList, _deletableSourceIds);
                     }
                 else
                     {
