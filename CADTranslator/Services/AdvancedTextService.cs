@@ -16,6 +16,7 @@ namespace CADTranslator.Services
     /// </summary>
     public class AdvancedTextService
         {
+        public const string LegendPlaceholder = "__LEGEND_POS__"; 
         private readonly Database _db;
         private readonly Editor _editor;
 
@@ -49,44 +50,66 @@ namespace CADTranslator.Services
                     // 3. 合并文本
                     List<TextBlock> rawTextBlocks = MergeRawText(textEntities);
 
-                    // 4. 处理段落、图例
+                    // 4. 处理段落、图例，并执行“占位符注入”
                     string specialPattern = @"\s{3,}";
 
                     foreach (var block in rawTextBlocks)
                         {
                         var paraInfo = new ParagraphInfo();
+                        paraInfo.OriginalText = block.OriginalText; // 始终保存一份未经修改的原文
+
                         var firstId = block.SourceObjectIds.FirstOrDefault(id => !id.IsNull && !id.IsErased);
                         if (firstId.IsNull) continue;
 
                         var templateEntity = tr.GetObject(firstId, OpenMode.ForRead) as Entity;
+                        if (templateEntity == null) continue;
+
+                        // 完整捕获原始文本的几何状态
                         if (templateEntity is DBText dbText)
                             {
-                            paraInfo.Height = dbText.Height; paraInfo.WidthFactor = dbText.WidthFactor; paraInfo.TextStyleId = dbText.TextStyleId;
+                            paraInfo.Height = dbText.Height;
+                            paraInfo.WidthFactor = dbText.WidthFactor;
+                            paraInfo.TextStyleId = dbText.TextStyleId;
+                            paraInfo.Position = dbText.Position;
+                            paraInfo.AlignmentPoint = dbText.AlignmentPoint;
+                            paraInfo.HorizontalMode = dbText.HorizontalMode;
+                            paraInfo.VerticalMode = dbText.VerticalMode;
                             }
                         else if (templateEntity is MText mText)
                             {
-                            paraInfo.Height = mText.TextHeight; paraInfo.WidthFactor = 1.0; paraInfo.TextStyleId = mText.TextStyleId;
+                            paraInfo.Height = mText.TextHeight;
+                            paraInfo.WidthFactor = 1.0;
+                            paraInfo.TextStyleId = mText.TextStyleId;
+                            paraInfo.Position = mText.Location;
+                            paraInfo.AlignmentPoint = mText.Location;
+                            paraInfo.HorizontalMode = TextHorizontalMode.TextLeft;
+                            paraInfo.VerticalMode = TextVerticalMode.TextTop;
                             }
 
                         var match = Regex.Match(block.OriginalText, specialPattern);
-                        if (match.Success && graphicEntities.Any())
+                        if (match.Success)
                             {
-                            // A. 计算锚点
-                            string textBeforePlaceholder = block.OriginalText.Substring(0, match.Index);
-                            paraInfo.OriginalAnchorPoint = GetTextEndPoint(textBeforePlaceholder, paraInfo, tr);
+                            // a. 记录原始空格数量
+                            paraInfo.OriginalSpaceCount = match.Length;
 
-                            // B. 关联图形并创建块
+                            // b. 计算“旧”锚点
+                            string textBeforeSpaces = block.OriginalText.Substring(0, match.Index);
+                            paraInfo.OriginalAnchorPoint = GetTextEndPoint(textBeforeSpaces, paraInfo, tr);
+
+                            // c. 关联图形并创建块
                             var (associatedGraphics, _) = FindAssociatedGraphics(block.SourceObjectIds, graphicEntities, tr);
                             if (associatedGraphics.Any())
                                 {
                                 paraInfo.AssociatedGraphicsBlockId = CreateAnonymousBlockForGraphics(associatedGraphics, paraInfo.OriginalAnchorPoint, tr, bt);
                                 }
 
-                            paraInfo.Text = block.OriginalText;
-                            paraInfo.ContainsSpecialPattern = true; // 明确地标记这个段落含有图例
+                            // d.【核心】执行“占位符注入”，生成用于翻译的文本
+                            paraInfo.Text = new Regex(specialPattern).Replace(block.OriginalText, LegendPlaceholder, 1);
+                            paraInfo.ContainsSpecialPattern = true;
                             }
                         else
                             {
+                            // 如果没有图例，Text属性就等于未经修改的原文
                             paraInfo.Text = block.OriginalText;
                             paraInfo.ContainsSpecialPattern = false;
                             }
@@ -96,6 +119,7 @@ namespace CADTranslator.Services
                         }
 
                     tr.Commit();
+                    // ▲▲▲ 请替换到这里结束 ▲▲▲
                     }
                 catch (System.Exception ex)
                     {
@@ -110,15 +134,52 @@ namespace CADTranslator.Services
 
         private Point3d GetTextEndPoint(string text, ParagraphInfo paraInfo, Transaction tr)
             {
-            using (var tempText = new DBText { TextString = text, Height = paraInfo.Height, WidthFactor = paraInfo.WidthFactor, TextStyleId = paraInfo.TextStyleId })
+            Point3d endPoint = Point3d.Origin; // 初始化一个默认值
+
+            // 创建一个临时DBText对象来精确模拟原始状态
+            using (var tempText = new DBText())
                 {
+                // 1. 设置文本内容和基本样式
+                tempText.TextString = text;
+                tempText.Height = paraInfo.Height;
+                tempText.WidthFactor = paraInfo.WidthFactor;
+                tempText.TextStyleId = paraInfo.TextStyleId;
+
+                // 2.【核心】应用原始的对齐属性
+                tempText.HorizontalMode = paraInfo.HorizontalMode;
+                tempText.VerticalMode = paraInfo.VerticalMode;
+
+                // 3.【核心】根据不同的对齐方式，设置Position或AlignmentPoint
+                if (tempText.HorizontalMode == TextHorizontalMode.TextLeft && tempText.VerticalMode == TextVerticalMode.TextBase)
+                    {
+                    // 对于默认的左下角对齐，我们设置Position
+                    tempText.Position = paraInfo.Position;
+                    }
+                else
+                    {
+                    // 对于所有其他对齐方式，我们必须设置AlignmentPoint
+                    tempText.AlignmentPoint = paraInfo.AlignmentPoint;
+                    }
+
+                // 4.【关键步骤】将临时文本添加到数据库并调整对齐，以获取正确的几何边界
                 var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
                 modelSpace.AppendEntity(tempText);
                 tr.AddNewlyCreatedDBObject(tempText, true);
-                Point3d endPoint = tempText.Bounds?.MaxPoint ?? Point3d.Origin;
+
+                // 让CAD根据对齐属性，自动计算其准确的几何位置
+                tempText.AdjustAlignment(_db);
+
+                // 5. 获取计算后的精确边界
+                if (tempText.Bounds.HasValue)
+                    {
+                    endPoint = tempText.Bounds.Value.MaxPoint;
+                    }
+
+                // 6. 任务完成，从数据库中擦除这个临时对象
                 tempText.Erase();
-                return endPoint;
                 }
+
+            return endPoint;
             }
 
         private ObjectId CreateAnonymousBlockForGraphics(List<Entity> graphics, Point3d basePoint, Transaction tr, BlockTable bt)

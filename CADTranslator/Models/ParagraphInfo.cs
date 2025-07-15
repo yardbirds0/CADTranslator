@@ -9,6 +9,8 @@ namespace CADTranslator.Models
         public string Text { get; set; }
         public Entity TemplateEntity { get; set; }
         public string OriginalText { get; set; }
+        public Point3d Position { get; set; }
+        public Point3d AlignmentPoint { get; set; }
         public TextHorizontalMode HorizontalMode { get; set; }
         public TextVerticalMode VerticalMode { get; set; }
         public double Height { get; set; }

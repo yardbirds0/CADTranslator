@@ -1,22 +1,24 @@
-﻿// 请用此完整代码替换 CADTranslator/Services/CadLayoutService.cs 的全部内容
+﻿// 文件路径: CADTranslator/Services/CadLayoutService.cs
 
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
-using CADTranslator.AutoCAD.Jigs; // 确保引用 Jigs
+using CADTranslator.AutoCAD.Jigs;
 using CADTranslator.Models;
 using CADTranslator.UI.ViewModels;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Text.RegularExpressions;
 
 namespace CADTranslator.Services
     {
     public class CadLayoutService
         {
+        // 最好是引用一个共享的常量，但为了简单，我们在这里也定义它
+        private const string LegendPlaceholder = "__LEGEND_POS__";
+
         private readonly Document _doc;
         private readonly Database _db;
         private readonly Editor _editor;
@@ -31,18 +33,18 @@ namespace CADTranslator.Services
             _editor = doc.Editor;
             }
 
-        // ▼▼▼ 这是最终简化和修正后的版本 ▼▼▼
         public bool ApplySmartLayoutToCad(ObservableCollection<TextBlockViewModel> textBlockList, List<ObjectId> idsToDelete)
             {
             var paragraphInfos = new List<ParagraphInfo>();
-            string placeholder = "*图例位置*"; // 定义一个局部变量给Jig使用
 
+            // 1. 准备Jig所需的数据。我们现在完全信任从ViewModel传来的数据。
             using (var tr = _db.TransactionManager.StartTransaction())
                 {
                 foreach (var block in textBlockList)
                     {
                     if (string.IsNullOrWhiteSpace(block.TranslatedText) || block.TranslatedText.StartsWith("[")) continue;
 
+                    // 【关键修正】在这里重新获取作为模板的第一个实体
                     var firstId = block.SourceObjectIds.FirstOrDefault(id => !id.IsNull && !id.IsErased);
                     if (firstId.IsNull) continue;
 
@@ -51,16 +53,22 @@ namespace CADTranslator.Services
 
                     var pInfo = new ParagraphInfo
                         {
-                        // 如果这个块原本有关联的图例，我们就在翻译好的文本末尾加上占位符
-                        // 这是最稳妥的方式，确保Jig能找到它
-                        Text = !block.AssociatedGraphicsBlockId.IsNull ? block.TranslatedText + " " + placeholder : block.TranslatedText,
-                        TemplateEntity = templateEntity,
+                        Text = block.TranslatedText,
+                        ContainsSpecialPattern = block.TranslatedText.Contains(LegendPlaceholder),
+
+                        TemplateEntity = templateEntity, // <-- 将捕获到的模板实体存入pInfo
+
                         AssociatedGraphicsBlockId = block.AssociatedGraphicsBlockId,
                         OriginalAnchorPoint = block.OriginalAnchorPoint,
-                        ContainsSpecialPattern = !block.AssociatedGraphicsBlockId.IsNull, // 传递这个标志
+                        OriginalSpaceCount = block.OriginalSpaceCount,
+                        Position = block.Position,
+                        AlignmentPoint = block.AlignmentPoint,
+                        HorizontalMode = block.HorizontalMode,
+                        VerticalMode = block.VerticalMode,
                         SourceObjectIds = block.SourceObjectIds.ToList()
                         };
 
+                    // 从模板实体中获取精确的文本样式属性
                     if (templateEntity is DBText dbText)
                         {
                         pInfo.Height = dbText.Height;
@@ -77,9 +85,8 @@ namespace CADTranslator.Services
 
                     paragraphInfos.Add(pInfo);
                     }
-                tr.Abort(); // 我们只读取了数据，所以中止事务即可
+                tr.Abort(); // 只读操作，中止事务
                 }
-
             if (paragraphInfos.Count == 0)
                 {
                 _editor.WriteMessage("\n没有有效的翻译文本可供排版。");
@@ -99,35 +106,39 @@ namespace CADTranslator.Services
                     var dragResult = _editor.Drag(jig);
                     if (dragResult.Status != PromptStatus.OK) return false;
 
+                    // 3. 用户确认后，将最终结果写入数据库
                     using (Transaction tr = _db.TransactionManager.StartTransaction())
                         {
                         var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
 
                         foreach (var id in idsToDelete)
                             {
-                            // 检查一下，防止对象已经被删除了
                             if (!id.IsErased)
                                 {
                                 var entToErase = tr.GetObject(id, OpenMode.ForWrite);
                                 entToErase.Erase();
                                 }
                             }
-                        // 创建新实体
+
                         for (int i = 0; i < jig.FinalLineInfo.Count; i++)
                             {
                             var (lineText, paraNeedsIndent, isFirstLineOfPara, currentParaIndex) = jig.FinalLineInfo[i];
                             var currentParaInfo = paragraphInfos[currentParaIndex];
+                            string finalLineText = lineText;
 
-                            if (currentParaInfo.ContainsSpecialPattern && lineText.Contains(placeholder))
+                            if (currentParaInfo.ContainsSpecialPattern && finalLineText.Contains(LegendPlaceholder))
                                 {
-                                PlaceGraphicsAlongsideText(lineText, currentParaInfo, basePoint, i, paraNeedsIndent, isFirstLineOfPara, jig, tr, modelSpace);
-                                lineText = lineText.Replace(placeholder, "");
+                                PlaceGraphicsAlongsideText(finalLineText, currentParaInfo, basePoint, i, paraNeedsIndent, isFirstLineOfPara, jig, tr, modelSpace);
+
+                                // 【核心】用原始数量的空格，替换掉占位符
+                                finalLineText = finalLineText.Replace(LegendPlaceholder, new string(' ', currentParaInfo.OriginalSpaceCount));
                                 }
+
+                            if (string.IsNullOrWhiteSpace(finalLineText)) continue;
 
                             using (var newText = new DBText())
                                 {
-                                if (currentParaInfo.TemplateEntity != null) newText.SetPropertiesFrom(currentParaInfo.TemplateEntity);
-                                newText.TextString = lineText;
+                                newText.TextString = finalLineText;
                                 newText.Height = currentParaInfo.Height;
                                 newText.WidthFactor = currentParaInfo.WidthFactor;
                                 newText.TextStyleId = currentParaInfo.TextStyleId;
@@ -136,6 +147,7 @@ namespace CADTranslator.Services
                                 double yOffset = i * currentParaInfo.Height * 1.5;
                                 Point3d linePosition = basePoint + new Vector3d(xOffset, -yOffset, 0);
 
+                                // 这里我们统一使用左对齐来放置排版后的文本，以获得最可控的效果
                                 newText.HorizontalMode = TextHorizontalMode.TextLeft;
                                 newText.VerticalMode = TextVerticalMode.TextBase;
                                 newText.Position = linePosition;
@@ -151,86 +163,77 @@ namespace CADTranslator.Services
                 }
             catch (System.Exception ex)
                 {
-                _editor.WriteMessage($"\n[CadLayoutService] 应用智能排版时发生错误: {ex.Message}");
+                _editor.WriteMessage($"\n[CadLayoutService] 应用智能排版时发生错误: {ex.Message}\n{ex.StackTrace}");
                 return false;
                 }
             }
 
-        // 辅助方法：在文本旁边放置图例
         private void PlaceGraphicsAlongsideText(string lineText, ParagraphInfo paraInfo, Point3d basePoint, int lineIndex, bool paraNeedsIndent, bool isFirstLineOfPara, SmartLayoutJig jig, Transaction tr, BlockTableRecord modelSpace)
             {
-            int placeholderIndex = lineText.IndexOf("*图例位置*");
+            int placeholderIndex = lineText.IndexOf(LegendPlaceholder);
+            if (placeholderIndex < 0) return;
             string textBeforePlaceholderInLine = lineText.Substring(0, placeholderIndex);
 
-            // 计算图例应该被放置到的新位置
-            using (var tempText = new DBText { TextString = textBeforePlaceholderInLine, Height = paraInfo.Height, WidthFactor = paraInfo.WidthFactor, TextStyleId = paraInfo.TextStyleId })
-                {
-                // ▼▼▼【最终、核心的修改点】▼▼▼
-                // 这一整段代码，现在是精确地从您成功的 WZPB (TextLayoutService.cs) 功能中复制过来的
-                // 它正确地处理了不同的文字对齐方式
-                double yOffset = lineIndex * paraInfo.Height * 1.5;
-                double xOffset = (paraNeedsIndent && !isFirstLineOfPara) ? jig.FinalIndent : 0;
-                Point3d linePos = basePoint + new Vector3d(xOffset, -yOffset, 0);
+            Point3d newAnchorPoint;
 
-                // 从 paraInfo 中获取原始的对齐模式
+            using (var tempText = new DBText())
+                {
+                tempText.TextString = textBeforePlaceholderInLine;
+                tempText.Height = paraInfo.Height;
+                tempText.WidthFactor = paraInfo.WidthFactor;
+                tempText.TextStyleId = paraInfo.TextStyleId;
+
+                // 【核心】使用原始对齐属性来计算新锚点
                 tempText.HorizontalMode = paraInfo.HorizontalMode;
                 tempText.VerticalMode = paraInfo.VerticalMode;
 
-                // 如果不是默认的左对齐，就必须设置 AlignmentPoint，并让CAD自己调整
-                if (tempText.HorizontalMode != TextHorizontalMode.TextLeft || tempText.VerticalMode != TextVerticalMode.TextBase)
+                double xOffset = (paraNeedsIndent && !isFirstLineOfPara) ? jig.FinalIndent : 0;
+                double yOffset = lineIndex * paraInfo.Height * 1.5;
+                Point3d lineBasePoint = basePoint + new Vector3d(xOffset, -yOffset, 0);
+
+                if (tempText.HorizontalMode == TextHorizontalMode.TextLeft && tempText.VerticalMode == TextVerticalMode.TextBase)
                     {
-                    tempText.AlignmentPoint = linePos;
+                    tempText.Position = lineBasePoint;
                     }
                 else
                     {
-                    // 只有左对齐的文字，才能直接设置 Position
-                    tempText.Position = linePos;
+                    tempText.AlignmentPoint = lineBasePoint;
                     }
 
-                // 为了让 AdjustAlignment 生效并获取正确的包围框(Bounds)，
-                // 必须先把这个临时文字添加到数据库中
                 modelSpace.AppendEntity(tempText);
                 tr.AddNewlyCreatedDBObject(tempText, true);
                 tempText.AdjustAlignment(_db);
 
-
-                // 现在，tempText.Bounds 是在正确处理了对齐之后得到的，是精确的
-                Point3d newAnchorPoint = tempText.Bounds.HasValue ? tempText.Bounds.Value.MaxPoint : linePos;
-
-                // 计算完成后，立刻将这个临时文字从数据库中删除
+                newAnchorPoint = tempText.Bounds.HasValue ? tempText.Bounds.Value.MaxPoint : lineBasePoint;
                 tempText.Erase();
-                // ▲▲▲ 修改结束 ▲▲▲
+                }
 
-                Vector3d displacement = newAnchorPoint - paraInfo.OriginalAnchorPoint;
-                Matrix3d transformMatrix = Matrix3d.Displacement(displacement);
+            Vector3d displacement = newAnchorPoint - paraInfo.OriginalAnchorPoint;
+            Matrix3d transformMatrix = Matrix3d.Displacement(displacement);
 
-                // 将我们之前打包好的匿名块插入，并应用位移变换
-                // 这一段的逻辑已经是正确的，无需改动
-                using (var blockRef = new BlockReference(paraInfo.OriginalAnchorPoint, paraInfo.AssociatedGraphicsBlockId))
+            using (var blockRef = new BlockReference(paraInfo.OriginalAnchorPoint, paraInfo.AssociatedGraphicsBlockId))
+                {
+                blockRef.TransformBy(transformMatrix);
+                modelSpace.AppendEntity(blockRef);
+                tr.AddNewlyCreatedDBObject(blockRef, true);
+
+                DBObjectCollection explodedObjects = new DBObjectCollection();
+                blockRef.Explode(explodedObjects);
+                foreach (DBObject obj in explodedObjects)
                     {
-                    blockRef.TransformBy(transformMatrix);
-                    modelSpace.AppendEntity(blockRef);
-                    tr.AddNewlyCreatedDBObject(blockRef, true);
-
-                    // 将块炸开，变回独立的图形实体
-                    DBObjectCollection explodedObjects = new DBObjectCollection();
-                    blockRef.Explode(explodedObjects);
-                    foreach (DBObject obj in explodedObjects)
+                    if (obj is Entity explodedEntity)
                         {
-                        if (obj is Entity explodedEntity)
-                            {
-                            modelSpace.AppendEntity(explodedEntity);
-                            tr.AddNewlyCreatedDBObject(explodedEntity, true);
-                            }
+                        modelSpace.AppendEntity(explodedEntity);
+                        tr.AddNewlyCreatedDBObject(explodedEntity, true);
                         }
-                    blockRef.Erase(); // 删除块参照
                     }
+                blockRef.Erase();
                 }
             }
 
-        // 这是之前从后台代码移动过来的核心方法 (保持不变)
         public bool ApplyTranslationToCad(ObservableCollection<TextBlockViewModel> textBlockList)
             {
+            // 这个方法在“实时排版”关闭时使用，其逻辑保持不变
             try
                 {
                 using (_doc.LockDocument())
@@ -242,17 +245,23 @@ namespace CADTranslator.Services
                         foreach (var item in textBlockList)
                             {
                             if (string.IsNullOrWhiteSpace(item.TranslatedText) || item.SourceObjectIds == null || !item.SourceObjectIds.Any()) continue;
+
+                            // 简单的替换逻辑，用于非实时排版模式
+                            string final_text = item.TranslatedText.Replace(LegendPlaceholder, new string(' ', item.OriginalSpaceCount));
+
                             var firstObjectId = item.SourceObjectIds.First();
                             if (firstObjectId.IsNull || firstObjectId.IsErased) continue;
                             var baseEntity = tr.GetObject(firstObjectId, OpenMode.ForRead) as Entity;
                             if (baseEntity == null) continue;
+
                             foreach (var objectId in item.SourceObjectIds)
                                 {
                                 if (objectId.IsNull || objectId.IsErased) continue;
                                 var entityToErase = tr.GetObject(objectId, OpenMode.ForWrite) as Entity;
                                 entityToErase?.Erase();
                                 }
-                            string singleLineText = item.TranslatedText.Replace('\n', ' ').Replace('\r', ' ');
+
+                            string singleLineText = final_text.Replace('\n', ' ').Replace('\r', ' ');
                             using (DBText newText = new DBText())
                                 {
                                 newText.TextString = singleLineText;
@@ -289,14 +298,14 @@ namespace CADTranslator.Services
                             }
                         tr.Commit();
                         _editor.WriteMessage("\n所有翻译已成功应用到CAD图纸！");
-                        return true; // 操作成功，返回 true
+                        return true;
                         }
                     }
                 }
             catch (System.Exception ex)
                 {
                 _editor.WriteMessage($"\n将翻译应用到CAD时发生严重错误: {ex.Message}");
-                return false; // 操作失败，返回 false
+                return false;
                 }
             }
         }

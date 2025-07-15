@@ -39,6 +39,11 @@ namespace CADTranslator.UI.ViewModels
             }
 
         public List<ObjectId> SourceObjectIds { get; set; } = new List<ObjectId>();
+        public int OriginalSpaceCount { get; set; } = 0;
+        public Point3d Position { get; set; }
+        public Point3d AlignmentPoint { get; set; }
+        public TextHorizontalMode HorizontalMode { get; set; }
+        public TextVerticalMode VerticalMode { get; set; }
 
         // ▼▼▼ 在这里添加新属性，用于携带图例信息 ▼▼▼
         public ObjectId AssociatedGraphicsBlockId { get; set; } = ObjectId.Null;

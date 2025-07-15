@@ -1,6 +1,8 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
+﻿// 文件路径: CADTranslator/UI/ViewModels/TranslatorViewModel.cs
+
+using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
-using Autodesk.AutoCAD.Geometry; // <-- 确保文件顶部有这行 using
+using Autodesk.AutoCAD.Geometry;
 using CADTranslator.Models;
 using CADTranslator.Services;
 using CADTranslator.UI.Views;
@@ -11,14 +13,13 @@ using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Application = Autodesk.AutoCAD.ApplicationServices.Application;
-
 
 namespace CADTranslator.UI.ViewModels
     {
@@ -33,7 +34,7 @@ namespace CADTranslator.UI.ViewModels
             {
             try
                 {
-                SetForegroundWindow(Autodesk.AutoCAD.ApplicationServices.Application.MainWindow.Handle);
+                SetForegroundWindow(Application.MainWindow.Handle);
                 }
             catch { /* 忽略可能的错误 */ }
             }
@@ -42,6 +43,7 @@ namespace CADTranslator.UI.ViewModels
         #region --- 字段 ---
         private List<ObjectId> _deletableSourceIds = new List<ObjectId>();
         private readonly SettingsService _settingsService;
+        private AppSettings _currentSettings;
         private readonly AdvancedTextService _advancedTextService;
         private readonly CadLayoutService _cadLayoutService;
         private readonly Window _ownerWindow;
@@ -112,11 +114,11 @@ namespace CADTranslator.UI.ViewModels
                 }
             }
 
-        private bool _isLiveLayoutEnabled = true;
+        private bool _isLiveLayoutEnabled;
         public bool IsLiveLayoutEnabled
             {
             get => _isLiveLayoutEnabled;
-            set => SetField(ref _isLiveLayoutEnabled, value);
+            set { if (SetField(ref _isLiveLayoutEnabled, value)) { SaveSettings(); } }
             }
 
         public ObservableCollection<string> ModelList { get; set; }
@@ -151,14 +153,14 @@ namespace CADTranslator.UI.ViewModels
         #endregion
 
         #region --- 命令 ---
-        public ICommand SelectTextCommand { get; }
-        public ICommand TranslateCommand { get; }
-        public ICommand ApplyToCadCommand { get; }
-        public ICommand MergeCommand { get; }
-        public ICommand SplitCommand { get; }
-        public ICommand DeleteCommand { get; }
-        public ICommand EditCommand { get; }
-        public ICommand ManageModelsCommand { get; }
+        public RelayCommand SelectTextCommand { get; }
+        public RelayCommand TranslateCommand { get; }
+        public RelayCommand ApplyToCadCommand { get; }
+        public RelayCommand MergeCommand { get; }
+        public RelayCommand SplitCommand { get; }
+        public RelayCommand DeleteCommand { get; }
+        public RelayCommand EditCommand { get; }
+        public RelayCommand ManageModelsCommand { get; }
         #endregion
 
         #region --- 构造函数 ---
@@ -175,7 +177,7 @@ namespace CADTranslator.UI.ViewModels
 
             SelectTextCommand = new RelayCommand(OnSelectText);
             TranslateCommand = new RelayCommand(OnTranslate, p => TextBlockList.Any() && !IsBusy);
-            ApplyToCadCommand = new RelayCommand(OnApplyToCad, p => TextBlockList.Any(i => !string.IsNullOrWhiteSpace(i.TranslatedText)));
+            ApplyToCadCommand = new RelayCommand(OnApplyToCad, p => TextBlockList.Any(i => !string.IsNullOrWhiteSpace(i.TranslatedText) && !i.TranslatedText.StartsWith("[")));
             MergeCommand = new RelayCommand(OnMerge, p => p is IList<object> list && list.Count > 1);
             DeleteCommand = new RelayCommand(OnDelete, p => p is IList<object> list && list.Count > 0);
             SplitCommand = new RelayCommand(OnSplit, p => p is TextBlockViewModel);
@@ -215,54 +217,28 @@ namespace CADTranslator.UI.ViewModels
                 {
                 var totalStopwatch = new System.Diagnostics.Stopwatch();
                 totalStopwatch.Start();
-
                 Log("任务开始", clearPrevious: true);
 
-                ITranslator translator;
-                try
+                ITranslator translator = GetTranslator();
+                if (translator == null)
                     {
-                    switch (SelectedApiService)
-                        {
-                        case ApiServiceType.Baidu:
-                            translator = new BaiduTranslator(CurrentProfile.UserId, CurrentProfile.ApiKey);
-                            break;
-                        case ApiServiceType.Gemini:
-                            translator = new GeminiTranslator(CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
-                            break;
-                        case ApiServiceType.OpenAI:
-                            translator = new OpenAiTranslator(CurrentProfile.ApiKey, string.IsNullOrWhiteSpace(CurrentProfile.LastSelectedModel) ? "gpt-4o" : CurrentProfile.LastSelectedModel);
-                            break;
-                        case ApiServiceType.Custom:
-                            translator = new CustomTranslator(CurrentProfile.ApiEndpoint, CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
-                            break;
-                        default:
-                            MessageBox.Show("当前选择的API服务尚未实现。");
-                            return;
-                        }
-                    }
-                catch (ArgumentNullException ex)
-                    {
-                    string friendlyMessage = $"配置错误：{ex.ParamName} 不能为空，请在API设置中补充完整。";
-                    Log(friendlyMessage);
-                    MessageBox.Show(friendlyMessage, "配置不完整", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    IsBusy = false;
                     return;
                     }
 
                 var itemsToTranslate = TextBlockList.Where(item => string.IsNullOrWhiteSpace(item.TranslatedText) && !string.IsNullOrWhiteSpace(item.OriginalText)).ToList();
                 int totalItems = itemsToTranslate.Count;
                 int completedItems = 0;
-
                 Log($"准备翻译 {totalItems} 个项目...");
-                ProgressValue = 0;
-                ProgressText = $"(0/{totalItems}) 0%";
+                UpdateProgress(completedItems, totalItems);
 
                 foreach (var item in itemsToTranslate)
                     {
                     var stopwatch = new System.Diagnostics.Stopwatch();
-                    string textToTranslate = string.IsNullOrWhiteSpace(GlobalPrompt) ? item.OriginalText : $"{GlobalPrompt}\n\n{item.OriginalText}";
                     string initialLog = $"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems + 1}/{totalItems} 项翻译正在进行...";
                     Log(initialLog, addNewLine: true, isListItem: true);
-                    var translationTask = translator.TranslateAsync(textToTranslate, SourceLanguage, TargetLanguage);
+
+                    Task<string> translationTask = CreateTranslationTask(item, translator);
                     stopwatch.Start();
 
                     while (!translationTask.IsCompleted)
@@ -278,38 +254,25 @@ namespace CADTranslator.UI.ViewModels
                     try
                         {
                         string result = await translationTask;
-
-                        if (result.StartsWith("翻译失败：") || result.StartsWith("调用") || result.StartsWith("请求失败:") || result.StartsWith("百度API返回错误:"))
-                            {
-                            throw new Exception(result);
-                            }
+                        if (IsTranslationError(result)) throw new Exception(result);
 
                         item.TranslatedText = result;
                         completedItems++;
-                        ProgressValue = (int)((double)completedItems / totalItems * 100);
-                        ProgressText = $"({completedItems}/{totalItems}) {ProgressValue}%";
+                        UpdateProgress(completedItems, totalItems);
                         UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems}/{totalItems} 项翻译完成。总共用时 {stopwatch.Elapsed.TotalSeconds:F1} 秒");
+
+                        // 【最终修正】使用 _ownerWindow.Dispatcher
+                        _ownerWindow.Dispatcher.Invoke(() => ApplyToCadCommand.RaiseCanExecuteChanged());
                         }
                     catch (Exception ex)
                         {
-                        if (stopwatch.IsRunning) stopwatch.Stop();
-                        string errorMessage = ex.Message.Replace('\t', ' ');
-                        UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] [翻译失败] 第 {completedItems + 1} 项，原因: {errorMessage}");
-                        Log("任务因错误而中断。");
-                        item.TranslatedText = errorMessage;
+                        HandleTranslationError(ex, item, stopwatch, completedItems);
                         return;
                         }
                     }
 
                 totalStopwatch.Stop();
-                if (totalItems > 0)
-                    {
-                    Log($"全部翻译任务已成功完成！总共用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒");
-                    }
-                else
-                    {
-                    Log("没有需要翻译的新内容。");
-                    }
+                Log(totalItems > 0 ? $"全部翻译任务已成功完成！总共用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒" : "没有需要翻译的新内容。");
                 }
             finally
                 {
@@ -317,38 +280,26 @@ namespace CADTranslator.UI.ViewModels
                 }
             }
 
-
         private void OnSelectText(object parameter)
             {
             if (!(parameter is Window mainWindow)) return;
             try
                 {
                 var doc = Application.DocumentManager.MdiActiveDocument;
-                if (doc == null)
-                    {
-                    MessageBox.Show("未找到活动的CAD文档。");
-                    return;
-                    }
+                if (doc == null) { MessageBox.Show("未找到活动的CAD文档。"); return; }
 
                 mainWindow.Hide();
                 var ed = doc.Editor;
                 var selRes = ed.GetSelection();
 
-                // 【【【核心修改点：在这里加锁！】】】
-                // 在所有数据库操作开始前，先锁定文档
                 using (doc.LockDocument())
                     {
-                    // LockDocument 会自动处理光标切换，并确保后续操作的安全性
-
                     if (selRes.Status != PromptStatus.OK)
                         {
-                        // 如果用户取消了选择，也要在 Lock 内部处理，然后安全退出
                         mainWindow.Show();
-                        mainWindow.Activate();
                         return;
                         }
 
-                    // 现在可以安全地调用我们的服务了
                     List<ParagraphInfo> paragraphInfos = _advancedTextService.ExtractAndProcessParagraphs(selRes.Value, out _deletableSourceIds);
 
                     if (paragraphInfos.Count == 0)
@@ -363,14 +314,17 @@ namespace CADTranslator.UI.ViewModels
                             OriginalText = p.Text,
                             SourceObjectIds = p.SourceObjectIds,
                             AssociatedGraphicsBlockId = p.AssociatedGraphicsBlockId,
-                            OriginalAnchorPoint = p.OriginalAnchorPoint
+                            OriginalAnchorPoint = p.OriginalAnchorPoint,
+                            OriginalSpaceCount = p.OriginalSpaceCount,
+                            Position = p.Position,
+                            AlignmentPoint = p.AlignmentPoint,
+                            HorizontalMode = p.HorizontalMode,
+                            VerticalMode = p.VerticalMode
                             }).ToList();
-
                         LoadTextBlocks(textBlocks);
-                        Log($"成功提取并分析了 {textBlocks.Count} 个段落（已包含图例信息）。");
+                        Log($"成功提取并分析了 {textBlocks.Count} 个段落。");
                         }
-                    } // using 语句结束时，文档会自动解锁
-
+                    }
                 }
             catch (Exception ex)
                 {
@@ -379,36 +333,30 @@ namespace CADTranslator.UI.ViewModels
                 }
             finally
                 {
-                // 确保窗口总是能重新显示
                 if (!mainWindow.IsVisible)
                     {
                     mainWindow.Show();
-                    mainWindow.Activate();
                     }
+                // 【最终修正】使用 _ownerWindow.Dispatcher
+                _ownerWindow.Dispatcher.Invoke(() => TranslateCommand.RaiseCanExecuteChanged());
                 }
             }
 
         private async void OnApplyToCad(object parameter)
             {
             Log("正在切换到CAD窗口并应用翻译...");
-
-            // 为了确保CAD窗口获得焦点，在执行交互命令前先隐藏主窗口
             _ownerWindow.Hide();
             SwitchToAutoCad();
-
             bool success = false;
             try
                 {
                 if (IsLiveLayoutEnabled)
                     {
-                    // “实时排版”是交互式命令，必须在主线程上运行
-                    // 所以我们直接调用它，不再使用 Task.Run
                     Log("“实时排版”已启用，将执行智能布局...");
                     success = _cadLayoutService.ApplySmartLayoutToCad(TextBlockList, _deletableSourceIds);
                     }
                 else
                     {
-                    // 旧的非交互式方法可以放在后台线程，避免UI卡顿
                     Log("“实时排版”已关闭，将使用基本布局...");
                     success = await Task.Run(() => _cadLayoutService.ApplyTranslationToCad(TextBlockList));
                     }
@@ -420,9 +368,15 @@ namespace CADTranslator.UI.ViewModels
                 }
             finally
                 {
-                // 无论成功与否，操作结束后都重新显示主窗口
-                _ownerWindow.Show();
-                _ownerWindow.Activate();
+                // 【最终修正】只有在操作失败时，才重新显示并激活WPF窗口
+                if (!success)
+                    {
+                    if (!_ownerWindow.IsVisible)
+                        {
+                        _ownerWindow.Show();
+                        }
+                    _ownerWindow.Activate(); // 失败时，明确夺回焦点以提示用户
+                    }
                 }
 
             if (success)
@@ -431,10 +385,10 @@ namespace CADTranslator.UI.ViewModels
                 }
             else
                 {
-                // 具体的错误信息已在服务层打印，这里只做通用提示
                 Log("[错误] 应用到CAD失败，请检查CAD命令行获取详细信息。");
                 }
             }
+
         private void OnManageModels(object parameter)
             {
             if (CurrentProfile == null) { MessageBox.Show("请先选择一个API配置。"); return; }
@@ -459,23 +413,88 @@ namespace CADTranslator.UI.ViewModels
 
         #endregion
 
+        #region --- 辅助方法 (新增) ---
+
+        private ITranslator GetTranslator()
+            {
+            try
+                {
+                switch (SelectedApiService)
+                    {
+                    case ApiServiceType.Baidu:
+                        return new BaiduTranslator(CurrentProfile.UserId, CurrentProfile.ApiKey);
+                    case ApiServiceType.Gemini:
+                        return new GeminiTranslator(CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
+                    case ApiServiceType.OpenAI:
+                        return new OpenAiTranslator(CurrentProfile.ApiKey, string.IsNullOrWhiteSpace(CurrentProfile.LastSelectedModel) ? "gpt-4o" : CurrentProfile.LastSelectedModel);
+                    case ApiServiceType.Custom:
+                        return new CustomTranslator(CurrentProfile.ApiEndpoint, CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
+                    default:
+                        MessageBox.Show("当前选择的API服务尚未实现。");
+                        return null;
+                    }
+                }
+            catch (ArgumentNullException ex)
+                {
+                string friendlyMessage = $"配置错误：{ex.ParamName} 不能为空，请在API设置中补充完整。";
+                Log(friendlyMessage);
+                MessageBox.Show(friendlyMessage, "配置不完整", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return null;
+                }
+            }
+
+        private Task<string> CreateTranslationTask(TextBlockViewModel item, ITranslator translator)
+            {
+            // 这是为了处理“占位符注入”方案
+            if (item.OriginalText.Contains(AdvancedTextService.LegendPlaceholder))
+                {
+                // 对于已经含有占位符的文本，直接翻译
+                string textToTranslate = string.IsNullOrWhiteSpace(GlobalPrompt) ? item.OriginalText : $"{GlobalPrompt}\n\n{item.OriginalText}";
+                return translator.TranslateAsync(textToTranslate, SourceLanguage, TargetLanguage);
+                }
+
+            // 正常翻译（这个分支理论上在占位符方案中不会被走到，但保留以防万一）
+            string normalTextToTranslate = string.IsNullOrWhiteSpace(GlobalPrompt) ? item.OriginalText : $"{GlobalPrompt}\n\n{item.OriginalText}";
+            return translator.TranslateAsync(normalTextToTranslate, SourceLanguage, TargetLanguage);
+            }
+
+        private void UpdateProgress(int completed, int total)
+            {
+            if (total == 0)
+                {
+                ProgressValue = 0;
+                ProgressText = "无项目";
+                return;
+                }
+            ProgressValue = (int)((double)completed / total * 100);
+            ProgressText = $"({completed}/{total}) {ProgressValue}%";
+            }
+
+        private bool IsTranslationError(string result)
+            {
+            return result.StartsWith("翻译失败：") || result.StartsWith("调用") || result.StartsWith("请求失败:") || result.StartsWith("百度API返回错误:");
+            }
+
+        private void HandleTranslationError(Exception ex, TextBlockViewModel item, System.Diagnostics.Stopwatch stopwatch, int completedItems)
+            {
+            if (stopwatch.IsRunning) stopwatch.Stop();
+            string errorMessage = ex.Message.Replace('\t', ' ');
+            UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] [翻译失败] 第 {completedItems + 1} 项，原因: {errorMessage}");
+            Log("任务因错误而中断。");
+            item.TranslatedText = $"[翻译失败] {errorMessage}";
+            }
+
+
+        #endregion
+
         #region --- 日志与设置管理 ---
 
         private void Log(string message, bool clearPrevious = false, bool addNewLine = true, bool isListItem = false)
             {
-            if (clearPrevious)
-                {
-                StatusLog.Clear();
-                }
-
+            if (clearPrevious) StatusLog.Clear();
             var formattedMessage = isListItem ? message : $"[{DateTime.Now:HH:mm:ss}] {message}";
-
             CadBridgeService.WriteToCommandLine(formattedMessage);
-
-            if (addNewLine)
-                {
-                _ownerWindow.Dispatcher.Invoke(() => StatusLog.Add(formattedMessage));
-                }
+            if (addNewLine) _ownerWindow.Dispatcher.Invoke(() => StatusLog.Add(formattedMessage));
             }
 
         private void UpdateLastLog(string message)
@@ -489,30 +508,28 @@ namespace CADTranslator.UI.ViewModels
 
         private void LoadSettings()
             {
-            var profiles = _settingsService.LoadApiProfiles();
+            _currentSettings = _settingsService.LoadSettings();
+            IsLiveLayoutEnabled = _currentSettings.IsLiveLayoutEnabled;
             ApiProfiles.Clear();
-            foreach (var profile in profiles) { ApiProfiles.Add(profile); }
+            foreach (var profile in _currentSettings.ApiProfiles) { ApiProfiles.Add(profile); }
             var firstProfile = ApiProfiles.FirstOrDefault();
-            SelectedApiService = firstProfile?.ServiceType ?? ApiServiceType.Baidu;
-            }
-
-        private void SaveSettings(object parameter = null)
-            {
-            if (CurrentProfile != null)
+            if (firstProfile != null)
                 {
-                CurrentProfile.ServiceType = this.SelectedApiService;
-                var profilesList = ApiProfiles.ToList();
-                if (profilesList.Contains(CurrentProfile))
-                    {
-                    profilesList.Remove(CurrentProfile);
-                    profilesList.Insert(0, CurrentProfile);
-                    }
-                _settingsService.SaveApiProfiles(profilesList);
+                SelectedApiService = firstProfile.ServiceType;
+                CurrentProfile = firstProfile;
                 }
             else
                 {
-                _settingsService.SaveApiProfiles(ApiProfiles.ToList());
+                SelectedApiService = ApiServiceType.Baidu;
                 }
+            }
+
+        private void SaveSettings()
+            {
+            if (_currentSettings == null) _currentSettings = new AppSettings();
+            _currentSettings.IsLiveLayoutEnabled = this.IsLiveLayoutEnabled;
+            _currentSettings.ApiProfiles = this.ApiProfiles.ToList();
+            _settingsService.SaveSettings(_currentSettings);
             }
 
         private void UpdateUiFromCurrentProfile()
@@ -520,18 +537,16 @@ namespace CADTranslator.UI.ViewModels
             if (CurrentProfile == null) return;
             CurrentProfile.PropertyChanged -= OnCurrentProfilePropertyChanged;
             CurrentProfile.PropertyChanged += OnCurrentProfilePropertyChanged;
-
-            SelectedApiService = CurrentProfile.ServiceType;
             ModelList.Clear();
             if (CurrentProfile.Models != null) { foreach (var model in CurrentProfile.Models) { ModelList.Add(model); } }
             CurrentModelInput = CurrentProfile.LastSelectedModel;
-
             OnPropertyChanged(nameof(CurrentProfile));
             OnPropertyChanged(nameof(CurrentModelInput));
             OnPropertyChanged(nameof(IsUserIdEnabled));
             OnPropertyChanged(nameof(IsApiKeyEnabled));
             OnPropertyChanged(nameof(IsModelListEnabled));
             OnPropertyChanged(nameof(IsApiUrlEnabled));
+            SaveSettings();
             }
 
         private void OnCurrentProfilePropertyChanged(object sender, PropertyChangedEventArgs e)

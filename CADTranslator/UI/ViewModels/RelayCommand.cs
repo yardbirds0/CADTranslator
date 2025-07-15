@@ -29,5 +29,13 @@ namespace CADTranslator.UI.ViewModels
         {
             _execute(parameter);
         }
-    }
+
+        /// <summary>
+        /// 主动触发 CanExecuteChanged 事件，强制UI重新评估命令的可用状态
+        /// </summary>
+        public void RaiseCanExecuteChanged()
+            {
+            CommandManager.InvalidateRequerySuggested();
+            }
+        }
 }
