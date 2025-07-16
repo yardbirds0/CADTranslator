@@ -48,7 +48,8 @@ namespace CADTranslator.Services
                     messages = new[]
                     {
                         // 我们可以提供一个更明确的系统指令
-                        new { role = "system", content = $"You are a professional translator. Translate the user's text from {fromLanguage} to {toLanguage}. Output only the translated content, without any additional explanatory text." },
+                       new { role = "system", content = $"你是一个专业的结构专业图纸翻译家。你的任务是把用户的文本从 {fromLanguage} 翻译成 {toLanguage}. 不要添加任何额外的解释，只返回翻译好的文本。遇到符号则保留原来的样式。" },
+
                         new { role = "user", content = textToTranslate }
                     },
                     stream = false // 设置为false以获取完整响应

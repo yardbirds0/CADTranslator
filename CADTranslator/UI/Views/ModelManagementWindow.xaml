@@ -57,6 +57,7 @@
                 BorderThickness="1"
                 CornerRadius="4">
             <ui:DataGrid ItemsSource="{Binding Models}"
+                         SelectedItem="{Binding SelectedModel}"
                          AutoGenerateColumns="False"
                          CanUserAddRows="True"
                          CanUserDeleteRows="True"
@@ -67,20 +68,39 @@
                          HeadersVisibility="Column"
                          GridLinesVisibility="All">
                 <DataGrid.Columns>
+                    <DataGridTextColumn Header="序号"
+                                        Binding="{Binding Index}"
+                                        Width="60"
+                                        IsReadOnly="True">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="HorizontalAlignment"
+                                        Value="Center" />
+                                <Setter Property="VerticalAlignment"
+                                        Value="Center" />
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+
                     <DataGridTextColumn Header="模型名称 (例如: gemini-1.5-pro)"
                                         Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
                                         Width="*" />
                 </DataGrid.Columns>
             </ui:DataGrid>
         </Border>
+
         <StackPanel Grid.Row="2"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
                     Margin="0,15,0,0">
-            <ui:Button Content="保存并关闭"
+            <ui:Button Content="保存"
                        Click="SaveButton_Click"
-                       IsDefault="True"
                        Appearance="Primary" />
+            <ui:Button Content="应用选择模型"
+                       Click="ApplyButton_Click"
+                       Margin="10,0,0,0"
+                       Appearance="Caution"
+                       IsDefault="True" />
             <ui:Button Content="取消"
                        Click="CancelButton_Click"
                        Margin="10,0,0,0" />

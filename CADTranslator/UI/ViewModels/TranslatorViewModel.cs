@@ -174,7 +174,7 @@ namespace CADTranslator.UI.ViewModels
 
         public ObservableCollection<string> ModelList { get; set; }
         public string CurrentModelInput { get; set; }
-        public IEnumerable<ApiServiceType> ApiServiceOptions => Enum.GetValues(typeof(ApiServiceType)).Cast<ApiServiceType>();
+        public List<ApiServiceDisplay> ApiServiceOptions { get; }
         public List<LanguageItem> SupportedLanguages { get; } = new List<LanguageItem>
         {
             new LanguageItem { DisplayName = "自动检测", Value = "auto" },
@@ -248,6 +248,7 @@ namespace CADTranslator.UI.ViewModels
         public RelayCommand DeleteLineSpacingOptionCommand { get; }
         public RelayCommand GetBalanceCommand { get; }
         public RelayCommand ViewHistoryCommand { get; }
+        public RelayCommand ResetCommand { get; }
         #endregion
 
         #region --- 构造函数 ---
@@ -257,6 +258,15 @@ namespace CADTranslator.UI.ViewModels
             _settingsService = new SettingsService();
             _advancedTextService = new AdvancedTextService(Application.DocumentManager.MdiActiveDocument);
             _cadLayoutService = new CadLayoutService(Application.DocumentManager.MdiActiveDocument);
+
+            ApiServiceOptions = new List<ApiServiceDisplay>
+            {
+                new ApiServiceDisplay { DisplayName = "百度翻译", ServiceType = ApiServiceType.Baidu },
+                new ApiServiceDisplay { DisplayName = "谷歌Gemini", ServiceType = ApiServiceType.Gemini },
+                new ApiServiceDisplay { DisplayName = "ChatGPT", ServiceType = ApiServiceType.OpenAI },
+                new ApiServiceDisplay { DisplayName = "硅基流动", ServiceType = ApiServiceType.SiliconFlow },
+                new ApiServiceDisplay { DisplayName = "自定义接口", ServiceType = ApiServiceType.Custom }
+            };
 
             TextBlockList = new ObservableCollection<TextBlockViewModel>();
             ModelList = new ObservableCollection<string>();
@@ -275,6 +285,7 @@ namespace CADTranslator.UI.ViewModels
             DeleteLineSpacingOptionCommand = new RelayCommand(OnDeleteLineSpacingOption, p => p is string option && option != "不指定");
             GetBalanceCommand = new RelayCommand(OnGetBalance, p => IsBalanceFeatureEnabled && !IsBusy);
             ViewHistoryCommand = new RelayCommand(OnViewHistory, p => IsBalanceFeatureEnabled);
+            ResetCommand = new RelayCommand(OnReset);
 
             LoadSettings();
             Log("欢迎使用CAD翻译工具箱。");
@@ -507,22 +518,54 @@ namespace CADTranslator.UI.ViewModels
         private void OnManageModels(object parameter)
             {
             if (CurrentProfile == null) { MessageBox.Show("请先选择一个API配置。"); return; }
-            var modelManagementVM = new ModelManagementViewModel(CurrentProfile.ProfileName, CurrentProfile.Models);
+
+            // 创建视图模型，并传入当前模型列表的副本
+            var modelManagementVM = new ModelManagementViewModel(CurrentProfile.ProfileName, new List<string>(CurrentProfile.Models));
             var modelWindow = new ModelManagementWindow(modelManagementVM) { Owner = _ownerWindow };
+
+            // 只有当用户点击了“应用选择模型”或在关闭时确认保存(DialogResult == true)，才执行以下逻辑
             if (modelWindow.ShowDialog() == true)
                 {
+                // 1. 从管理窗口获取最终的模型列表（包含了用户的增、删、改）
                 var finalModels = modelManagementVM.GetFinalModels();
+
+                // 2. 用最终列表更新当前配置文件的模型列表
                 CurrentProfile.Models.Clear();
                 finalModels.ForEach(m => CurrentProfile.Models.Add(m));
+
+                // 3. 同步更新UI主界面的下拉列表
                 ModelList.Clear();
                 finalModels.ForEach(m => ModelList.Add(m));
-                if (!string.IsNullOrWhiteSpace(CurrentModelInput) && !finalModels.Contains(CurrentModelInput))
+
+                // 4. 【核心修正】检查用户是否通过“应用”按钮关闭了窗口
+                if (modelManagementVM.SelectedModel != null && !string.IsNullOrWhiteSpace(modelManagementVM.SelectedModel.Name))
                     {
-                    CurrentModelInput = finalModels.FirstOrDefault();
-                    OnPropertyChanged(nameof(CurrentModelInput));
+                    // 如果是，则将选择的模型同时更新到UI和配置文件
+                    string selectedModelName = modelManagementVM.SelectedModel.Name.Trim();
+                    CurrentModelInput = selectedModelName;
+
+                    // 【关键 Bug 修复】将用户的选择保存到当前配置的 LastSelectedModel 属性中
+                    CurrentProfile.LastSelectedModel = selectedModelName;
+
+                    Log($"已应用新模型: {selectedModelName}");
                     }
+                else
+                    {
+                    // 如果用户只是编辑了列表（例如，仅点了“保存”），则确保当前选择的模型依然有效
+                    if (!finalModels.Any() || (CurrentProfile.LastSelectedModel != null && !finalModels.Contains(CurrentProfile.LastSelectedModel)))
+                        {
+                        // 如果列表为空，或之前选择的模型已被删除，则自动选择列表中的第一个或置空
+                        CurrentProfile.LastSelectedModel = finalModels.FirstOrDefault();
+                        CurrentModelInput = CurrentProfile.LastSelectedModel;
+                        }
+                    Log($"配置 '{CurrentProfile.ProfileName}' 的模型列表已更新！");
+                    }
+
+                // 5. 触发UI刷新以显示最新的模型选择
+                OnPropertyChanged(nameof(CurrentModelInput));
+
+                // 6. 将所有更改（包括模型列表和最后的选择）保存到本地文件
                 SaveSettings();
-                Log($"配置 '{CurrentProfile.ProfileName}' 的模型列表已成功保存！");
                 }
             }
 
@@ -673,6 +716,21 @@ namespace CADTranslator.UI.ViewModels
             // 显示窗口
             historyWindow.ShowDialog();
             }
+
+        private void OnReset(object parameter)
+            {
+            if (MessageBox.Show("您确定要清空所有已提取的文本吗？此操作不可恢复。", "确认重置", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                {
+                TextBlockList.Clear();
+                _deletableSourceIds.Clear();
+                UpdateProgress(0, 0); // 重置进度条
+                Log("界面已重置，请重新选择CAD文字。");
+                // 依赖 TextBlockList 的命令（如“一键翻译”）的可用状态会自动更新
+                }
+            }
+
+
+
         #endregion
 
         #region --- 辅助方法 (新增) ---

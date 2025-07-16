@@ -1,43 +1,90 @@
-﻿using System.Collections.Generic;
+﻿// 文件路径: CADTranslator/UI/ViewModels/ModelManagementViewModel.cs
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 
 namespace CADTranslator.UI.ViewModels
     {
-    public class ModelManagementViewModel
+    public class ModelManagementViewModel : INotifyPropertyChanged
         {
-        // 新增属性：用于在窗口标题显示
         public string ProfileName { get; }
 
         public bool IsDirty { get; private set; } = false;
+
         public ObservableCollection<ModelViewModel> Models { get; set; }
 
-        /// <summary>
-        /// 这个无参数的构造函数仅供XAML设计器在设计时使用。
-        /// </summary>
+        private ModelViewModel _selectedModel;
+        public ModelViewModel SelectedModel
+            {
+            get => _selectedModel;
+            set
+                {
+                _selectedModel = value;
+                OnPropertyChanged();
+                }
+            }
+
+        // 仅供XAML设计器使用的无参数构造函数
         public ModelManagementViewModel()
-        {
-            // 提供一些示例数据，以便在设计器中看到预览效果
+            {
             ProfileName = "示例API配置";
             Models = new ObservableCollection<ModelViewModel>
-            {
-                new ModelViewModel { Name = "gemini-1.5-pro-latest" },
-                new ModelViewModel { Name = "gpt-4o" },
-                new ModelViewModel { Name = "some-custom-model" }
-            };
-        }
+                {
+                new ModelViewModel { Index = 1, Name = "gemini-1.5-pro-latest" },
+                new ModelViewModel { Index = 2, Name = "gpt-4o" }
+                };
+            }
 
-        // 修改构造函数：接收 profileName
+        // 【已修正】这是程序运行时使用的构造函数
         public ModelManagementViewModel(string profileName, List<string> currentModels)
             {
-            ProfileName = profileName; // 保存名称
-            Models = new ObservableCollection<ModelViewModel>(currentModels.Select(m => new ModelViewModel { Name = m }));
-            Models.CollectionChanged += (s, e) => IsDirty = true;
+            ProfileName = profileName;
+
+            // 【修正1】在初始化列表时，使用Select的重载来正确生成序号
+            var initialModels = currentModels.Select((modelName, index) => new ModelViewModel
+                {
+                Index = index + 1,
+                Name = modelName
+                });
+            Models = new ObservableCollection<ModelViewModel>(initialModels);
+
+            // 【修正2】订阅集合变化事件，确保在增删行时能重新编号
+            Models.CollectionChanged += (s, e) =>
+            {
+                IsDirty = true;
+                RenumberModels(); // 关键：调用重新编号的方法
+            };
+            }
+
+        // 【新增】一个私有方法，专门用于重新计算所有行的序号
+        private void RenumberModels()
+            {
+            for (int i = 0; i < Models.Count; i++)
+                {
+                Models[i].Index = i + 1;
+                }
+            }
+
+        public void MarkAsDirty()
+            {
+            IsDirty = true;
             }
 
         public List<string> GetFinalModels()
             {
-            return Models.Select(m => m.Name.Trim()).Where(n => !string.IsNullOrEmpty(n)).Distinct().ToList();
+            // 确保DataGrid中新增的空行不会被保存
+            return Models.Where(m => !string.IsNullOrWhiteSpace(m.Name))
+                         .Select(m => m.Name.Trim())
+                         .Distinct()
+                         .ToList();
+            }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+        protected void OnPropertyChanged([CallerMemberName] string propertyName = null)
+            {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
             }
         }
     }

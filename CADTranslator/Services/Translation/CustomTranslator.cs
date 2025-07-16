@@ -49,7 +49,7 @@ namespace CADTranslator.Services
                     messages = new[]
                     {
                         // 我们可以提供一个更明确的系统指令
-                        new { role = "system", content = $"You are a professional translator. Translate the user's text from {fromLanguage} to {toLanguage}. Output only the translated content, without any additional explanatory text." },
+                        new { role = "system", content = $"You are a professional translator for Civil Engineering drawings. Your task is to translate the user's text from {fromLanguage} to {toLanguage}. Do not add any extra explanations, just return the translated text. If you encounter symbols, keep their original style." },
                         new { role = "user", content = textToTranslate }
                     },
                     stream = false // 设置为false以获取完整响应

@@ -1,4 +1,5 @@
-﻿using CADTranslator.Models;
+﻿// 文件路径: CADTranslator/Services/BalanceService.cs
+using CADTranslator.Models;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Net.Http;
@@ -59,8 +60,8 @@ namespace CADTranslator.Services
                         ServiceType = ApiServiceType.SiliconFlow,
                         UserId = userData["id"]?.ToString() ?? "N/A",
                         AccountStatus = userData["status"]?.ToString() ?? "N/A",
-                        // 格式化余额信息以便显示
-                        BalanceInfo = $"余额: {userData["totalBalance"]}"
+                        // 【已修改】在金额后面添加了人民币符号
+                        BalanceInfo = $"余额: {userData["totalBalance"]} ¥"
                         };
 
                     return record;

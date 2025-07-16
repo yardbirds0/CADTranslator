@@ -28,7 +28,7 @@ namespace CADTranslator.Services
                 var messages = new List<ChatMessage>
                 {
                     // 系统消息，用于设定AI的角色和任务
-                    new SystemChatMessage($"You are a professional translator. Your task is to translate the user's text from {fromLanguage} to {toLanguage}. Do not add any extra explanations, just return the translated text."),
+                    new SystemChatMessage($"You are a professional translator for Civil Engineering drawings. Your task is to translate the user's text from {fromLanguage} to {toLanguage}. Do not add any extra explanations, just return the translated text. If you encounter symbols, keep their original style."),
                     // 用户消息，包含需要翻译的原文
                     new UserChatMessage(textToTranslate)
                 };

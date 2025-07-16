@@ -198,6 +198,7 @@
     <Compile Include="AutoCAD\Commands\MainCommands.cs" />
     <Compile Include="Models\ApiProfile.cs" />
     <Compile Include="Models\ApiServiceConfig.cs" />
+    <Compile Include="Models\ApiServiceDisplay.cs" />
     <Compile Include="Models\BalanceRecord.cs" />
     <Compile Include="Models\LanguageItem.cs" />
     <Compile Include="Models\UnderlineOptions.cs" />

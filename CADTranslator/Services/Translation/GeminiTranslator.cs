@@ -29,7 +29,7 @@ namespace CADTranslator.Services
                 {
                 // 4. 获取模型和生成内容的方式改变
                 var generativeModel = _googleAI.GenerativeModel(model: _model);
-                string prompt = $"Please translate the following text from {fromLanguage} to {toLanguage}. Do not add any extra explanations or introductory phrases, just return the translated text.\n\nText to translate:\n---\n{textToTranslate}\n---";
+                string prompt = $"You are a professional translator for Civil Engineering drawings. Your task is to translate the user's text from {fromLanguage} to {toLanguage}. Do not add any extra explanations, just return the translated text. If you encounter symbols, keep their original style.\n\nText to translate:\n---\n{textToTranslate}\n---";
 
                 var response = await generativeModel.GenerateContent(prompt);
 
