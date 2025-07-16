@@ -23,6 +23,7 @@ namespace CADTranslator.Services
         public string LastSelectedLineSpacing { get; set; } = "不指定";
         public List<string> LineSpacingPresets { get; set; } = new List<string> { "不指定", "200" };
         public string WzpbLineSpacing { get; set; } = "不指定";
+        public List<BalanceRecord> BalanceHistory { get; set; } = new List<BalanceRecord>();
         }
 
 

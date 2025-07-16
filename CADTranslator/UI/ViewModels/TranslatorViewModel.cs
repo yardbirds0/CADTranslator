@@ -116,7 +116,9 @@ namespace CADTranslator.UI.ViewModels
                     OnPropertyChanged(nameof(IsApiKeyEnabled));
                     OnPropertyChanged(nameof(IsModelListEnabled));
                     OnPropertyChanged(nameof(IsApiUrlEnabled));
-
+                    OnPropertyChanged(nameof(IsBalanceFeatureEnabled));
+                    GetBalanceCommand.RaiseCanExecuteChanged(); // 强制刷新命令状态
+                    ViewHistoryCommand.RaiseCanExecuteChanged();
                     var targetProfile = ApiProfiles.FirstOrDefault(p => p.ServiceType == _selectedApiService);
                     if (targetProfile == null)
                         {
@@ -148,7 +150,15 @@ namespace CADTranslator.UI.ViewModels
 
                     // 无论找到还是新建，都将它设为当前Profile
                     CurrentProfile = targetProfile;
-
+                    var lastRecordForNewApi = BalanceHistory.FirstOrDefault(r => r.ServiceType == _selectedApiService);
+                    if (lastRecordForNewApi != null)
+                        {
+                        LastBalanceDisplay = lastRecordForNewApi.BalanceInfo;
+                        }
+                    else
+                        {
+                        LastBalanceDisplay = "当前无余额记录";
+                        }
                     // 【关键】每次切换或创建后，立即保存所有设置
                     if (!_isLoading) SaveSettings();
                     }
@@ -191,7 +201,16 @@ namespace CADTranslator.UI.ViewModels
         public bool IsApiKeyEnabled => CurrentServiceConfig.RequiresApiKey;
         public bool IsModelListEnabled => CurrentServiceConfig.RequiresModelList;
         public bool IsApiUrlEnabled => CurrentServiceConfig.RequiresApiUrl;
+        private string _lastBalanceDisplay = "当前无余额记录";
+        public string LastBalanceDisplay
+            {
+            get => _lastBalanceDisplay;
+            set => SetField(ref _lastBalanceDisplay, value);
+            }
+
+        public bool IsBalanceFeatureEnabled => SelectedApiService == ApiServiceType.SiliconFlow;
         private string _currentLineSpacingInput;
+        public ObservableCollection<BalanceRecord> BalanceHistory { get; set; }
         public string CurrentLineSpacingInput
             {
             get => _currentLineSpacingInput;
@@ -227,6 +246,8 @@ namespace CADTranslator.UI.ViewModels
         public RelayCommand ManageModelsCommand { get; }
         public RelayCommand GetModelsCommand { get; }
         public RelayCommand DeleteLineSpacingOptionCommand { get; }
+        public RelayCommand GetBalanceCommand { get; }
+        public RelayCommand ViewHistoryCommand { get; }
         #endregion
 
         #region --- 构造函数 ---
@@ -241,6 +262,7 @@ namespace CADTranslator.UI.ViewModels
             ModelList = new ObservableCollection<string>();
             ApiProfiles = new ObservableCollection<ApiProfile>();
             LineSpacingOptions = new ObservableCollection<string>();
+            BalanceHistory = new ObservableCollection<BalanceRecord>();
             SelectTextCommand = new RelayCommand(OnSelectText);
             TranslateCommand = new RelayCommand(OnTranslate, p => TextBlockList.Any() && !IsBusy);
             ApplyToCadCommand = new RelayCommand(OnApplyToCad, p => TextBlockList.Any(i => !string.IsNullOrWhiteSpace(i.TranslatedText) && !i.TranslatedText.StartsWith("[")));
@@ -251,6 +273,8 @@ namespace CADTranslator.UI.ViewModels
             ManageModelsCommand = new RelayCommand(OnManageModels, p => IsModelListEnabled);
             GetModelsCommand = new RelayCommand(OnGetModels, p => (SelectedApiService == ApiServiceType.SiliconFlow || SelectedApiService == ApiServiceType.Gemini) && !IsBusy);
             DeleteLineSpacingOptionCommand = new RelayCommand(OnDeleteLineSpacingOption, p => p is string option && option != "不指定");
+            GetBalanceCommand = new RelayCommand(OnGetBalance, p => IsBalanceFeatureEnabled && !IsBusy);
+            ViewHistoryCommand = new RelayCommand(OnViewHistory, p => IsBalanceFeatureEnabled);
 
             LoadSettings();
             Log("欢迎使用CAD翻译工具箱。");
@@ -585,7 +609,70 @@ namespace CADTranslator.UI.ViewModels
                 Log($"已删除行间距选项: {optionToDelete}");
                 }
             }
+        private async void OnGetBalance(object parameter)
+            {
+            if (CurrentProfile == null || string.IsNullOrWhiteSpace(CurrentProfile.ApiKey))
+                {
+                Log("[错误] 请先在API设置中填写有效的API密钥。");
+                MessageBox.Show("API Key不能为空，请先填写。", "操作失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+                }
 
+            IsBusy = true;
+            Log($"正在从 {SelectedApiService} 查询余额...");
+            try
+                {
+                var balanceService = new BalanceService();
+                BalanceRecord newRecord = null;
+
+                // 根据当前选择的API，调用不同的服务方法
+                switch (SelectedApiService)
+                    {
+                    case ApiServiceType.SiliconFlow:
+                        newRecord = await balanceService.GetSiliconFlowBalanceAsync(CurrentProfile.ApiKey);
+                        break;
+                    // case ApiServiceType.Baidu:
+                    //     // newRecord = await balanceService.GetBaiduBalanceAsync(...);
+                    //     break;
+                    default:
+                        Log($"[警告] 当前API服务 {SelectedApiService} 尚不支持余额查询。");
+                        break;
+                    }
+
+                if (newRecord != null)
+                    {
+                    LastBalanceDisplay = newRecord.BalanceInfo; // 更新UI显示
+                    BalanceHistory.Add(newRecord);             // 添加到历史记录
+                    SaveSettings();                            // 实时保存
+                    Log("余额查询成功！");
+                    }
+                }
+            catch (Exception ex)
+                {
+                Log($"[错误] 查询余额时失败: {ex.Message}");
+                MessageBox.Show($"查询余额时发生错误:\n\n{ex.Message}", "操作失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            finally
+                {
+                IsBusy = false;
+                }
+            }
+
+        private void OnViewHistory(object parameter)
+            {
+            // 创建历史记录窗口的ViewModel，并将当前的历史记录传递给它
+            var historyViewModel = new BalanceHistoryViewModel(this.BalanceHistory);
+
+            // 创建窗口实例，并将ViewModel注入
+            var historyWindow = new BalanceHistoryWindow(historyViewModel)
+                {
+                // 设置窗口的所有者，使其可以模态地显示在主窗口之上
+                Owner = _ownerWindow
+                };
+
+            // 显示窗口
+            historyWindow.ShowDialog();
+            }
         #endregion
 
         #region --- 辅助方法 (新增) ---
@@ -766,7 +853,27 @@ namespace CADTranslator.UI.ViewModels
 
             // 加载用户上一次的选择
             CurrentLineSpacingInput = _currentSettings.LastSelectedLineSpacing ?? "不指定";
-            // -- 添加到这里结束 --
+            if (_currentSettings.BalanceHistory != null)
+                {
+                BalanceHistory.Clear();
+                foreach (var record in _currentSettings.BalanceHistory.OrderByDescending(r => r.Timestamp))
+                    {
+                    BalanceHistory.Add(record);
+                    }
+                }
+
+            // 更新上一次的余额显示
+            var lastRecord = BalanceHistory.FirstOrDefault();
+            if (lastRecord != null && lastRecord.ServiceType == SelectedApiService)
+                {
+                LastBalanceDisplay = lastRecord.BalanceInfo;
+                }
+            else
+                {
+                LastBalanceDisplay = "当前无余额记录";
+                }
+            // ▲▲▲ 添加结束 ▲▲▲
+
             _isLoading = false;
             }
 
@@ -779,6 +886,7 @@ namespace CADTranslator.UI.ViewModels
             _currentSettings.LastSelectedApiService = this.SelectedApiService; // 写入“记忆”
             _currentSettings.LastSelectedLineSpacing = this.CurrentLineSpacingInput;
             _currentSettings.LineSpacingPresets = this.LineSpacingOptions.ToList();
+            _currentSettings.BalanceHistory = this.BalanceHistory.ToList();
 
             _settingsService.SaveSettings(_currentSettings);
             }
@@ -805,6 +913,7 @@ namespace CADTranslator.UI.ViewModels
             OnPropertyChanged(nameof(IsApiKeyEnabled));
             OnPropertyChanged(nameof(IsModelListEnabled));
             OnPropertyChanged(nameof(IsApiUrlEnabled));
+
             }
 
         private void OnCurrentProfilePropertyChanged(object sender, PropertyChangedEventArgs e)

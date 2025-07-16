@@ -177,6 +177,46 @@
                                 </Grid>
                             </StackPanel>
                         </Border>
+                        <TextBlock Text="API 余额"
+                                   FontWeight="Bold"
+                                   FontSize="16"
+                                   Margin="0,15,0,10" />
+
+                        <Grid Margin="0,0,0,10">
+                            <TextBox Text="{Binding LastBalanceDisplay}"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     IsEnabled="{Binding IsBalanceFeatureEnabled}"
+                                     VerticalContentAlignment="Center"
+                                     Padding="5" />
+                            <TextBlock Text="当前无余额记录"
+                                       Foreground="Gray"
+                                       FontStyle="Italic"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding IsBalanceFeatureEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                       IsHitTestVisible="False" />
+                        </Grid>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <ui:Button Grid.Column="0"
+                                       Content="获取余额"
+                                       Margin="0,0,4,0"
+                                       Command="{Binding GetBalanceCommand}"
+                                       IsEnabled="{Binding IsBalanceFeatureEnabled}"
+                                       Appearance="Primary" />
+
+                            <ui:Button Grid.Column="1"
+                                       Content="历史记录"
+                                       Margin="4,0,0,0"
+                                       Command="{Binding ViewHistoryCommand}"
+                                       IsEnabled="{Binding IsBalanceFeatureEnabled}" />
+                        </Grid>
                         <TextBlock Text="源语言"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />

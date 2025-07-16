@@ -1,0 +1,42 @@
+﻿<ui:FluentWindow x:Class="CADTranslator.UI.Views.BalanceHistoryWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                 xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                 xmlns:vm="clr-namespace:CADTranslator.UI.ViewModels"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 mc:Ignorable="d"
+                 Title="余额查询历史记录"
+                 Height="500"
+                 Width="650"
+                 WindowStartupLocation="CenterOwner"
+                 WindowBackdropType="Mica"
+                 ExtendsContentIntoTitleBar="True"
+                 d:DataContext="{d:DesignInstance Type=vm:BalanceHistoryViewModel, IsDesignTimeCreatable=True}">
+
+    <Grid Margin="10,40,10,10">
+        <ui:DataGrid ItemsSource="{Binding History}"
+                     AutoGenerateColumns="False"
+                     IsReadOnly="True"
+                     HeadersVisibility="Column"
+                     GridLinesVisibility="All">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="查询时间"
+                                    Binding="{Binding Timestamp, StringFormat='yyyy-MM-dd HH:mm:ss'}"
+                                    Width="150" />
+                <DataGridTextColumn Header="API服务"
+                                    Binding="{Binding ServiceType}"
+                                    Width="100" />
+                <DataGridTextColumn Header="用户ID"
+                                    Binding="{Binding UserId}"
+                                    Width="120" />
+                <DataGridTextColumn Header="账户状态"
+                                    Binding="{Binding AccountStatus}"
+                                    Width="80" />
+                <DataGridTextColumn Header="余额信息"
+                                    Binding="{Binding BalanceInfo}"
+                                    Width="*" />
+            </DataGrid.Columns>
+        </ui:DataGrid>
+    </Grid>
+</ui:FluentWindow>

@@ -198,6 +198,7 @@
     <Compile Include="AutoCAD\Commands\MainCommands.cs" />
     <Compile Include="Models\ApiProfile.cs" />
     <Compile Include="Models\ApiServiceConfig.cs" />
+    <Compile Include="Models\BalanceRecord.cs" />
     <Compile Include="Models\LanguageItem.cs" />
     <Compile Include="Models\UnderlineOptions.cs" />
     <Compile Include="Nullable\AllowNullAttribute.cs" />
@@ -212,6 +213,7 @@
     <Compile Include="Nullable\NotNullIfNotNullAttribute.cs" />
     <Compile Include="Nullable\NotNullWhenAttribute.cs" />
     <Compile Include="Services\AdvancedTextService.cs" />
+    <Compile Include="Services\BalanceService.cs" />
     <Compile Include="Services\CadBridgeService.cs" />
     <Compile Include="Services\CadLayoutService.cs" />
     <Compile Include="Services\CadTextService.cs" />
@@ -225,10 +227,14 @@
     <Compile Include="Services\UnderlineService.cs" />
     <Compile Include="UI\Helpers\InverseBooleanConverter.cs" />
     <Compile Include="UI\Helpers\PasswordBoxHelper.cs" />
+    <Compile Include="UI\ViewModels\BalanceHistoryViewModel.cs" />
     <Compile Include="UI\ViewModels\ModelManagementViewModel.cs" />
     <Compile Include="UI\ViewModels\ModelViewModel.cs" />
     <Compile Include="UI\ViewModels\RelayCommand.cs" />
     <Compile Include="UI\ViewModels\TranslatorViewModel.cs" />
+    <Compile Include="UI\Views\BalanceHistoryWindow.xaml.cs">
+      <DependentUpon>BalanceHistoryWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="UI\Views\EditWindow.xaml.cs">
       <DependentUpon>EditWindow.xaml</DependentUpon>
     </Compile>
@@ -251,6 +257,10 @@
     <Compile Include="UI\Helpers\WindowBlurHelper.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Page Include="UI\Views\BalanceHistoryWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="UI\Views\EditWindow.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
