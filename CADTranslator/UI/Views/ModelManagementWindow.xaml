@@ -42,16 +42,15 @@
 
     <Grid Margin="10">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="40" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0"
-                   Text="在此处添加或删除当前API配置可用的模型。"
-                   TextWrapping="Wrap"
-                   Margin="5,40,5,15"
-                   Opacity="0.8" />
+        <ui:TitleBar Grid.Row="0"
+                     CanMaximize="False"
+                     Margin="0,0,0,0"
+                     ApplicationTheme="Light" />
 
         <Border Grid.Row="1"
                 BorderBrush="SkyBlue"
