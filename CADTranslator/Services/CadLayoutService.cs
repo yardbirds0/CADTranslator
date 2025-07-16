@@ -33,7 +33,7 @@ namespace CADTranslator.Services
             _editor = doc.Editor;
             }
 
-        public bool ApplySmartLayoutToCad(ObservableCollection<TextBlockViewModel> textBlockList, List<ObjectId> idsToDelete)
+        public bool ApplySmartLayoutToCad(ObservableCollection<TextBlockViewModel> textBlockList, List<ObjectId> idsToDelete, string lineSpacing)
             {
             var paragraphInfos = new List<ParagraphInfo>();
 
@@ -98,7 +98,7 @@ namespace CADTranslator.Services
                     if (ppr.Status != PromptStatus.OK) return false;
                     Point3d basePoint = ppr.Value;
 
-                    var jig = new SmartLayoutJig(paragraphInfos, basePoint);
+                    var jig = new SmartLayoutJig(paragraphInfos, basePoint, lineSpacing);
                     var dragResult = _editor.Drag(jig);
                     if (dragResult.Status != PromptStatus.OK) return false;
 
@@ -118,13 +118,15 @@ namespace CADTranslator.Services
 
                         for (int i = 0; i < jig.FinalLineInfo.Count; i++)
                             {
-                            var (lineText, paraNeedsIndent, isFirstLineOfPara, currentParaIndex) = jig.FinalLineInfo[i];
+                            // 1. 获取包含精确坐标的元组
+                            var (lineText, paraNeedsIndent, isFirstLineOfPara, currentParaIndex, linePosition) = jig.FinalLineInfo[i];
                             var currentParaInfo = paragraphInfos[currentParaIndex];
                             string finalLineText = lineText;
 
                             if (currentParaInfo.ContainsSpecialPattern && finalLineText.Contains(LegendPlaceholder))
                                 {
-                                PlaceGraphicsAlongsideText(finalLineText, currentParaInfo, basePoint, i, paraNeedsIndent, isFirstLineOfPara, jig, tr, modelSpace);
+                                // 这里需要一个小的调整，把 basePoint 和 i 传给 PlaceGraphicsAlongsideText 方法
+                                PlaceGraphicsAlongsideText(finalLineText, currentParaInfo, linePosition, jig, tr, modelSpace);
                                 finalLineText = finalLineText.Replace(LegendPlaceholder, new string(' ', currentParaInfo.OriginalSpaceCount));
                                 }
 
@@ -132,23 +134,16 @@ namespace CADTranslator.Services
 
                             using (var newText = new DBText())
                                 {
-                                // ▼▼▼【核心修正】就是下面这一行！▼▼▼
-                                // 从模板实体完整复制如图层、颜色、线型等所有基本属性
                                 newText.SetPropertiesFrom(currentParaInfo.TemplateEntity);
-                                // ▲▲▲ 修正结束 ▲▲▲
-
                                 newText.TextString = finalLineText;
                                 newText.Height = currentParaInfo.Height;
                                 newText.WidthFactor = currentParaInfo.WidthFactor;
                                 newText.TextStyleId = currentParaInfo.TextStyleId;
 
-                                double xOffset = (paraNeedsIndent && !isFirstLineOfPara) ? jig.FinalIndent : 0;
-                                double yOffset = i * currentParaInfo.Height * 1.5;
-                                Point3d linePosition = basePoint + new Vector3d(xOffset, -yOffset, 0);
-
+                                // 2. 直接使用从Jig获取的精确坐标
                                 newText.HorizontalMode = TextHorizontalMode.TextLeft;
                                 newText.VerticalMode = TextVerticalMode.TextBase;
-                                newText.Position = linePosition;
+                                newText.Position = linePosition; // <-- 直接使用这个坐标
 
                                 modelSpace.AppendEntity(newText);
                                 tr.AddNewlyCreatedDBObject(newText, true);
@@ -167,7 +162,7 @@ namespace CADTranslator.Services
             }
 
 
-        private void PlaceGraphicsAlongsideText(string lineText, ParagraphInfo paraInfo, Point3d basePoint, int lineIndex, bool paraNeedsIndent, bool isFirstLineOfPara, SmartLayoutJig jig, Transaction tr, BlockTableRecord modelSpace)
+        private void PlaceGraphicsAlongsideText(string lineText, ParagraphInfo paraInfo, Point3d lineBasePoint, SmartLayoutJig jig, Transaction tr, BlockTableRecord modelSpace)
             {
             int placeholderIndex = lineText.IndexOf(LegendPlaceholder);
             if (placeholderIndex < 0) return;
@@ -182,14 +177,10 @@ namespace CADTranslator.Services
                 tempText.WidthFactor = paraInfo.WidthFactor;
                 tempText.TextStyleId = paraInfo.TextStyleId;
 
-                // 【核心】使用原始对齐属性来计算新锚点
                 tempText.HorizontalMode = paraInfo.HorizontalMode;
                 tempText.VerticalMode = paraInfo.VerticalMode;
 
-                double xOffset = (paraNeedsIndent && !isFirstLineOfPara) ? jig.FinalIndent : 0;
-                double yOffset = lineIndex * paraInfo.Height * 1.5;
-                Point3d lineBasePoint = basePoint + new Vector3d(xOffset, -yOffset, 0);
-
+                // 直接使用传入的精确基点
                 if (tempText.HorizontalMode == TextHorizontalMode.TextLeft && tempText.VerticalMode == TextVerticalMode.TextBase)
                     {
                     tempText.Position = lineBasePoint;

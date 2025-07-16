@@ -376,7 +376,6 @@
                                   Grid.Column="0"
                                   VerticalScrollBarVisibility="Auto">
                         <ItemsControl ItemsSource="{Binding StatusLog}">
-
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <TextBox Text="{Binding Path=., Mode=OneWay}"
@@ -400,12 +399,90 @@
                             Width="1"
                             Margin="10,0" />
 
-                    <StackPanel Grid.Column="2"
-                                VerticalAlignment="Center">
-                        <TextBlock Text="当前任务进度"
+                    <Grid Grid.Column="2"
+                          VerticalAlignment="Stretch">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0"
+                                   Text="排版后行间距"
                                    Opacity="0.8"
                                    Margin="0,0,0,5" />
-                        <Grid>
+
+                        <Grid Grid.Row="1">
+                            <ComboBox ItemsSource="{Binding LineSpacingOptions}"
+                                      Text="{Binding CurrentLineSpacingInput, UpdateSourceTrigger=LostFocus}"
+                                      IsEditable="True"
+                                      IsEnabled="{Binding IsLiveLayoutEnabled}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding}"
+                                                       VerticalAlignment="Center"
+                                                       Padding="3,0,0,0" />
+
+                                            <ui:Button Grid.Column="1"
+                                                       Command="{Binding DataContext.DeleteLineSpacingOptionCommand, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                       CommandParameter="{Binding}"
+                                                       Appearance="Transparent"
+                                                       FontSize="14"
+                                                       FontWeight="Bold"
+                                                       Padding="8,0">
+                                                <ui:Button.Style>
+                                                    <Style TargetType="ui:Button"
+                                                           BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                        <Setter Property="Content"
+                                                                Value="×" />
+                                                        <Setter Property="Foreground"
+                                                                Value="Gray" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding}"
+                                                                         Value="不指定">
+                                                                <Setter Property="Visibility"
+                                                                        Value="Collapsed" />
+                                                            </DataTrigger>
+                                                            <Trigger Property="IsMouseOver"
+                                                                     Value="True">
+                                                                <Setter Property="Foreground"
+                                                                        Value="Red" />
+                                                            </Trigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ui:Button.Style>
+                                            </ui:Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+
+                            <TextBlock Text="实时排版未采用"
+                                       Foreground="Gray"
+                                       FontStyle="Italic"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding IsLiveLayoutEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                       IsHitTestVisible="False" />
+                        </Grid>
+
+                        <TextBlock Grid.Row="3"
+                                   Text="当前任务进度"
+                                   Opacity="0.8"
+                                   Margin="0,0,0,5"
+                                   VerticalAlignment="Bottom" />
+
+                        <Grid Grid.Row="4"
+                              VerticalAlignment="Bottom">
                             <ProgressBar Value="{Binding ProgressValue}"
                                          Height="20" />
                             <TextBlock Text="{Binding ProgressText}"
@@ -414,7 +491,8 @@
                                        Foreground="White"
                                        FontWeight="Bold" />
                         </Grid>
-                    </StackPanel>
+                    </Grid>
+
                 </Grid>
             </Border>
         </Grid>

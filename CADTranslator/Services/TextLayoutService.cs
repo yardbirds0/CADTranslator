@@ -26,40 +26,41 @@ namespace CADTranslator.Services
             _editor = doc.Editor;
             }
 
-        public void Execute()
-            {
-            var selRes = _editor.GetSelection();
-            if (selRes.Status != PromptStatus.OK) return;
+        public void Execute(SelectionSet selSet, string lineSpacing)
+        {
+            if (selSet == null || selSet.Count == 0) return;
 
             using (Transaction tr = _db.TransactionManager.StartTransaction())
-                {
+            {
                 try
-                    {
+                {
                     var graphicEntities = new List<Entity>();
                     var textObjectIds = new List<ObjectId>();
                     var deletableObjectIds = new HashSet<ObjectId>();
 
-                    foreach (SelectedObject selObj in selRes.Value)
-                        {
+                    // 1. 直接使用从命令传入的 selSet
+                    foreach (SelectedObject selObj in selSet)
+                    {
                         var ent = tr.GetObject(selObj.ObjectId, OpenMode.ForRead) as Entity;
                         if (ent is DBText || ent is MText)
-                            {
+                        {
                             textObjectIds.Add(ent.ObjectId);
                             deletableObjectIds.Add(ent.ObjectId);
-                            }
-                        else if (ent != null)
-                            {
-                            graphicEntities.Add(ent);
-                            }
                         }
+                        else if (ent != null)
+                        {
+                            graphicEntities.Add(ent);
+                        }
+                    }
 
                     if (textObjectIds.Count == 0)
-                        {
+                    {
                         _editor.WriteMessage("\n选择的对象中未找到任何有效文字。");
                         return;
-                        }
+                    }
 
                     var textService = new CadTextService(Application.DocumentManager.MdiActiveDocument);
+                    // 2. 直接使用 textObjectIds 创建临时的 SelectionSet
                     List<TextBlockViewModel> rawTextBlocks = textService.ExtractAndMergeText(SelectionSet.FromObjectIds(textObjectIds.ToArray()));
 
                     var paragraphInfos = new List<ParagraphInfo>();
@@ -208,7 +209,7 @@ namespace CADTranslator.Services
                     if (ppr.Status != PromptStatus.OK) { tr.Abort(); return; }
                     Point3d basePoint = ppr.Value;
 
-                    var jig = new SmartLayoutJig(paragraphInfos, basePoint);
+                    var jig = new SmartLayoutJig(paragraphInfos, basePoint, lineSpacing);
                     var dragResult = _editor.Drag(jig);
                     if (dragResult.Status != PromptStatus.OK) { tr.Abort(); return; }
 
@@ -329,10 +330,10 @@ namespace CADTranslator.Services
                 catch (System.Exception ex)
                     {
                     _editor.WriteMessage($"\n[WZPB] 命令在服务层执行时发生错误: {ex.Message}");
-                    // 在服务层，我们通常只记录错误或向上抛出，而不是直接与用户交互
-                    // 这里为了保持原有功能，暂时保留向命令行写消息
+                    tr.Abort(); // 确保在服务层也中止事务
                     }
+                }
                 }
             }
         }
-    }
+   

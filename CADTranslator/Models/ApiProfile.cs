@@ -11,7 +11,8 @@ namespace CADTranslator.Models
         Baidu,
         Gemini,
         OpenAI,
-        Custom
+        Custom,
+        SiliconFlow
         }
 
     public class ApiProfile : INotifyPropertyChanged

@@ -26,21 +26,32 @@ namespace CADTranslator.UI.ViewModels
     public class TranslatorViewModel : INotifyPropertyChanged
         {
         #region --- Win32 API 辅助 ---
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool SetForegroundWindow(IntPtr hWnd);
+        // 我们不再需要 SetForegroundWindow 这个 P/Invoke 调用了，可以将其删除或注释掉
+        // [DllImport("user32.dll")]
+        // [return: MarshalAs(UnmanagedType.Bool)]
+        // private static extern bool SetForegroundWindow(IntPtr hWnd);
 
         private void SwitchToAutoCad()
             {
             try
                 {
-                SetForegroundWindow(Application.MainWindow.Handle);
+                var doc = Application.DocumentManager.MdiActiveDocument;
+                if (doc != null)
+                    {
+                    // 使用AutoCAD API内置的方法来激活当前文档窗口，这是最可靠的方式
+                    doc.Window.Focus();
+                    }
                 }
-            catch { /* 忽略可能的错误 */ }
+            catch (Exception ex)
+                {
+                // 记录一个详细的错误日志，以防万一
+                Log($"[警告] 切换到CAD窗口时出错: {ex.Message}");
+                }
             }
         #endregion
 
         #region --- 字段 ---
+        private bool _isLoading = false;
         private List<ObjectId> _deletableSourceIds = new List<ObjectId>();
         private readonly SettingsService _settingsService;
         private AppSettings _currentSettings;
@@ -61,7 +72,8 @@ namespace CADTranslator.UI.ViewModels
             [ApiServiceType.Baidu] = new ApiServiceConfig(requiresUserId: true, requiresApiKey: true, requiresModelList: false, requiresApiUrl: false),
             [ApiServiceType.Gemini] = new ApiServiceConfig(requiresUserId: false, requiresApiKey: true, requiresModelList: true, requiresApiUrl: false),
             [ApiServiceType.OpenAI] = new ApiServiceConfig(requiresUserId: false, requiresApiKey: true, requiresModelList: true, requiresApiUrl: false),
-            [ApiServiceType.Custom] = new ApiServiceConfig(requiresUserId: false, requiresApiKey: true, requiresModelList: true, requiresApiUrl: true)
+            [ApiServiceType.Custom] = new ApiServiceConfig(requiresUserId: false, requiresApiKey: true, requiresModelList: true, requiresApiUrl: true),
+            [ApiServiceType.SiliconFlow] = new ApiServiceConfig(requiresUserId: false, requiresApiKey: true, requiresModelList: true, requiresApiUrl: true)
             };
         #endregion
 
@@ -138,7 +150,7 @@ namespace CADTranslator.UI.ViewModels
                     CurrentProfile = targetProfile;
 
                     // 【关键】每次切换或创建后，立即保存所有设置
-                    SaveSettings();
+                    if (!_isLoading) SaveSettings();
                     }
                 }
             }
@@ -147,7 +159,7 @@ namespace CADTranslator.UI.ViewModels
         public bool IsLiveLayoutEnabled
             {
             get => _isLiveLayoutEnabled;
-            set { if (SetField(ref _isLiveLayoutEnabled, value)) { SaveSettings(); } }
+            set { if (SetField(ref _isLiveLayoutEnabled, value)) { if (!_isLoading) SaveSettings(); } } 
             }
 
         public ObservableCollection<string> ModelList { get; set; }
@@ -179,6 +191,29 @@ namespace CADTranslator.UI.ViewModels
         public bool IsApiKeyEnabled => CurrentServiceConfig.RequiresApiKey;
         public bool IsModelListEnabled => CurrentServiceConfig.RequiresModelList;
         public bool IsApiUrlEnabled => CurrentServiceConfig.RequiresApiUrl;
+        private string _currentLineSpacingInput;
+        public string CurrentLineSpacingInput
+            {
+            get => _currentLineSpacingInput;
+            set
+                {
+                if (SetField(ref _currentLineSpacingInput, value))
+                    {
+                    // 当用户输入一个有效的新数字时，自动添加到下拉列表中
+                    if (!string.IsNullOrWhiteSpace(value) &&
+                        double.TryParse(value, out _) &&
+                        !LineSpacingOptions.Contains(value))
+                        {
+                        LineSpacingOptions.Add(value);
+                        }
+                    // 每次输入改变都保存设置，确保用户的选择和新选项被记住
+                    if (!_isLoading) SaveSettings();
+                    }
+                }
+            }
+
+        public ObservableCollection<string> LineSpacingOptions { get; set; }
+
         #endregion
 
         #region --- 命令 ---
@@ -190,6 +225,8 @@ namespace CADTranslator.UI.ViewModels
         public RelayCommand DeleteCommand { get; }
         public RelayCommand EditCommand { get; }
         public RelayCommand ManageModelsCommand { get; }
+        public RelayCommand GetModelsCommand { get; }
+        public RelayCommand DeleteLineSpacingOptionCommand { get; }
         #endregion
 
         #region --- 构造函数 ---
@@ -203,7 +240,7 @@ namespace CADTranslator.UI.ViewModels
             TextBlockList = new ObservableCollection<TextBlockViewModel>();
             ModelList = new ObservableCollection<string>();
             ApiProfiles = new ObservableCollection<ApiProfile>();
-
+            LineSpacingOptions = new ObservableCollection<string>();
             SelectTextCommand = new RelayCommand(OnSelectText);
             TranslateCommand = new RelayCommand(OnTranslate, p => TextBlockList.Any() && !IsBusy);
             ApplyToCadCommand = new RelayCommand(OnApplyToCad, p => TextBlockList.Any(i => !string.IsNullOrWhiteSpace(i.TranslatedText) && !i.TranslatedText.StartsWith("[")));
@@ -212,6 +249,8 @@ namespace CADTranslator.UI.ViewModels
             SplitCommand = new RelayCommand(OnSplit, p => p is TextBlockViewModel);
             EditCommand = new RelayCommand(OnEdit, p => p is TextBlockViewModel);
             ManageModelsCommand = new RelayCommand(OnManageModels, p => IsModelListEnabled);
+            GetModelsCommand = new RelayCommand(OnGetModels, p => (SelectedApiService == ApiServiceType.SiliconFlow || SelectedApiService == ApiServiceType.Gemini) && !IsBusy);
+            DeleteLineSpacingOptionCommand = new RelayCommand(OnDeleteLineSpacingOption, p => p is string option && option != "不指定");
 
             LoadSettings();
             Log("欢迎使用CAD翻译工具箱。");
@@ -261,11 +300,23 @@ namespace CADTranslator.UI.ViewModels
                 Log($"准备翻译 {totalItems} 个项目...");
                 UpdateProgress(completedItems, totalItems);
 
+                var prefixRegex = new Regex(@"^\s*(\d+[\.,、]\s*)");
+                // 定义用于检查译文是否以数字开头的正则表达式
+                var startsWithNumberRegex = new Regex(@"^\s*\d+");
+
                 foreach (var item in itemsToTranslate)
                     {
                     var stopwatch = new System.Diagnostics.Stopwatch();
                     string initialLog = $"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems + 1}/{totalItems} 项翻译正在进行...";
                     Log(initialLog, addNewLine: true, isListItem: true);
+
+                    // 1. 【预处理】提取原文的编号前缀
+                    string originalPrefix = "";
+                    var match = prefixRegex.Match(item.OriginalText);
+                    if (match.Success)
+                        {
+                        originalPrefix = match.Groups[1].Value;
+                        }
 
                     Task<string> translationTask = CreateTranslationTask(item, translator);
                     stopwatch.Start();
@@ -285,12 +336,22 @@ namespace CADTranslator.UI.ViewModels
                         string result = await translationTask;
                         if (IsTranslationError(result)) throw new Exception(result);
 
-                        item.TranslatedText = result;
+                        // 2. 【后处理】检查并修复丢失的编号
+                        if (!string.IsNullOrEmpty(originalPrefix) && !startsWithNumberRegex.IsMatch(result))
+                            {
+                            // 如果原文有编号，但译文没有，则自动加上
+                            item.TranslatedText = originalPrefix + result;
+                            }
+                        else
+                            {
+                            // 否则，直接使用翻译结果
+                            item.TranslatedText = result;
+                            }
+
                         completedItems++;
                         UpdateProgress(completedItems, totalItems);
                         UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems}/{totalItems} 项翻译完成。总共用时 {stopwatch.Elapsed.TotalSeconds:F1} 秒");
 
-                        // 【最终修正】使用 _ownerWindow.Dispatcher
                         _ownerWindow.Dispatcher.Invoke(() => ApplyToCadCommand.RaiseCanExecuteChanged());
                         }
                     catch (Exception ex)
@@ -299,7 +360,6 @@ namespace CADTranslator.UI.ViewModels
                         return;
                         }
                     }
-
                 totalStopwatch.Stop();
                 Log(totalItems > 0 ? $"全部翻译任务已成功完成！总共用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒" : "没有需要翻译的新内容。");
                 }
@@ -374,15 +434,20 @@ namespace CADTranslator.UI.ViewModels
         private async void OnApplyToCad(object parameter)
             {
             Log("正在切换到CAD窗口并应用翻译...");
-            _ownerWindow.Hide();
+
+            // 1. 【核心】将WPF窗口最小化到任务栏
+            _ownerWindow.WindowState = WindowState.Minimized;
+
+            // 2. 将操作焦点明确交给AutoCAD
             SwitchToAutoCad();
+
             bool success = false;
             try
                 {
                 if (IsLiveLayoutEnabled)
                     {
                     Log("“实时排版”已启用，将执行智能布局...");
-                    success = _cadLayoutService.ApplySmartLayoutToCad(TextBlockList, _deletableSourceIds);
+                    success = _cadLayoutService.ApplySmartLayoutToCad(TextBlockList, _deletableSourceIds, CurrentLineSpacingInput);
                     }
                 else
                     {
@@ -397,14 +462,11 @@ namespace CADTranslator.UI.ViewModels
                 }
             finally
                 {
-                // 【最终修正】只有在操作失败时，才重新显示并激活WPF窗口
+                // 3. 如果操作失败，则自动恢复窗口以提示用户
                 if (!success)
                     {
-                    if (!_ownerWindow.IsVisible)
-                        {
-                        _ownerWindow.Show();
-                        }
-                    _ownerWindow.Activate(); // 失败时，明确夺回焦点以提示用户
+                    _ownerWindow.WindowState = WindowState.Normal;
+                    _ownerWindow.Activate();
                     }
                 }
 
@@ -440,6 +502,90 @@ namespace CADTranslator.UI.ViewModels
                 }
             }
 
+        private async void OnGetModels(object parameter)
+            {
+            if (CurrentProfile == null || string.IsNullOrWhiteSpace(CurrentProfile.ApiKey))
+                {
+                Log("[错误] 请先在API设置中填写有效的API密钥。");
+                MessageBox.Show("API Key不能为空，请先填写。", "操作失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+                }
+
+            IsBusy = true;
+            Log($"正在从 {SelectedApiService} 获取模型列表...");
+            try
+                {
+                var modelService = new ModelFetchingService();
+                List<string> models;
+
+                // 【核心修改】根据不同的API，调用不同的方法
+                if (SelectedApiService == ApiServiceType.SiliconFlow)
+                    {
+                    models = await modelService.GetSiliconFlowModelsAsync(CurrentProfile.ApiKey);
+                    }
+                else // 默认为 Gemini
+                    {
+                    models = await modelService.GetGeminiModelsAsync(CurrentProfile.ApiKey);
+                    }
+
+                if (models != null && models.Any())
+                    {
+                    // 更新UI和配置文件的模型列表
+                    ModelList.Clear();
+                    CurrentProfile.Models.Clear();
+                    models.ForEach(m =>
+                    {
+                        ModelList.Add(m);
+                        CurrentProfile.Models.Add(m);
+                    });
+
+                    // 自动选择第一个模型作为当前模型
+                    CurrentModelInput = ModelList.FirstOrDefault();
+                    OnPropertyChanged(nameof(CurrentModelInput));
+                    SaveSettings(); // 保存更新后的列表
+
+                    Log($"成功获取 {models.Count} 个模型！列表已更新。");
+                    }
+                else
+                    {
+                    Log("未能获取到任何模型列表。");
+                    }
+                }
+            catch (Exception ex)
+                {
+                Log($"[错误] 获取模型列表时失败: {ex.Message}");
+                MessageBox.Show($"获取模型列表时发生错误:\n\n{ex.Message}", "操作失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            finally
+                {
+                IsBusy = false;
+                }
+            }
+
+        private void OnDeleteLineSpacingOption(object parameter)
+            {
+            if (parameter is string optionToDelete)
+                {
+                // 1. 从UI集合中删除
+                if (LineSpacingOptions.Contains(optionToDelete))
+                    {
+                    LineSpacingOptions.Remove(optionToDelete);
+                    }
+
+                // 2. 如果删除的是当前正在显示的值，则重置为默认值
+                if (CurrentLineSpacingInput == optionToDelete)
+                    {
+                    CurrentLineSpacingInput = "不指定";
+                    // 这里我们不需要手动调用OnPropertyChanged，因为CurrentLineSpacingInput的setter会自动处理
+                    }
+
+                // 3. 保存更改到本地文件
+                SaveSettings();
+
+                Log($"已删除行间距选项: {optionToDelete}");
+                }
+            }
+
         #endregion
 
         #region --- 辅助方法 (新增) ---
@@ -458,6 +604,8 @@ namespace CADTranslator.UI.ViewModels
                         return new OpenAiTranslator(CurrentProfile.ApiKey, string.IsNullOrWhiteSpace(CurrentProfile.LastSelectedModel) ? "gpt-4o" : CurrentProfile.LastSelectedModel);
                     case ApiServiceType.Custom:
                         return new CustomTranslator(CurrentProfile.ApiEndpoint, CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel);
+                    case ApiServiceType.SiliconFlow: 
+                        return new SiliconFlowTranslator(CurrentProfile.ApiEndpoint, CurrentProfile.ApiKey, CurrentProfile.LastSelectedModel); 
                     default:
                         MessageBox.Show("当前选择的API服务尚未实现。");
                         return null;
@@ -537,6 +685,7 @@ namespace CADTranslator.UI.ViewModels
 
         private void LoadSettings()
             {
+            _isLoading = true;
             // 1. 从本地文件读取最新的设置
             _currentSettings = _settingsService.LoadSettings();
 
@@ -599,6 +748,26 @@ namespace CADTranslator.UI.ViewModels
             // 即使这行代码触发了SaveSettings()，因为所有数据都已正确加载，
             // 它也只会把正确的数据保存回去，完全无害。
             IsLiveLayoutEnabled = _currentSettings.IsLiveLayoutEnabled;
+            if (_currentSettings.LineSpacingPresets == null || !_currentSettings.LineSpacingPresets.Any())
+                {
+                _currentSettings.LineSpacingPresets = new List<string> { "不指定", "200" };
+                }
+
+            // 加载完整的选项列表
+            var distinctPresets = _currentSettings.LineSpacingPresets.Distinct().ToList();
+
+            // 用干净的列表来填充UI
+            LineSpacingOptions.Clear();
+            foreach (var preset in distinctPresets)
+                {
+                LineSpacingOptions.Add(preset);
+                }
+            // -- 修改到这里结束 --
+
+            // 加载用户上一次的选择
+            CurrentLineSpacingInput = _currentSettings.LastSelectedLineSpacing ?? "不指定";
+            // -- 添加到这里结束 --
+            _isLoading = false;
             }
 
         private void SaveSettings()
@@ -607,8 +776,9 @@ namespace CADTranslator.UI.ViewModels
             _currentSettings.IsLiveLayoutEnabled = this.IsLiveLayoutEnabled;
             _currentSettings.ApiProfiles = this.ApiProfiles.ToList();
 
-            // ▼▼▼ 在这里添加下面这行代码 ▼▼▼
             _currentSettings.LastSelectedApiService = this.SelectedApiService; // 写入“记忆”
+            _currentSettings.LastSelectedLineSpacing = this.CurrentLineSpacingInput;
+            _currentSettings.LineSpacingPresets = this.LineSpacingOptions.ToList();
 
             _settingsService.SaveSettings(_currentSettings);
             }

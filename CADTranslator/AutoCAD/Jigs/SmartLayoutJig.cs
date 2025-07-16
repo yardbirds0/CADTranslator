@@ -12,21 +12,23 @@ namespace CADTranslator.AutoCAD.Jigs
     {
     public class SmartLayoutJig : DrawJig
     {
-        public List<Tuple<string, bool, bool, int>> FinalLineInfo { get; private set; }
+        public List<Tuple<string, bool, bool, int, Point3d>> FinalLineInfo { get; private set; }
         public double FinalIndent { get; private set; }
 
         private readonly List<ParagraphInfo> _paragraphInfos;
-
+        private readonly string _lineSpacing;
         private readonly Point3d _basePoint;
         private Point3d _currentPoint;
 
-        public SmartLayoutJig(List<ParagraphInfo> paragraphInfos, Point3d basePoint)
-        {
+        public SmartLayoutJig(List<ParagraphInfo> paragraphInfos, Point3d basePoint, string lineSpacing)
+            {
             _paragraphInfos = paragraphInfos;
             _basePoint = basePoint;
             _currentPoint = basePoint;
-            FinalLineInfo = new List<Tuple<string, bool, bool, int>>();
-        }
+            _lineSpacing = lineSpacing;
+            FinalLineInfo = new List<Tuple<string, bool, bool, int, Point3d>>();
+            }
+            
 
         protected override SamplerStatus Sampler(JigPrompts prompts)
         {
@@ -48,24 +50,26 @@ namespace CADTranslator.AutoCAD.Jigs
         }
 
         protected override bool WorldDraw(WorldDraw draw)
-        {
+            {
             double currentWidth = Math.Abs(_currentPoint.X - _basePoint.X);
             if (currentWidth < 1.0) currentWidth = 1.0;
 
             if (FinalIndent <= 0 && _paragraphInfos.Any())
-            {
-                using (var tempDbText = new DBText { TextString = "WW", Height = _paragraphInfos[0].Height, TextStyleId = _paragraphInfos[0].TextStyleId, WidthFactor = _paragraphInfos[0].WidthFactor })
                 {
+                using (var tempDbText = new DBText { TextString = "WW", Height = _paragraphInfos[0].Height, TextStyleId = _paragraphInfos[0].TextStyleId, WidthFactor = _paragraphInfos[0].WidthFactor })
+                    {
                     var extents = tempDbText.GeometricExtents;
                     if (extents != null) FinalIndent = extents.MaxPoint.X - extents.MinPoint.X;
+                    }
                 }
-            }
 
             FinalLineInfo.Clear();
             Point3d currentDrawingPosition = _basePoint;
 
+            bool useCustomSpacing = double.TryParse(_lineSpacing, out double customSpacingValue);
+
             for (int p_idx = 0; p_idx < _paragraphInfos.Count; p_idx++)
-            {
+                {
                 var paraInfo = _paragraphInfos[p_idx];
                 if (string.IsNullOrEmpty(paraInfo.Text)) continue;
 
@@ -73,33 +77,48 @@ namespace CADTranslator.AutoCAD.Jigs
                 bool applyIndent = linesInParagraph.Count > 1;
 
                 for (int i = 0; i < linesInParagraph.Count; i++)
-                {
+                    {
                     string lineText = linesInParagraph[i];
                     double xOffset = (i > 0 && applyIndent) ? FinalIndent : 0;
 
+                    // 1. 在 using 外部声明和定义 textPosition
+                    Point3d textPosition = currentDrawingPosition + new Vector3d(xOffset, 0, 0);
+
                     using (var previewText = new DBText())
-                    {
+                        {
                         previewText.TextString = lineText;
                         previewText.Height = paraInfo.Height;
                         previewText.WidthFactor = paraInfo.WidthFactor;
                         previewText.TextStyleId = paraInfo.TextStyleId;
-                        previewText.Position = currentDrawingPosition + new Vector3d(xOffset, 0, 0);
+
+                        // 2. 在这里直接使用 textPosition
+                        previewText.Position = textPosition;
                         previewText.HorizontalMode = TextHorizontalMode.TextLeft;
                         previewText.VerticalMode = TextVerticalMode.TextTop;
-                        previewText.AlignmentPoint = previewText.Position;
+                        previewText.AlignmentPoint = textPosition;
 
                         draw.Geometry.Draw(previewText);
+                        }
+
+                    FinalLineInfo.Add(new Tuple<string, bool, bool, int, Point3d>(lineText, applyIndent, i == 0, p_idx, textPosition));
+
+                    // -- 从这里开始是新的行距计算逻辑 --
+                    if (useCustomSpacing)
+                        {
+                        // 使用自定义行距：Y坐标减去 当前行文字高度 和 用户指定的间距
+                        currentDrawingPosition += new Vector3d(0, -(paraInfo.Height + customSpacingValue), 0);
+                        }
+                    else
+                        {
+                        // 使用默认行距
+                        currentDrawingPosition += new Vector3d(0, -paraInfo.Height * 1.5, 0);
+                        }
+                    // -- 新逻辑结束 --
                     }
-
-                    FinalLineInfo.Add(new Tuple<string, bool, bool, int>(lineText, applyIndent, i == 0, p_idx));
-
-                    currentDrawingPosition += new Vector3d(0, -paraInfo.Height * 1.5, 0);
                 }
-            }
             return true;
-        }
+            }
 
-        // ▼▼▼ 核心修改：最终的、绝对可靠的换行算法 ▼▼▼
         public static List<string> GetWrappedLines(string text, double maxWidth, double textHeight, double widthFactor, ObjectId textStyleId)
         {
             var lines = new List<string>();
