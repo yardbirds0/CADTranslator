@@ -44,7 +44,6 @@ namespace CADTranslator.Services
                     {
                     if (string.IsNullOrWhiteSpace(block.TranslatedText) || block.TranslatedText.StartsWith("[")) continue;
 
-                    // 【关键修正】在这里重新获取作为模板的第一个实体
                     var firstId = block.SourceObjectIds.FirstOrDefault(id => !id.IsNull && !id.IsErased);
                     if (firstId.IsNull) continue;
 
@@ -55,9 +54,7 @@ namespace CADTranslator.Services
                         {
                         Text = block.TranslatedText,
                         ContainsSpecialPattern = block.TranslatedText.Contains(LegendPlaceholder),
-
-                        TemplateEntity = templateEntity, // <-- 将捕获到的模板实体存入pInfo
-
+                        TemplateEntity = templateEntity,
                         AssociatedGraphicsBlockId = block.AssociatedGraphicsBlockId,
                         OriginalAnchorPoint = block.OriginalAnchorPoint,
                         OriginalSpaceCount = block.OriginalSpaceCount,
@@ -68,7 +65,6 @@ namespace CADTranslator.Services
                         SourceObjectIds = block.SourceObjectIds.ToList()
                         };
 
-                    // 从模板实体中获取精确的文本样式属性
                     if (templateEntity is DBText dbText)
                         {
                         pInfo.Height = dbText.Height;
@@ -129,8 +125,6 @@ namespace CADTranslator.Services
                             if (currentParaInfo.ContainsSpecialPattern && finalLineText.Contains(LegendPlaceholder))
                                 {
                                 PlaceGraphicsAlongsideText(finalLineText, currentParaInfo, basePoint, i, paraNeedsIndent, isFirstLineOfPara, jig, tr, modelSpace);
-
-                                // 【核心】用原始数量的空格，替换掉占位符
                                 finalLineText = finalLineText.Replace(LegendPlaceholder, new string(' ', currentParaInfo.OriginalSpaceCount));
                                 }
 
@@ -138,6 +132,11 @@ namespace CADTranslator.Services
 
                             using (var newText = new DBText())
                                 {
+                                // ▼▼▼【核心修正】就是下面这一行！▼▼▼
+                                // 从模板实体完整复制如图层、颜色、线型等所有基本属性
+                                newText.SetPropertiesFrom(currentParaInfo.TemplateEntity);
+                                // ▲▲▲ 修正结束 ▲▲▲
+
                                 newText.TextString = finalLineText;
                                 newText.Height = currentParaInfo.Height;
                                 newText.WidthFactor = currentParaInfo.WidthFactor;
@@ -147,7 +146,6 @@ namespace CADTranslator.Services
                                 double yOffset = i * currentParaInfo.Height * 1.5;
                                 Point3d linePosition = basePoint + new Vector3d(xOffset, -yOffset, 0);
 
-                                // 这里我们统一使用左对齐来放置排版后的文本，以获得最可控的效果
                                 newText.HorizontalMode = TextHorizontalMode.TextLeft;
                                 newText.VerticalMode = TextVerticalMode.TextBase;
                                 newText.Position = linePosition;
@@ -167,6 +165,7 @@ namespace CADTranslator.Services
                 return false;
                 }
             }
+
 
         private void PlaceGraphicsAlongsideText(string lineText, ParagraphInfo paraInfo, Point3d basePoint, int lineIndex, bool paraNeedsIndent, bool isFirstLineOfPara, SmartLayoutJig jig, Transaction tr, BlockTableRecord modelSpace)
             {

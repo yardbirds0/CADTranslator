@@ -107,18 +107,45 @@
                         <TextBlock Text="用户 ID"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
-                        <TextBox Text="{Binding CurrentProfile.UserId, UpdateSourceTrigger=PropertyChanged}"
-                                 IsEnabled="{Binding IsUserIdEnabled}" />
+                        <Grid>
+                            <TextBox Text="{Binding CurrentProfile.UserId, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding IsUserIdEnabled}" />
+                            <TextBlock Text="当前API无需设置该内容"
+                                       Foreground="Gray"
+                                       FontStyle="Italic"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding IsUserIdEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                       IsHitTestVisible="False" />
+                        </Grid>
                         <TextBlock Text="API 密钥"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
-                        <TextBox Text="{Binding CurrentProfile.ApiKey, UpdateSourceTrigger=PropertyChanged}"
-                                 IsEnabled="{Binding IsApiKeyEnabled}" />
+                        <Grid>
+                            <TextBox Text="{Binding CurrentProfile.ApiKey, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding IsApiKeyEnabled}" />
+                            <TextBlock Text="当前API无需设置该内容"
+                                       Foreground="Gray"
+                                       FontStyle="Italic"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding IsApiKeyEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                       IsHitTestVisible="False" />
+                        </Grid>
                         <TextBlock Text="API URL"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />
-                        <TextBox Text="{Binding CurrentProfile.ApiEndpoint, UpdateSourceTrigger=PropertyChanged}"
-                                 IsEnabled="{Binding IsApiUrlEnabled}" />
+                        <Grid>
+                            <TextBox Text="{Binding CurrentProfile.ApiEndpoint, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding IsApiUrlEnabled}" />
+                            <TextBlock Text="当前API无需设置该内容"
+                                       Foreground="Gray"
+                                       FontStyle="Italic"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding IsApiUrlEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                       IsHitTestVisible="False" />
+                        </Grid>
                         <TextBlock Text="模型列表"
                                    Margin="0,10,0,5"
                                    Opacity="0.8" />

@@ -38,6 +38,22 @@ namespace CADTranslator.Models
 
         // ▼▼▼ 添加 INotifyPropertyChanged 的实现 ▼▼▼
         public event PropertyChangedEventHandler PropertyChanged;
+        public ApiProfile() { }
+
+        // 这就是我们的“复印机”功能
+        public ApiProfile(ApiProfile other)
+            {
+            this.Id = other.Id;
+            this.ProfileName = other.ProfileName;
+            this.ServiceType = other.ServiceType;
+            this.UserId = other.UserId;
+            this.ApiKey = other.ApiKey;
+            this.ApiEndpoint = other.ApiEndpoint;
+            // 关键：为Models列表也创建一个新的副本，而不是共享引用
+            this.Models = new List<string>(other.Models ?? new List<string>());
+            this.LastSelectedModel = other.LastSelectedModel;
+            }
+
 
         protected void OnPropertyChanged([CallerMemberName] string propertyName = null)
             {

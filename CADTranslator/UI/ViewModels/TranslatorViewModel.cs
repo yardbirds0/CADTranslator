@@ -80,7 +80,15 @@ namespace CADTranslator.UI.ViewModels
         public ApiProfile CurrentProfile
             {
             get => _currentProfile;
-            set { if (SetField(ref _currentProfile, value)) { UpdateUiFromCurrentProfile(); } }
+            set
+                {
+                // 只在值真正改变时才执行
+                if (SetField(ref _currentProfile, value))
+                    {
+                    // 这个方法现在只负责更新UI，不再调用SaveSettings
+                    UpdateUiFromCurrentProfile();
+                    }
+                }
             }
 
         private ApiServiceType _selectedApiService;
@@ -89,26 +97,47 @@ namespace CADTranslator.UI.ViewModels
             get => _selectedApiService;
             set
                 {
-                if (_selectedApiService != value)
+                if (SetField(ref _selectedApiService, value))
                     {
-                    _selectedApiService = value;
-                    OnPropertyChanged();
+                    var config = _apiServiceConfigs[_selectedApiService];
+                    OnPropertyChanged(nameof(IsUserIdEnabled));
+                    OnPropertyChanged(nameof(IsApiKeyEnabled));
+                    OnPropertyChanged(nameof(IsModelListEnabled));
+                    OnPropertyChanged(nameof(IsApiUrlEnabled));
+
                     var targetProfile = ApiProfiles.FirstOrDefault(p => p.ServiceType == _selectedApiService);
                     if (targetProfile == null)
                         {
                         targetProfile = new ApiProfile
                             {
-                            ProfileName = $"{_selectedApiService} (默认)",
+                            ProfileName = $"{_selectedApiService} Profile", // 给一个统一的默认名字
                             ServiceType = _selectedApiService
                             };
+                        // 【关键】为新创建的Profile提供一些有用的默认值
                         if (_selectedApiService == ApiServiceType.Baidu)
                             {
                             targetProfile.UserId = "20250708002400901";
                             targetProfile.ApiKey = "1L_Bso6ORO8torYgecjh";
                             }
+                        else if (_selectedApiService == ApiServiceType.OpenAI)
+                            {
+                            targetProfile.Models = new List<string> { "gpt-4o", "gpt-3.5-turbo" };
+                            targetProfile.LastSelectedModel = "gpt-4o";
+                            }
+                        else if (_selectedApiService == ApiServiceType.Gemini)
+                            {
+                            targetProfile.Models = new List<string> { "gemini-1.5-pro-latest", "gemini-1.0-pro" };
+                            targetProfile.LastSelectedModel = "gemini-1.5-pro-latest";
+                            }
+
+                        // 【核心】将新创建的Profile添加到集合中
                         ApiProfiles.Add(targetProfile);
                         }
+
+                    // 无论找到还是新建，都将它设为当前Profile
                     CurrentProfile = targetProfile;
+
+                    // 【关键】每次切换或创建后，立即保存所有设置
                     SaveSettings();
                     }
                 }
@@ -508,20 +537,68 @@ namespace CADTranslator.UI.ViewModels
 
         private void LoadSettings()
             {
+            // 1. 从本地文件读取最新的设置
             _currentSettings = _settingsService.LoadSettings();
+
+            // 安全检查
+            if (_currentSettings.ApiProfiles == null)
+                {
+                _currentSettings.ApiProfiles = new List<ApiProfile>();
+                }
+
+            // 2. 【核心修正】调整执行顺序
+
+            // 2A. **第一步：先处理列表！** 我们使用最安全的“同步”逻辑来填充UI列表
+            // 这样做可以确保在任何“保存”操作被触发前，UI列表已经是满的、最新的状态。
+            var profilesToRemove = ApiProfiles
+                .Where(uiProfile => !_currentSettings.ApiProfiles.Any(lp => lp.ServiceType == uiProfile.ServiceType))
+                .ToList();
+            foreach (var profileToRemove in profilesToRemove)
+                {
+                ApiProfiles.Remove(profileToRemove);
+                }
+
+            foreach (var loadedProfile in _currentSettings.ApiProfiles)
+                {
+                var existingProfileInUI = ApiProfiles.FirstOrDefault(p => p.ServiceType == loadedProfile.ServiceType);
+                if (existingProfileInUI != null)
+                    {
+                    existingProfileInUI.ProfileName = loadedProfile.ProfileName;
+                    existingProfileInUI.UserId = loadedProfile.UserId;
+                    existingProfileInUI.ApiKey = loadedProfile.ApiKey;
+                    existingProfileInUI.ApiEndpoint = loadedProfile.ApiEndpoint;
+                    existingProfileInUI.LastSelectedModel = loadedProfile.LastSelectedModel; // 直接更新
+                    existingProfileInUI.Models.Clear();
+                    if (loadedProfile.Models != null)
+                        {
+                        foreach (var model in loadedProfile.Models)
+                            {
+                            existingProfileInUI.Models.Add(model);
+                            }
+                        }
+                    }
+                else
+                    {
+                    ApiProfiles.Add(new ApiProfile(loadedProfile));
+                    }
+                }
+
+            // 2B. **第二步：在所有数据准备好之后，才恢复上次选择的API**
+            // 这一步会触发一系列的属性设置，但因为数据都已正确，所以是安全的
+            var lastServiceType = _currentSettings.LastSelectedApiService;
+            var lastSelectedProfile = ApiProfiles.FirstOrDefault(p => p.ServiceType == lastServiceType);
+            // 直接设置私有字段，避免触发不必要的SaveSettings
+            _selectedApiService = lastSelectedProfile?.ServiceType ?? ApiProfiles.FirstOrDefault()?.ServiceType ?? ApiServiceType.Baidu;
+            OnPropertyChanged(nameof(SelectedApiService)); // 手动通知UI更新
+
+            // 手动更新CurrentProfile，并加载它的UI状态
+            CurrentProfile = ApiProfiles.FirstOrDefault(p => p.ServiceType == _selectedApiService);
+
+
+            // 2C. **第三步：最后才处理简单的布尔值**
+            // 即使这行代码触发了SaveSettings()，因为所有数据都已正确加载，
+            // 它也只会把正确的数据保存回去，完全无害。
             IsLiveLayoutEnabled = _currentSettings.IsLiveLayoutEnabled;
-            ApiProfiles.Clear();
-            foreach (var profile in _currentSettings.ApiProfiles) { ApiProfiles.Add(profile); }
-            var firstProfile = ApiProfiles.FirstOrDefault();
-            if (firstProfile != null)
-                {
-                SelectedApiService = firstProfile.ServiceType;
-                CurrentProfile = firstProfile;
-                }
-            else
-                {
-                SelectedApiService = ApiServiceType.Baidu;
-                }
             }
 
         private void SaveSettings()
@@ -529,24 +606,35 @@ namespace CADTranslator.UI.ViewModels
             if (_currentSettings == null) _currentSettings = new AppSettings();
             _currentSettings.IsLiveLayoutEnabled = this.IsLiveLayoutEnabled;
             _currentSettings.ApiProfiles = this.ApiProfiles.ToList();
+
+            // ▼▼▼ 在这里添加下面这行代码 ▼▼▼
+            _currentSettings.LastSelectedApiService = this.SelectedApiService; // 写入“记忆”
+
             _settingsService.SaveSettings(_currentSettings);
             }
 
         private void UpdateUiFromCurrentProfile()
             {
             if (CurrentProfile == null) return;
+
+            // 重新绑定事件，防止内存泄漏
             CurrentProfile.PropertyChanged -= OnCurrentProfilePropertyChanged;
             CurrentProfile.PropertyChanged += OnCurrentProfilePropertyChanged;
+
+            // 更新模型列表和输入框
             ModelList.Clear();
-            if (CurrentProfile.Models != null) { foreach (var model in CurrentProfile.Models) { ModelList.Add(model); } }
-            CurrentModelInput = CurrentProfile.LastSelectedModel;
-            OnPropertyChanged(nameof(CurrentProfile));
+            if (CurrentProfile.Models != null)
+                {
+                foreach (var model in CurrentProfile.Models) { ModelList.Add(model); }
+                }
+            CurrentModelInput = CurrentProfile.LastSelectedModel; // 这会正确加载保存的模型名称
+
+            // 通知UI其他依赖此配置的控件进行更新
             OnPropertyChanged(nameof(CurrentModelInput));
             OnPropertyChanged(nameof(IsUserIdEnabled));
             OnPropertyChanged(nameof(IsApiKeyEnabled));
             OnPropertyChanged(nameof(IsModelListEnabled));
             OnPropertyChanged(nameof(IsApiUrlEnabled));
-            SaveSettings();
             }
 
         private void OnCurrentProfilePropertyChanged(object sender, PropertyChangedEventArgs e)

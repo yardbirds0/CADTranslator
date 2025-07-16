@@ -18,6 +18,7 @@ namespace CADTranslator.Services
 
         // API相关的设置
         public List<ApiProfile> ApiProfiles { get; set; } = new List<ApiProfile>();
+        public ApiServiceType LastSelectedApiService { get; set; } = ApiServiceType.Baidu; // 默认使用百度
         }
 
 
