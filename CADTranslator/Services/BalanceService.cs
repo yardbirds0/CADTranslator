@@ -60,7 +60,7 @@ namespace CADTranslator.Services
                         UserId = userData["id"]?.ToString() ?? "N/A",
                         AccountStatus = userData["status"]?.ToString() ?? "N/A",
                         // 格式化余额信息以便显示
-                        BalanceInfo = $"总余额: {userData["totalBalance"]}"
+                        BalanceInfo = $"余额: {userData["totalBalance"]}"
                         };
 
                     return record;

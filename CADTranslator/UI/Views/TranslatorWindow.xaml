@@ -348,7 +348,7 @@
                                    Margin="0,0,10,0"
                                    Command="{Binding SplitCommand}"
                                    CommandParameter="{Binding ElementName=dataGridBlocks, Path=SelectedItem}" />
-          
+
                         <ui:Button Content="删除"
                                    Appearance="Danger"
                                    Command="{Binding DeleteCommand}"
@@ -359,7 +359,7 @@
                                 HorizontalAlignment="Right">
                         <ui:Button Content="选择CAD文字"
                                    Appearance="Primary"
-                                   Icon="Scan24"
+                                   Icon="{ui:SymbolIcon Symbol=ScanType24, FontSize=20 }"
                                    Command="{Binding SelectTextCommand}"
                                    CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}" />
                         <ui:Button Content="翻译全部"

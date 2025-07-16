@@ -14,16 +14,46 @@
                  ExtendsContentIntoTitleBar="True"
                  d:DataContext="{d:DesignInstance Type=vm:BalanceHistoryViewModel, IsDesignTimeCreatable=True}">
 
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ui:ThemesDictionary Theme="Light" />
+                <ui:ControlsDictionary />
+            </ResourceDictionary.MergedDictionaries>
+            <Style x:Key="DataGridColumnHeaderStyleWithBorders"
+                   TargetType="{x:Type DataGridColumnHeader}"
+                   BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
+                <Setter Property="BorderBrush"
+                        Value="LightBlue" />
+                <Setter Property="BorderThickness"
+                        Value="0,0,0,1" />
+                <Setter Property="FontSize"
+                        Value="17" />
+                <Setter Property="HorizontalContentAlignment"
+                        Value="Center" />
+                <Setter Property="VerticalContentAlignment"
+                        Value="Center" />
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
     <Grid Margin="10,40,10,10">
         <ui:DataGrid ItemsSource="{Binding History}"
                      AutoGenerateColumns="False"
                      IsReadOnly="True"
+                     HorizontalGridLinesBrush="SkyBlue"
+                     VerticalGridLinesBrush="SkyBlue"
+                     ColumnHeaderStyle="{StaticResource DataGridColumnHeaderStyleWithBorders}"
                      HeadersVisibility="Column"
+                     BorderThickness="1,1,1,1"
+                     BorderBrush="SkyBlue"
                      GridLinesVisibility="All">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="查询时间"
                                     Binding="{Binding Timestamp, StringFormat='yyyy-MM-dd HH:mm:ss'}"
-                                    Width="150" />
+                                    Width="170" />
+                <DataGridTextColumn Header="余额信息"
+                                    Binding="{Binding BalanceInfo}"
+                                    Width="*" />
                 <DataGridTextColumn Header="API服务"
                                     Binding="{Binding ServiceType}"
                                     Width="100" />
@@ -33,9 +63,6 @@
                 <DataGridTextColumn Header="账户状态"
                                     Binding="{Binding AccountStatus}"
                                     Width="80" />
-                <DataGridTextColumn Header="余额信息"
-                                    Binding="{Binding BalanceInfo}"
-                                    Width="*" />
             </DataGrid.Columns>
         </ui:DataGrid>
     </Grid>
