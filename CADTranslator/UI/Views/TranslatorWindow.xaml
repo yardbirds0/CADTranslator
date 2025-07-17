@@ -13,6 +13,7 @@
                  Width="1080"
                  WindowStartupLocation="CenterScreen"
                  WindowBackdropType="Mica"
+                 d:DesignHeight="1000"
                  ExtendsContentIntoTitleBar="True">
 
     <Window.Resources>
@@ -266,21 +267,103 @@
                                        Content="获取余额"
                                        Margin="10,0,0,0"
                                        Command="{Binding GetBalanceCommand}"
-                                       IsEnabled="{Binding IsBalanceFeatureEnabled}"/>
+                                       IsEnabled="{Binding IsBalanceFeatureEnabled}" />
 
                         </Grid>
-                        <TextBlock Text="提示词"
-                                   Margin="0,50,0,5"
+                        <TextBlock Text="提示词(如不是必要，请不要填写)"
+                                   Margin="0,10,0,5"
                                    Opacity="0.8" />
                         <TextBox Text="{Binding GlobalPrompt, UpdateSourceTrigger=PropertyChanged}"
                                  MinHeight="100"
                                  TextWrapping="Wrap"
                                  AcceptsReturn="True"
                                  VerticalScrollBarVisibility="Auto" />
+                        <TextBlock Text="多线程设置"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   FontSize="16"
+                                   Margin="0,15,0,0" />
+                        <ui:ToggleSwitch 
+                                         OnContent="开启多线程并发"
+                                         OffContent="关闭多线程并发"
+                                         IsChecked="{Binding IsMultiThreadingEnabled}"
+                                         Margin="0,10,0,5" />
+                        <TextBlock Text="最大并发量"
+                                   Margin="0,0,0,5"
+                                   Opacity="0.8" />
+                        <Grid>
+                            <ComboBox ItemsSource="{Binding ConcurrencyLevelOptions}"
+                                      Text="{Binding CurrentConcurrencyLevelInput, UpdateSourceTrigger=LostFocus}"
+                                      IsEditable="True"
+                                      Margin="0,0,0,50"
+                                      IsEnabled="{Binding IsMultiThreadingEnabled}">
+                                <ComboBox.Style>
+                                    <Style TargetType="ComboBox"
+                                           BasedOn="{StaticResource {x:Type ComboBox}}">
+                                        <Style.Triggers>
+                                            <Trigger Property="IsEnabled"
+                                                     Value="False">
+                                                <Setter Property="Foreground"
+                                                        Value="Transparent" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ComboBox.Style>
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding}" />
+                                            <ui:Button Grid.Column="1"
+                                                       Icon="Delete24"
+                                                       Command="{Binding DataContext.DeleteConcurrencyOptionCommand, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                       CommandParameter="{Binding}"
+                                                       Appearance="Transparent"
+                                                       Margin="5,0,0,0"
+                                                       Padding="2"
+                                                       VerticalAlignment="Center">
+                                                <ui:Button.Style>
+                                                    <Style TargetType="ui:Button"
+                                                           BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding}"
+                                                                         Value="2">
+                                                                <Setter Property="Visibility"
+                                                                        Value="Collapsed" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding}"
+                                                                         Value="5">
+                                                                <Setter Property="Visibility"
+                                                                        Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ui:Button.Style>
+                                            </ui:Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+
+                            <TextBlock Text="多线程未采用"
+                                       Foreground="LightGray"
+                                       FontStyle="Italic"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,0,0,50"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding IsMultiThreadingEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                       IsHitTestVisible="False" />
+                        </Grid>
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Border>
+
+        
 
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
@@ -305,9 +388,10 @@
                           HeadersVisibility="All"
                           SnapsToDevicePixels="True"
                           MouseDoubleClick="DataGrid_MouseDoubleClick"
-                          AutoGenerateColumns="False">
+                          AutoGenerateColumns="False"
+                          PreviewMouseWheel="DataGrid_PreviewMouseWheel">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="行号"
+                        <DataGridTextColumn Header="段落"
                                             Binding="{Binding Id}"
                                             Width="60"
                                             IsReadOnly="True">
@@ -394,7 +478,12 @@
                                    CommandParameter="{Binding ElementName=dataGridBlocks, Path=SelectedItems}" />
                         <ui:Button Content="重置"
                                    Command="{Binding ResetCommand}"
+                                   Margin="0,0,10,0"
                                    Appearance="Secondary" />
+                        <ui:Button Content="错误项重翻译"
+                                   Appearance="Secondary"
+                                   Icon="ArrowSync24"
+                                   Command="{Binding RetranslateFailedCommand}" />
                     </StackPanel>
                     <StackPanel Grid.Column="1"
                                 Orientation="Horizontal"
@@ -570,7 +659,6 @@
                         <Grid Grid.Row="6"
                               VerticalAlignment="Bottom">
                             <ProgressBar Value="{Binding ProgressValue}"
-                                         
                                          Height="20" />
                             <TextBlock Text="{Binding ProgressText}"
                                        HorizontalAlignment="Center"

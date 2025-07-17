@@ -235,15 +235,27 @@ namespace CADTranslator.Services
             var sortedEntities = textEntities.OrderBy(e => -e.Position.Y).ThenBy(e => e.Position.X).ToList();
             var textBlocks = new List<TextBlock>();
             if (sortedEntities.Count == 0) return textBlocks;
+
             var currentBlock = new TextBlock { Id = 1, OriginalText = sortedEntities[0].Text, SourceObjectIds = { sortedEntities[0].ObjectId } };
             textBlocks.Add(currentBlock);
+
+            // 正则：匹配段落开头的编号
             var paragraphMarkers = new Regex(@"^\s*(?:\d+[、\.]|\(\d+\)\.?)");
+            // 【新增】正则：匹配段落结尾的标点
+            var endOfParagraphMarkers = new Regex(@"[：:。]\s*$");
+
             for (int i = 1; i < sortedEntities.Count; i++)
                 {
                 var prev = sortedEntities[i - 1];
                 var curr = sortedEntities[i];
+
                 bool isTooFar = (prev.Position.Y - curr.Position.Y) > (prev.Height * 3.5);
-                if (paragraphMarkers.IsMatch(curr.Text) || isTooFar)
+                bool startsNewParagraph = paragraphMarkers.IsMatch(curr.Text);
+                // 【新增】判断上一段是否以结束符结尾
+                bool prevBlockEnds = endOfParagraphMarkers.IsMatch(currentBlock.OriginalText);
+
+                // 【核心修改】在判断条件中加入新规则
+                if (startsNewParagraph || isTooFar || prevBlockEnds)
                     {
                     currentBlock = new TextBlock { Id = textBlocks.Count + 1, OriginalText = curr.Text, SourceObjectIds = { curr.ObjectId } };
                     textBlocks.Add(currentBlock);

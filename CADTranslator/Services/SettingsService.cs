@@ -24,6 +24,11 @@ namespace CADTranslator.Services
         public List<string> LineSpacingPresets { get; set; } = new List<string> { "不指定", "200" };
         public string WzpbLineSpacing { get; set; } = "不指定";
         public List<BalanceRecord> BalanceHistory { get; set; } = new List<BalanceRecord>();
+
+        //多线程修改
+        public bool IsMultiThreadingEnabled { get; set; } = false; // 多线程开关，默认关闭
+        public List<string> ConcurrencyPresets { get; set; } = new List<string> { "2", "5" }; // 并发量预设值
+        public string LastSelectedConcurrency { get; set; } = "5"; // 上次选择的并发量，默认5
         }
 
 

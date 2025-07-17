@@ -81,6 +81,44 @@ namespace CADTranslator.UI.Views
             }
         }
 
+        private ScrollViewer FindScrollViewer(DependencyObject d)
+            {
+            if (d is ScrollViewer)
+                return d as ScrollViewer;
+
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(d); i++)
+                {
+                var child = VisualTreeHelper.GetChild(d, i);
+                var result = FindScrollViewer(child);
+                if (result != null)
+                    return result;
+                }
+            return null;
+            }
+
+        private void DataGrid_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+            {
+            // 找到DataGrid内部的ScrollViewer
+            var scrollViewer = FindScrollViewer(dataGridBlocks);
+
+            if (scrollViewer != null)
+                {
+                // 根据滚轮方向，手动控制ScrollViewer滚动一小行
+                if (e.Delta > 0) // 向上滚动
+                    {
+                    scrollViewer.LineUp();
+                    }
+                else // 向下滚动
+                    {
+                    scrollViewer.LineDown();
+                    }
+
+                // 标记事件已处理，阻止默认的快速滚动行为
+                e.Handled = true;
+                }
+            }
+
+
         private void LogItems_CollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
             {
             // 当日志集合有新项被添加时

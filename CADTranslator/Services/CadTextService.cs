@@ -84,6 +84,10 @@ namespace CADTranslator.Services
             var currentBlock = new TextBlockViewModel { Id = 1, OriginalText = sortedEntities[0].Text, SourceObjectIds = new List<ObjectId> { sortedEntities[0].ObjectId } };
             textBlocks.Add(currentBlock);
 
+            var paragraphMarkers = new Regex(@"^\s*(?:\d+[、\.]|\(\d+\)\.?)");
+            // 【新增】正则：匹配段落结尾的标点
+            var endOfParagraphMarkers = new Regex(@"[：:。]\s*$");
+
             for (int i = 1; i < sortedEntities.Count; i++)
                 {
                 var previousEntity = sortedEntities[i - 1];
@@ -91,11 +95,12 @@ namespace CADTranslator.Services
 
                 double verticalDist = previousEntity.Position.Y - currentEntity.Position.Y;
                 bool isTooFar = verticalDist > previousEntity.Height * 3.5;
+                bool startsNewParagraph = paragraphMarkers.IsMatch(currentEntity.Text);
+                // 【新增】判断上一段是否以结束符结尾
+                bool prevBlockEnds = endOfParagraphMarkers.IsMatch(currentBlock.OriginalText);
 
-                var paragraphMarkers = new Regex(@"^\s*(?:\d+[、\.]|\(\d+\)\.?)");
-                bool isNewParagraph = paragraphMarkers.IsMatch(currentEntity.Text);
-
-                if (isNewParagraph || isTooFar)
+                // 【核心修改】在判断条件中加入新规则
+                if (startsNewParagraph || isTooFar || prevBlockEnds)
                     {
                     currentBlock = new TextBlockViewModel { Id = textBlocks.Count + 1, OriginalText = currentEntity.Text, SourceObjectIds = new List<ObjectId> { currentEntity.ObjectId } };
                     textBlocks.Add(currentBlock);
