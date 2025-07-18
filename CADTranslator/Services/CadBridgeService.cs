@@ -1,5 +1,4 @@
-﻿// CADTranslator/Services/CadBridgeService.cs
-
+﻿// 文件路径: CADTranslator/Services/CadBridgeService.cs
 using Autodesk.AutoCAD.ApplicationServices;
 using System.Text.RegularExpressions;
 
@@ -11,21 +10,36 @@ namespace CADTranslator.Services
     public static class CadBridgeService
         {
         /// <summary>
-        /// 将消息写入到AutoCAD的命令行。
+        /// (已修改) 将消息作为新的一行写入到AutoCAD的命令行历史记录中。
         /// </summary>
         /// <param name="message">要显示的消息。</param>
         public static void WriteToCommandLine(string message)
             {
-            // 确保我们能获取到当前活动的文档
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
 
-            // 移除可能存在的时间戳等信息，让命令行更整洁
-            // 例如，移除 [14:25:10] 这样的部分
             var cleanMessage = Regex.Replace(message, @"^\[\d{2}:\d{2}:\d{2}\]\s*", "");
 
-            // 向命令行写入消息，\n确保每条消息都换行
-            doc.Editor.WriteMessage($"\n[CADTranslator] {cleanMessage}");
+            // 使用 \n[CADTranslator] {message}\n 的格式
+            // 开始的 \n 确保结束之前的任何输入提示
+            // 结尾的 \n 确保我们的消息输出后，光标会换到新的一行，避免污染后续的命令输入
+            doc.Editor.WriteMessage($"\n[CADTranslator] {cleanMessage}\n");
+            }
+
+        /// <summary>
+        /// 【新增】通过回车符(\r)覆盖当前命令行，用于实时更新状态。
+        /// </summary>
+        /// <param name="message">要显示的消息。</param>
+        public static void UpdateLastMessageOnCommandLine(string message)
+            {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            var cleanMessage = Regex.Replace(message, @"^\[\d{2}:\d{2}:\d{2}\]\s*", "");
+
+            // \r (回车符) 将光标移动到行首，后续的输出会覆盖之前的内容
+            // 同样以 \n 结尾，确保更新完成后光标换行
+            doc.Editor.WriteMessage($"\r[CADTranslator] {cleanMessage}\n");
             }
         }
     }

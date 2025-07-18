@@ -14,7 +14,7 @@ namespace CADTranslator.Services
     /// 高级文本分析服务。
     /// 此版本假定调用方已处理 DocumentLock，因此内部使用单个事务处理所有读写操作。
     /// </summary>
-    public class AdvancedTextService
+    public class AdvancedTextService : IAdvancedTextService
         {
         public const string LegendPlaceholder = "__LEGEND_POS__"; 
         private readonly Database _db;

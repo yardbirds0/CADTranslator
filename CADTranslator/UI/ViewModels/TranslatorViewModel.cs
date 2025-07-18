@@ -1,6 +1,7 @@
 ﻿// 文件路径: CADTranslator/UI/ViewModels/TranslatorViewModel.cs
 // 【注意】这是一个完整的文件替换
 
+using Autodesk.AutoCAD.ApplicationServices; // ◄◄◄ 【注意】为了获取Editor，这里保留
 using CADTranslator.Models;
 using CADTranslator.Services;
 using CADTranslator.UI.Views;
@@ -13,12 +14,9 @@ using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using Wpf.Ui.Controls;
-using Application = Autodesk.AutoCAD.ApplicationServices.Application;
-using MessageBox = Wpf.Ui.Controls.MessageBox;
 using MessageBoxResult = Wpf.Ui.Controls.MessageBoxResult;
 using ObjectId = Autodesk.AutoCAD.DatabaseServices.ObjectId;
 
@@ -28,20 +26,21 @@ namespace CADTranslator.UI.ViewModels
         {
         #region --- 字段与服务 ---
 
-        private readonly Window _ownerWindow;
-        private readonly SettingsService _settingsService;
-        private readonly AdvancedTextService _advancedTextService;
-        private readonly CadLayoutService _cadLayoutService;
-        private readonly ApiRegistry _apiRegistry; // 【新增】API注册中心
+        // ▼▼▼ 【核心修改】所有服务都通过接口引用 ▼▼▼
+        private readonly IWindowService _windowService;
+        private readonly ISettingsService _settingsService;
+        private readonly IAdvancedTextService _advancedTextService;
+        private readonly ICadLayoutService _cadLayoutService;
+        private readonly ApiRegistry _apiRegistry;
 
         private AppSettings _currentSettings;
         private bool _isLoading = false;
         private List<ObjectId> _deletableSourceIds = new List<ObjectId>();
         private List<TextBlockViewModel> _failedItems = new List<TextBlockViewModel>();
 
-        // 用于UI绑定的私有字段
+        // ... (其他私有字段保持不变) ...
         private bool _isBusy;
-        private ITranslator _currentProvider; // 【核心替换】用当前服务提供商替代旧的ApiProfile
+        private ITranslator _currentProvider;
         private string _lastBalanceDisplay = "当前无余额记录";
         private int _progressValue;
         private string _progressText;
@@ -49,7 +48,6 @@ namespace CADTranslator.UI.ViewModels
         private bool _isLiveLayoutEnabled;
         private bool _isMultiThreadingEnabled;
         private string _currentConcurrencyLevelInput;
-
         private readonly Brush[] _characterBrushes = new Brush[]
         {
             (Brush)new BrushConverter().ConvertFromString("#1E88E5"),
@@ -59,22 +57,27 @@ namespace CADTranslator.UI.ViewModels
             (Brush)new BrushConverter().ConvertFromString("#6741D9")
         };
         private int _brushIndex = 0;
-
         #endregion
 
         #region --- 绑定属性 ---
-
+        // (所有绑定属性保持不变)
         public bool IsBusy
             {
             get => _isBusy;
-            set { SetField(ref _isBusy, value); OnPropertyChanged(nameof(IsUiEnabled)); }
+            set
+                {
+                if (SetField(ref _isBusy, value))
+                    {
+                    OnPropertyChanged(nameof(IsUiEnabled));
+                    // ▼▼▼ 【核心修改】在这里添加对命令状态的更新通知 ▼▼▼
+                    RetranslateFailedCommand.RaiseCanExecuteChanged();
+                    TranslateCommand.RaiseCanExecuteChanged(); // 顺便也更新一下主翻译按钮的状态
+                    }
+                }
             }
 
         public bool IsUiEnabled => !IsBusy;
 
-        /// <summary>
-        /// 【核心替换】当前选中的API服务提供商
-        /// </summary>
         public ITranslator CurrentProvider
             {
             get => _currentProvider;
@@ -201,11 +204,10 @@ namespace CADTranslator.UI.ViewModels
                 }
             }
         public ObservableCollection<string> ConcurrencyLevelOptions { get; set; }
-
         #endregion
 
         #region --- 命令 ---
-
+        // (命令声明保持不变)
         public RelayCommand SelectTextCommand { get; }
         public RelayCommand TranslateCommand { get; }
         public RelayCommand ApplyToCadCommand { get; }
@@ -222,19 +224,24 @@ namespace CADTranslator.UI.ViewModels
         public RelayCommand RetranslateFailedCommand { get; }
         public RelayCommand DeleteConcurrencyOptionCommand { get; }
         public RelayCommand ManageApiDefinitionsCommand { get; }
-
         #endregion
 
         #region --- 构造函数 ---
 
-        public TranslatorViewModel(Window owner)
+        // ▼▼▼ 【核心修改】构造函数现在接收所有需要的服务接口 ▼▼▼
+        public TranslatorViewModel(
+            IWindowService windowService,
+            ISettingsService settingsService,
+            IAdvancedTextService advancedTextService,
+            ICadLayoutService cadLayoutService,
+            ApiRegistry apiRegistry)
             {
-            _ownerWindow = owner;
-            // 初始化服务
-            _settingsService = new SettingsService();
-            _advancedTextService = new AdvancedTextService(Application.DocumentManager.MdiActiveDocument);
-            _cadLayoutService = new CadLayoutService(Application.DocumentManager.MdiActiveDocument);
-            _apiRegistry = new ApiRegistry(); // 【新增】创建注册中心实例
+            // 将注入的服务赋值给私有字段
+            _windowService = windowService ?? throw new ArgumentNullException(nameof(windowService));
+            _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
+            _advancedTextService = advancedTextService ?? throw new ArgumentNullException(nameof(advancedTextService));
+            _cadLayoutService = cadLayoutService ?? throw new ArgumentNullException(nameof(cadLayoutService));
+            _apiRegistry = apiRegistry ?? throw new ArgumentNullException(nameof(apiRegistry));
 
             // 初始化UI集合
             TextBlockList = new ObservableCollection<TextBlockViewModel>();
@@ -244,10 +251,9 @@ namespace CADTranslator.UI.ViewModels
             BalanceHistory = new ObservableCollection<BalanceRecord>();
             ConcurrencyLevelOptions = new ObservableCollection<string>();
 
-            // 【修改】API下拉列表的数据源现在来自注册中心
             ApiServiceOptions = _apiRegistry.Providers;
 
-            // 初始化命令
+            // 初始化命令 (这部分代码不需要改变)
             SelectTextCommand = new RelayCommand(OnSelectText);
             TranslateCommand = new RelayCommand(OnTranslate, p => TextBlockList.Any() && !IsBusy);
             ApplyToCadCommand = new RelayCommand(OnApplyToCad, p => TextBlockList.Any(i => !string.IsNullOrWhiteSpace(i.TranslatedText) && !i.TranslatedText.StartsWith("[")));
@@ -265,6 +271,7 @@ namespace CADTranslator.UI.ViewModels
             DeleteConcurrencyOptionCommand = new RelayCommand(OnDeleteConcurrencyOption, p => p is string option && option != "2" && option != "5");
             ManageApiDefinitionsCommand = new RelayCommand(OnManageApiDefinitions);
 
+            // 加载初始设置
             LoadSettings();
             Log("欢迎使用CAD翻译工具箱。");
             }
@@ -272,22 +279,21 @@ namespace CADTranslator.UI.ViewModels
         #endregion
 
         #region --- 核心方法 (翻译、选择、应用) ---
-
+        // (这部分方法除了使用 _windowService 外，逻辑几乎不变，因为它们已经调用了其他服务)
+        // ... OnSelectText, OnTranslate, OnApplyToCad 等方法 ...
         private async void OnSelectText(object parameter)
             {
-            if (!(parameter is Window mainWindow)) return;
             try
                 {
                 var doc = Application.DocumentManager.MdiActiveDocument;
                 if (doc == null)
                     {
-                    var mb1 = new MessageBox { Title = "操作失败", Content = "未找到活动的CAD文档。", CloseButtonText = "确定" };
-                    mb1.Resources = _ownerWindow.Resources;
-                    await mb1.ShowDialogAsync();
+                    await _windowService.ShowInformationDialogAsync("操作失败", "未找到活动的CAD文档。");
                     return;
                     }
 
-                mainWindow.Hide();
+                // ▼▼▼ 【核心修改】使用_windowService控制窗口 ▼▼▼
+                _windowService.HideMainWindow();
                 var ed = doc.Editor;
                 var selRes = ed.GetSelection();
 
@@ -295,7 +301,7 @@ namespace CADTranslator.UI.ViewModels
                     {
                     if (selRes.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK)
                         {
-                        mainWindow.Show();
+                        _windowService.ShowMainWindow();
                         return;
                         }
 
@@ -304,7 +310,7 @@ namespace CADTranslator.UI.ViewModels
                     if (paragraphInfos.Count == 0)
                         {
                         Log("在选定对象中未找到任何有效文字。");
-                        ShowMessageBox("提示", "您选择的对象中未找到任何有效文字。");
+                        await _windowService.ShowInformationDialogAsync("提示", "您选择的对象中未找到任何有效文字。");
                         }
                     else
                         {
@@ -328,15 +334,13 @@ namespace CADTranslator.UI.ViewModels
             catch (Exception ex)
                 {
                 Log($"[错误] 提取文字时出错: {ex.Message}");
-                ShowMessageBox("提取失败", $"提取文字时出错: {ex.Message}");
+                await _windowService.ShowInformationDialogAsync("提取失败", $"提取文字时出错: {ex.Message}");
                 }
             finally
                 {
-                if (!mainWindow.IsVisible)
-                    {
-                    mainWindow.Show();
-                    }
-                _ownerWindow.Dispatcher.Invoke(() => TranslateCommand.RaiseCanExecuteChanged());
+                // ▼▼▼ 【核心修改】使用_windowService控制窗口 ▼▼▼
+                _windowService.ShowMainWindow();
+                TranslateCommand.RaiseCanExecuteChanged();
                 }
             }
 
@@ -365,7 +369,7 @@ namespace CADTranslator.UI.ViewModels
             {
             if (CurrentProvider == null || CurrentProfile == null)
                 {
-                ShowMessageBox("操作无效", "请先选择一个API配置。");
+                await _windowService.ShowInformationDialogAsync("操作无效", "请先选择一个API配置。");
                 return;
                 }
 
@@ -418,13 +422,13 @@ namespace CADTranslator.UI.ViewModels
                             var errorMessage = ex.Message.Replace('\t', ' ');
                             item.TranslatedText = $"[翻译失败] {errorMessage}";
                             lock (_failedItems) { _failedItems.Add(item); }
-                            _ownerWindow.Dispatcher.Invoke(() => RetranslateFailedCommand.RaiseCanExecuteChanged());
+                            _windowService.InvokeOnUIThread(() => RetranslateFailedCommand.RaiseCanExecuteChanged());
                             }
                         finally
                             {
                             semaphore.Release();
                             int currentCompleted = Interlocked.Increment(ref completedItems);
-                            _ownerWindow.Dispatcher.Invoke(() =>
+                            _windowService.InvokeOnUIThread(() =>
                             {
                                 UpdateProgress(currentCompleted, totalItems);
                                 ApplyToCadCommand.RaiseCanExecuteChanged();
@@ -461,7 +465,7 @@ namespace CADTranslator.UI.ViewModels
                             completedItems++;
                             UpdateProgress(completedItems, totalItems);
                             UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems}/{totalItems} 项翻译完成。用时 {stopwatch.Elapsed.TotalSeconds:F1} 秒");
-                            _ownerWindow.Dispatcher.Invoke(() => ApplyToCadCommand.RaiseCanExecuteChanged());
+                            _windowService.InvokeOnUIThread(() => ApplyToCadCommand.RaiseCanExecuteChanged());
                             }
                         catch (Exception ex)
                             {
@@ -476,7 +480,7 @@ namespace CADTranslator.UI.ViewModels
             catch (Exception ex)
                 {
                 Log($"[错误] 创建翻译服务时失败: {ex.Message}");
-                ShowMessageBox("配置错误", $"创建翻译服务时失败，请检查API配置：\n\n{ex.Message}");
+                await _windowService.ShowInformationDialogAsync("配置错误", $"创建翻译服务时失败，请检查API配置：\n\n{ex.Message}");
                 }
             finally
                 {
@@ -502,7 +506,7 @@ namespace CADTranslator.UI.ViewModels
         private async void OnApplyToCad(object parameter)
             {
             Log("正在切换到CAD窗口并应用翻译...");
-            _ownerWindow.WindowState = WindowState.Minimized;
+            _windowService.MinimizeMainWindow();
             await Task.Delay(200);
             bool success = false;
             try
@@ -527,8 +531,7 @@ namespace CADTranslator.UI.ViewModels
                 {
                 if (!success)
                     {
-                    _ownerWindow.WindowState = WindowState.Normal;
-                    _ownerWindow.Activate();
+                    _windowService.ActivateMainWindow();
                     }
                 if (success)
                     {
@@ -540,11 +543,11 @@ namespace CADTranslator.UI.ViewModels
                     }
                 }
             }
-
         #endregion
 
         #region --- API与模型管理 ---
-
+        // (这部分方法也不需要改变)
+        // ... OnGetModels, OnGetBalance, OnManageModels 等方法 ...
         private async void OnGetModels(object parameter)
             {
             if (CurrentProvider == null) return;
@@ -573,7 +576,7 @@ namespace CADTranslator.UI.ViewModels
             catch (Exception ex)
                 {
                 Log($"[错误] 获取模型列表时失败: {ex.Message}");
-                ShowMessageBox("操作失败", $"获取模型列表时发生错误:\n\n{ex.Message}");
+                await _windowService.ShowInformationDialogAsync("操作失败", $"获取模型列表时发生错误:\n\n{ex.Message}");
                 }
             finally
                 {
@@ -591,18 +594,15 @@ namespace CADTranslator.UI.ViewModels
                 var provider = _apiRegistry.CreateProviderForProfile(CurrentProfile);
                 var balanceData = await provider.CheckBalanceAsync();
 
-                // 【核心修正】
-                // 1. 创建一个新的 BalanceRecord 实例
                 var newRecord = new BalanceRecord
                     {
                     Timestamp = DateTime.Now,
                     ServiceType = CurrentProvider.ServiceType,
-                    Data = balanceData // 2. 将完整的原始数据存入 Data 属性
+                    Data = balanceData
                     };
 
-                BalanceHistory.Insert(0, newRecord); // 插入到列表开头，方便查看
+                BalanceHistory.Insert(0, newRecord);
 
-                // 3. 更新主界面的余额显示
                 UpdateBalanceDisplayForCurrentProvider();
 
                 SaveSettings();
@@ -611,7 +611,7 @@ namespace CADTranslator.UI.ViewModels
             catch (Exception ex)
                 {
                 Log($"[错误] 查询余额时失败: {ex.Message}");
-                ShowMessageBox("操作失败", $"查询余额时发生错误:\n\n{ex.Message}");
+                await _windowService.ShowInformationDialogAsync("操作失败", $"查询余额时发生错误:\n\n{ex.Message}");
                 }
             finally
                 {
@@ -623,14 +623,14 @@ namespace CADTranslator.UI.ViewModels
             {
             if (CurrentProfile == null)
                 {
-                var mb = new MessageBox { Title = "操作无效", Content = "请先选择一个API配置。", CloseButtonText = "确定" };
-                mb.Resources = _ownerWindow.Resources;
-                await mb.ShowDialogAsync();
+                await _windowService.ShowInformationDialogAsync("操作无效", "请先选择一个API配置。");
                 return;
                 }
             var modelManagementVM = new ModelManagementViewModel(CurrentProfile.ProfileName, new List<string>(CurrentProfile.Models));
-            var modelWindow = new ModelManagementWindow(modelManagementVM) { Owner = _ownerWindow };
-            if (modelWindow.ShowDialog() == true)
+
+            var dialogResult = _windowService.ShowModelManagementDialog(modelManagementVM);
+
+            if (dialogResult == true)
                 {
                 var finalModels = modelManagementVM.GetFinalModels();
                 CurrentProfile.Models.Clear();
@@ -654,37 +654,27 @@ namespace CADTranslator.UI.ViewModels
                 }
             }
 
-        private void OnManageApiDefinitions(object parameter)
+        private async void OnManageApiDefinitions(object parameter)
             {
-            // 这里只是一个框架，完整的实现会更复杂，
-            // 涉及到列表管理、删除、编辑等。
-            // 我们先实现最核心的“新增”功能。
-
+            // 这部分逻辑暂时不变，因为它本来就是创建新的ViewModel和Window
+            // 如果要彻底解耦，也需要通过IWindowService来做
             var vm = new ApiDefinitionViewModel();
-            var window = new ApiDefinitionWindow(vm) { Owner = _ownerWindow };
+            var window = new ApiDefinitionWindow(vm); // 暂时保留，后续可一并改造
+
+            // 为了避免错误，我们不再设置Owner
+            // window.Owner = Application.Current.MainWindow; 
 
             if (window.ShowDialog() == true)
                 {
-                // 用户点击了保存
                 var newDefinition = vm.ApiDef;
-
-                // 理论上，我们应该有一个 "GenericTranslator" 来使用这个Definition。
-                // 并且需要更新 ApiRegistry 和 SettingsService 来处理自定义API。
-                // 这部分作为我们重构的下一步，现在我们先弹窗展示成果。
-                ShowMessageBox("功能待实现", $"已成功创建API定义: '{newDefinition.DisplayName}'。\n下一步我们将实现让这个配置真正生效的逻辑。");
-
-                // TODO:
-                // 1. 将 newDefinition 保存到 _currentSettings.CustomApiDefinitions 中。
-                // 2. 调用 SaveSettings()。
-                // 3. 更新 ApiRegistry 以包含这个新的自定义API。
-                // 4. 刷新主界面的API下拉列表。
+                await _windowService.ShowInformationDialogAsync("功能待实现", $"已成功创建API定义: '{newDefinition.DisplayName}'。\n下一步我们将实现让这个配置真正生效的逻辑。");
                 }
             }
-
         #endregion
 
         #region --- 设置、日志与辅助方法 ---
-
+        // (这部分方法也不需要改变)
+        // ... LoadSettings, SaveSettings, UpdateUiFromCurrentProfile 等方法 ...
         private void LoadSettings()
             {
             _isLoading = true;
@@ -785,7 +775,6 @@ namespace CADTranslator.UI.ViewModels
             {
             if (CurrentProvider == null) return;
 
-            // 查找当前API最新的一条历史记录
             var lastRecord = BalanceHistory.FirstOrDefault(r => r.ServiceType == CurrentProvider.ServiceType);
 
             if (lastRecord == null || lastRecord.Data == null || !lastRecord.Data.Any())
@@ -794,21 +783,25 @@ namespace CADTranslator.UI.ViewModels
                 return;
                 }
 
-            // 【核心修正】
-            // 根据我们讨论的“别名系统”，查找代表余额的那个Key-Value对
-            // 我们预定义了 "totalBalance", "balance" 等都是 "CanonicalBalance" 的别名
-            var balanceMapping = _currentSettings.FriendlyNameMappings.FirstOrDefault(m => m.Key == "CanonicalBalance");
+            var balanceMapping = _currentSettings.FriendlyNameMappings.FirstOrDefault(m => m.Key == "CanonicalTotalBalance").Value;
 
-            if (balanceMapping.Value != null)
+            // 2. 如果没找到，再查找“总余额”相关的规则
+            if (balanceMapping == null)
+                {
+                balanceMapping = _currentSettings.FriendlyNameMappings.FirstOrDefault(m => m.Key == "CanonicalRemainingBalance").Value;
+                }
+
+            if (balanceMapping != null)
                 {
                 // 在记录的Data中，查找第一个匹配别名列表的Key
-                var balancePair = lastRecord.Data.FirstOrDefault(d => balanceMapping.Value.Aliases.Contains(d.Key));
-                // 如果找到了，就只显示它的值
+                var balancePair = lastRecord.Data.FirstOrDefault(d => balanceMapping.Aliases.Contains(d.Key));
+
+                // 如果找到了，就只显示它的值，否则提示未找到
                 LastBalanceDisplay = balancePair.Value ?? "未找到余额信息";
                 }
             else
                 {
-                // 如果连映射规则都没有，就显示一个通用提示
+                // 如果两种余额规则都没有配置，才显示这个最终提示
                 LastBalanceDisplay = "未配置余额规则";
                 }
             }
@@ -827,18 +820,24 @@ namespace CADTranslator.UI.ViewModels
 
         private void Log(string message, bool clearPrevious = false, bool addNewLine = true, bool isListItem = false)
             {
-            if (clearPrevious) StatusLog.Clear();
+            if (clearPrevious)
+                _windowService.InvokeOnUIThread(() => StatusLog.Clear());
+
             var formattedMessage = isListItem ? message : $"[{DateTime.Now:HH:mm:ss}] {message}";
+
+            // ▼▼▼ 【核心修改】只调用WriteToCommandLine，不再有条件判断 ▼▼▼
             CadBridgeService.WriteToCommandLine(formattedMessage);
-            if (addNewLine) _ownerWindow.Dispatcher.Invoke(() => StatusLog.Add(formattedMessage));
+
+            if (addNewLine) _windowService.InvokeOnUIThread(() => StatusLog.Add(formattedMessage));
             }
 
         private void UpdateLastLog(string message)
             {
-            CadBridgeService.WriteToCommandLine(message);
+            CadBridgeService.UpdateLastMessageOnCommandLine(message);
+
             if (StatusLog.Any())
                 {
-                _ownerWindow.Dispatcher.Invoke(() => StatusLog[StatusLog.Count - 1] = message);
+                _windowService.InvokeOnUIThread(() => StatusLog[StatusLog.Count - 1] = message);
                 }
             }
 
@@ -862,18 +861,11 @@ namespace CADTranslator.UI.ViewModels
             Log("任务因错误而中断。");
             item.TranslatedText = $"[翻译失败] {errorMessage}";
             }
-
-        private async void ShowMessageBox(string title, string content)
-            {
-            var mb = new MessageBox { Title = title, Content = content, CloseButtonText = "确定" };
-            mb.Resources = _ownerWindow.Resources;
-            await mb.ShowDialogAsync();
-            }
-
         #endregion
 
         #region --- 表格操作与属性变更 ---
-
+        // (这部分方法也不需要改变)
+        // ... OnMerge, OnDelete, OnSplit 等方法 ...
         private void OnMerge(object selectedItems)
             {
             var selectedViewModels = (selectedItems as IList<object>)?.Cast<TextBlockViewModel>().OrderBy(i => TextBlockList.IndexOf(i)).ToList();
@@ -898,16 +890,7 @@ namespace CADTranslator.UI.ViewModels
             var itemsToDelete = (selectedItems as IList<object>)?.Cast<TextBlockViewModel>().ToList();
             if (itemsToDelete == null || itemsToDelete.Count == 0) return;
 
-            var messageBox = new MessageBox
-                {
-                Title = "确认删除",
-                Content = $"确定要删除选中的 {itemsToDelete.Count} 行吗？",
-                PrimaryButtonText = "确认删除",
-                CloseButtonText = "取消"
-                };
-            messageBox.Resources = _ownerWindow.Resources;
-
-            var result = await messageBox.ShowDialogAsync();
+            var result = await _windowService.ShowConfirmationDialogAsync("确认删除", $"确定要删除选中的 {itemsToDelete.Count} 行吗？", "确认删除");
 
             if (result == MessageBoxResult.Primary)
                 {
@@ -922,9 +905,7 @@ namespace CADTranslator.UI.ViewModels
             var lines = selectedVM.OriginalText.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
             if (lines.Length <= 1)
                 {
-                var mb = new MessageBox { Title = "操作无效", Content = "当前行不包含可供拆分的多行文本。", CloseButtonText = "确定" };
-                mb.Resources = _ownerWindow.Resources;
-                await mb.ShowDialogAsync();
+                await _windowService.ShowInformationDialogAsync("操作无效", "当前行不包含可供拆分的多行文本。");
                 return;
                 }
             selectedVM.OriginalText = lines[0];
@@ -948,16 +929,15 @@ namespace CADTranslator.UI.ViewModels
             if (!(selectedItem is TextBlockViewModel selectedVM)) return;
             if (selectedVM.SourceObjectIds != null && selectedVM.SourceObjectIds.Any())
                 {
-                var mb = new MessageBox { Title = "操作无效", Content = "不能直接编辑从CAD提取的文本。", CloseButtonText = "确定" };
-                mb.Resources = _ownerWindow.Resources;
-                await mb.ShowDialogAsync();
+                await _windowService.ShowInformationDialogAsync("操作无效", "不能直接编辑从CAD提取的文本。");
                 return;
                 }
-            var editWindow = new EditWindow(selectedVM.OriginalText);
-            editWindow.Owner = _ownerWindow;
-            if (editWindow.ShowDialog() == true)
+
+            var (dialogResult, editedText) = _windowService.ShowEditDialog(selectedVM.OriginalText);
+
+            if (dialogResult == true)
                 {
-                selectedVM.OriginalText = editWindow.EditedText;
+                selectedVM.OriginalText = editedText;
                 selectedVM.Character = string.IsNullOrWhiteSpace(selectedVM.OriginalText) ? "?" : selectedVM.OriginalText.Substring(0, 1).ToUpper();
                 selectedVM.TranslatedText = "";
                 }
@@ -965,16 +945,7 @@ namespace CADTranslator.UI.ViewModels
 
         private async void OnReset(object parameter)
             {
-            var messageBox = new MessageBox
-                {
-                Title = "确认重置",
-                Content = "您确定要清空所有已提取的文本吗？此操作不可恢复。",
-                PrimaryButtonText = "确认清空",
-                CloseButtonText = "取消"
-                };
-            messageBox.Resources = _ownerWindow.Resources;
-            messageBox.Owner = _ownerWindow;
-            var result = await messageBox.ShowDialogAsync();
+            var result = await _windowService.ShowConfirmationDialogAsync("确认重置", "您确定要清空所有已提取的文本吗？此操作不可恢复。", "确认清空");
 
             if (result == MessageBoxResult.Primary)
                 {
@@ -1017,27 +988,21 @@ namespace CADTranslator.UI.ViewModels
 
         private void OnViewHistory(object parameter)
             {
-            // 1. 创建ViewModel实例，把主列表传递进去
-            var historyViewModel = new BalanceHistoryViewModel(this.BalanceHistory);
+            var historyViewModel = new BalanceHistoryViewModel(this.BalanceHistory, _currentSettings);
 
-            // 2. 【核心】订阅删除请求事件
             historyViewModel.DeleteRequested += (recordsToDelete) =>
             {
                 if (recordsToDelete != null && recordsToDelete.Any())
                     {
                     foreach (var record in recordsToDelete)
                         {
-                        // 从主列表中移除
                         BalanceHistory.Remove(record);
                         }
-                    // 立即保存更改
                     SaveSettings();
                     }
             };
 
-            // 3. 创建并显示窗口
-            var historyWindow = new BalanceHistoryWindow(historyViewModel) { Owner = _ownerWindow };
-            historyWindow.ShowDialog();
+            _windowService.ShowBalanceHistoryDialog(historyViewModel);
             }
 
         public void LoadTextBlocks(List<TextBlockViewModel> blocks)
@@ -1065,7 +1030,7 @@ namespace CADTranslator.UI.ViewModels
         #endregion
 
         #region --- INotifyPropertyChanged 实现 ---
-
+        // (这部分代码不需要改变)
         public event PropertyChangedEventHandler PropertyChanged;
         protected bool SetField<T>(ref T field, T value, [CallerMemberName] string propertyName = null)
             {
@@ -1078,7 +1043,6 @@ namespace CADTranslator.UI.ViewModels
             {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
             }
-
         #endregion
         }
     }

@@ -1,6 +1,6 @@
 ﻿// 文件路径: CADTranslator/UI/ViewModels/BalanceHistoryViewModel.cs
-
 using CADTranslator.Models;
+using CADTranslator.Services; // ◄◄◄ 【新增】引入Services
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -8,7 +8,6 @@ using System.ComponentModel;
 using System.Data;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using Wpf.Ui.Input;
 
 namespace CADTranslator.UI.ViewModels
     {
@@ -17,11 +16,7 @@ namespace CADTranslator.UI.ViewModels
         #region --- 字段与事件 ---
 
         private readonly ObservableCollection<BalanceRecord> _masterRecordList;
-
-        /// <summary>
-        /// 【新增】当用户请求删除记录时触发此事件。
-        /// 参数是需要被删除的BalanceRecord的列表。
-        /// </summary>
+        private readonly AppSettings _settings; // ◄◄◄ 【新增】用于存储设置
         public event Action<List<BalanceRecord>> DeleteRequested;
 
         #endregion
@@ -29,24 +24,21 @@ namespace CADTranslator.UI.ViewModels
         #region --- 属性 ---
 
         public DataTable HistoryDataTable { get; private set; }
-
-        /// <summary>
-        /// 【新增】删除选中记录的命令。
-        /// </summary>
         public RelayCommand DeleteCommand { get; }
 
         #endregion
 
         #region --- 构造函数 ---
 
-        public BalanceHistoryViewModel(ObservableCollection<BalanceRecord> historyRecords)
+        // ▼▼▼ 【核心修改】构造函数现在接收 AppSettings ▼▼▼
+        public BalanceHistoryViewModel(ObservableCollection<BalanceRecord> historyRecords, AppSettings settings)
             {
-            _masterRecordList = historyRecords;
-            // 【新增】初始化删除命令
+            _masterRecordList = historyRecords ?? throw new ArgumentNullException(nameof(historyRecords));
+            _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+
             DeleteCommand = new RelayCommand(ExecuteDelete, CanExecuteDelete);
             BuildDataTable();
 
-            // 【新增】当原始集合变化时，自动重建数据表以刷新UI
             _masterRecordList.CollectionChanged += (s, e) => BuildDataTable();
             }
 
@@ -70,7 +62,6 @@ namespace CADTranslator.UI.ViewModels
                 {
                 if (DateTime.TryParse(rowView["查询时间"].ToString(), out var timestamp))
                     {
-                    // 注意：这里我将时间戳的解析改为了 TryParse，代码更健壮
                     var record = _masterRecordList.FirstOrDefault(r => r.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff") == timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"));
                     if (record != null)
                         {
@@ -89,54 +80,74 @@ namespace CADTranslator.UI.ViewModels
 
         #region --- 私有方法 ---
 
+        // ▼▼▼ 【核心修改】重写整个 BuildDataTable 方法 ▼▼▼
         private void BuildDataTable()
             {
             var newTable = new DataTable();
             if (_masterRecordList == null || !_masterRecordList.Any())
                 {
                 HistoryDataTable = newTable;
-                OnPropertyChanged(nameof(HistoryDataTable)); // 通知UI更新
+                OnPropertyChanged(nameof(HistoryDataTable));
                 return;
                 }
 
+            // 1. 添加固定的初始列
             newTable.Columns.Add("查询时间", typeof(string));
             newTable.Columns.Add("API服务", typeof(string));
 
-            var allKeys = _masterRecordList
-                .Where(r => r.Data != null)
-                .SelectMany(r => r.Data.Select(kvp => kvp.Key))
-                .Distinct()
-                .ToList();
-
-            foreach (var key in allKeys)
+            // 2. 严格按照 settings 中定义的顺序来创建数据列
+            foreach (var mappingRulePair in _settings.FriendlyNameMappings)
                 {
-                if (!newTable.Columns.Contains(key))
+                var mappingRule = mappingRulePair.Value;
+                // 使用规则的友好名称作为列的标题。实际的绑定是在后台通过原始Key进行的。
+                // 注意：列名必须是唯一的，这里我们用友好名称。
+                if (!newTable.Columns.Contains(mappingRule.DefaultFriendlyName))
                     {
-                    newTable.Columns.Add(key, typeof(string));
+                    newTable.Columns.Add(mappingRule.DefaultFriendlyName, typeof(string));
                     }
                 }
 
+            // 3. 添加任何在规则中未定义的“其他”列，以防API返回了新字段
+            var allKeysInHistory = _masterRecordList
+                .SelectMany(r => r.Data.Select(kvp => kvp.Key))
+                .Distinct();
+            var allKnownAliases = _settings.FriendlyNameMappings.Values.SelectMany(r => r.Aliases).ToList();
+
+            foreach (var key in allKeysInHistory)
+                {
+                if (!allKnownAliases.Contains(key) && !newTable.Columns.Contains(key))
+                    {
+                    newTable.Columns.Add(key, typeof(string)); // 对于未知列，直接用原始Key
+                    }
+                }
+
+            // 4. 填充数据行
             foreach (var record in _masterRecordList.OrderByDescending(r => r.Timestamp))
                 {
                 var row = newTable.NewRow();
-                row["查询时间"] = record.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff"); // 使用毫秒以确保唯一性
+                row["查询时间"] = record.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff");
                 row["API服务"] = record.ServiceType.ToString();
 
-                if (record.Data != null)
+                foreach (var kvp in record.Data)
                     {
-                    foreach (var kvp in record.Data)
+                    // 找到这个原始Key属于哪个规则
+                    var rule = _settings.FriendlyNameMappings.Values.FirstOrDefault(r => r.Aliases.Contains(kvp.Key));
+                    if (rule != null)
                         {
-                        if (newTable.Columns.Contains(kvp.Key))
-                            {
-                            row[kvp.Key] = kvp.Value;
-                            }
+                        // 使用规则的友好名称来填充对应的列
+                        row[rule.DefaultFriendlyName] = kvp.Value;
+                        }
+                    else if (newTable.Columns.Contains(kvp.Key))
+                        {
+                        // 如果是未知的Key，直接用Key填充
+                        row[kvp.Key] = kvp.Value;
                         }
                     }
                 newTable.Rows.Add(row);
                 }
 
             HistoryDataTable = newTable;
-            OnPropertyChanged(nameof(HistoryDataTable)); // 通知UI更新
+            OnPropertyChanged(nameof(HistoryDataTable));
             }
 
         #endregion

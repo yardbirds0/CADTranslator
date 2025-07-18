@@ -14,7 +14,8 @@ using System.Linq;
 
 namespace CADTranslator.Services
     {
-    public class CadLayoutService
+    // ▼▼▼ 【核心修改】在这里添加对 ICadLayoutService 接口的实现 ▼▼▼
+    public class CadLayoutService : ICadLayoutService
         {
         // 最好是引用一个共享的常量，但为了简单，我们在这里也定义它
         private const string LegendPlaceholder = "__LEGEND_POS__";
@@ -118,14 +119,12 @@ namespace CADTranslator.Services
 
                         for (int i = 0; i < jig.FinalLineInfo.Count; i++)
                             {
-                            // 1. 获取包含精确坐标的元组
                             var (lineText, paraNeedsIndent, isFirstLineOfPara, currentParaIndex, linePosition) = jig.FinalLineInfo[i];
                             var currentParaInfo = paragraphInfos[currentParaIndex];
                             string finalLineText = lineText;
 
                             if (currentParaInfo.ContainsSpecialPattern && finalLineText.Contains(LegendPlaceholder))
                                 {
-                                // 这里需要一个小的调整，把 basePoint 和 i 传给 PlaceGraphicsAlongsideText 方法
                                 PlaceGraphicsAlongsideText(finalLineText, currentParaInfo, linePosition, jig, tr, modelSpace);
                                 finalLineText = finalLineText.Replace(LegendPlaceholder, new string(' ', currentParaInfo.OriginalSpaceCount));
                                 }
@@ -140,10 +139,9 @@ namespace CADTranslator.Services
                                 newText.WidthFactor = currentParaInfo.WidthFactor;
                                 newText.TextStyleId = currentParaInfo.TextStyleId;
 
-                                // 2. 直接使用从Jig获取的精确坐标
                                 newText.HorizontalMode = TextHorizontalMode.TextLeft;
                                 newText.VerticalMode = TextVerticalMode.TextBase;
-                                newText.Position = linePosition; // <-- 直接使用这个坐标
+                                newText.Position = linePosition;
 
                                 modelSpace.AppendEntity(newText);
                                 tr.AddNewlyCreatedDBObject(newText, true);
@@ -180,7 +178,6 @@ namespace CADTranslator.Services
                 tempText.HorizontalMode = paraInfo.HorizontalMode;
                 tempText.VerticalMode = paraInfo.VerticalMode;
 
-                // 直接使用传入的精确基点
                 if (tempText.HorizontalMode == TextHorizontalMode.TextLeft && tempText.VerticalMode == TextVerticalMode.TextBase)
                     {
                     tempText.Position = lineBasePoint;
@@ -236,7 +233,6 @@ namespace CADTranslator.Services
                             {
                             if (string.IsNullOrWhiteSpace(item.TranslatedText) || item.SourceObjectIds == null || !item.SourceObjectIds.Any()) continue;
 
-                            // 简单的替换逻辑，用于非实时排版模式
                             string final_text = item.TranslatedText.Replace(LegendPlaceholder, new string(' ', item.OriginalSpaceCount));
 
                             var firstObjectId = item.SourceObjectIds.First();
