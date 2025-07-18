@@ -8,7 +8,7 @@
                  mc:Ignorable="d"
                  Title="余额查询历史记录"
                  Height="500"
-                 Width="650"
+                 Width="750"
                  WindowStartupLocation="CenterOwner"
                  WindowBackdropType="Mica"
                  ExtendsContentIntoTitleBar="True"
@@ -20,58 +20,94 @@
                 <ui:ThemesDictionary Theme="Light" />
                 <ui:ControlsDictionary />
             </ResourceDictionary.MergedDictionaries>
+
             <Style x:Key="DataGridColumnHeaderStyleWithBorders"
                    TargetType="{x:Type DataGridColumnHeader}"
                    BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
+                <Setter Property="Padding"
+                        Value="10,0,10,0" />
                 <Setter Property="BorderBrush"
-                        Value="LightBlue" />
+                        Value="SkyBlue" />
+                <Setter Property="Width"
+                        Value="Auto" />
                 <Setter Property="BorderThickness"
-                        Value="0,0,0,1" />
+                        Value="0,0,1,1" />
                 <Setter Property="FontSize"
-                        Value="17" />
+                        Value="18" />
                 <Setter Property="HorizontalContentAlignment"
                         Value="Center" />
                 <Setter Property="VerticalContentAlignment"
                         Value="Center" />
             </Style>
+
+            <Style TargetType="{x:Type DataGridCell}"
+                   BasedOn="{StaticResource {x:Type DataGridCell}}">
+                <Setter Property="Padding"
+                        Value="5" />
+                <Setter Property="BorderBrush"
+                        Value="LightGray" />
+                <Setter Property="BorderThickness"
+                        Value="0,0,1,0" />
+                <Setter Property="Focusable"
+                        Value="False" />
+                <Style.Triggers>
+                    <Trigger Property="IsSelected"
+                             Value="True">
+                        <Setter Property="Background"
+                                Value="{DynamicResource SystemAccentColorLight2}" />
+                        <Setter Property="Foreground"
+                                Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
         </ResourceDictionary>
     </Window.Resources>
-    <Grid Margin="10,0,10,0">
+
+    <Grid Margin="10,0,10,10">
         <Grid.RowDefinitions>
-            <RowDefinition Height="50" />
+            <RowDefinition Height="40" />
+            <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
+
         <ui:TitleBar Grid.Row="0"
-                     CanMaximize="False" 
-                     ApplicationTheme="Light"/>
-        <ui:DataGrid ItemsSource="{Binding History}"
-                     AutoGenerateColumns="False"
+                     CanMaximize="True"
+                     ApplicationTheme="Light" />
+
+        <ui:DataGrid Name="HistoryDataGrid"
+                     ItemsSource="{Binding HistoryDataTable}"
+                     AutoGenerateColumns="True"
                      IsReadOnly="True"
+                     SelectionMode="Extended"
+                     Background="Transparent"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
                      Grid.Row="1"
                      HorizontalGridLinesBrush="SkyBlue"
                      VerticalGridLinesBrush="SkyBlue"
                      ColumnHeaderStyle="{StaticResource DataGridColumnHeaderStyleWithBorders}"
-                     HeadersVisibility="Column"
-                     BorderThickness="1,1,1,1"
+                     HeadersVisibility="All"               
+                     BorderThickness="1"
                      BorderBrush="SkyBlue"
-                     GridLinesVisibility="All">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="查询时间"
-                                    Binding="{Binding Timestamp, StringFormat='yyyy-MM-dd HH:mm:ss'}"
-                                    Width="170" />
-                <DataGridTextColumn Header="余额信息"
-                                    Binding="{Binding BalanceInfo}"
-                                    Width="130" />
-                <DataGridTextColumn Header="API服务"
-                                    Binding="{Binding ServiceType}"
-                                    Width="100" />
-                <DataGridTextColumn Header="用户ID"
-                                    Binding="{Binding UserId}"
-                                    Width="*" />
-                <DataGridTextColumn Header="账户状态"
-                                    Binding="{Binding AccountStatus}"
-                                    Width="80" />
-            </DataGrid.Columns>
-        </ui:DataGrid>
+                     GridLinesVisibility="All"
+                     AutoGeneratingColumn="DataGrid_AutoGeneratingColumn" />
+
+        <Border Grid.Row="2"
+                BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource ControlElevationBorderBrush}"
+                Padding="0,15,0,0">
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Right">
+                <ui:Button Content="删除记录"
+                           Command="{Binding DeleteCommand}"
+                           CommandParameter="{Binding ElementName=HistoryDataGrid, Path=SelectedItems}"
+                           Appearance="Danger"
+                           Icon="Delete24" />
+                <ui:Button Content="关闭"
+                           Click="CloseButton_Click"
+                           Margin="10,0,0,0"
+                           IsCancel="True" />
+            </StackPanel>
+        </Border>
     </Grid>
 </ui:FluentWindow>
