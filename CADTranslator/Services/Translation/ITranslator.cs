@@ -2,6 +2,7 @@
 
 using CADTranslator.Models;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CADTranslator.Services
@@ -81,7 +82,7 @@ namespace CADTranslator.Services
         /// <param name="fromLanguage">源语言代码</param>
         /// <param name="toLanguage">目标语言代码</param>
         /// <returns>翻译后的文本</returns>
-        Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage);
+        Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken);
 
         /// <summary>
         /// (扩展功能) 异步获取此服务可用的模型列表。

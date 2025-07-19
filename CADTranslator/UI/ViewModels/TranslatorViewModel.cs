@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -169,11 +170,13 @@ namespace CADTranslator.UI.ViewModels
                 {
                 if (SetField(ref _currentLineSpacingInput, value))
                     {
-                    if (!string.IsNullOrWhiteSpace(value) &&
-                        double.TryParse(value, out _) &&
-                        !LineSpacingOptions.Contains(value))
+                    var trimmedValue = value?.Trim();
+
+                    if (!string.IsNullOrWhiteSpace(trimmedValue) &&
+                        double.TryParse(trimmedValue, out _) &&
+                        !LineSpacingOptions.Contains(trimmedValue))
                         {
-                        LineSpacingOptions.Add(value);
+                        LineSpacingOptions.Add(trimmedValue);
                         }
                     if (!_isLoading) SaveSettings();
                     }
@@ -193,11 +196,13 @@ namespace CADTranslator.UI.ViewModels
                 {
                 if (SetField(ref _currentConcurrencyLevelInput, value))
                     {
-                    if (!string.IsNullOrWhiteSpace(value) &&
-                        int.TryParse(value, out int intVal) && intVal > 1 &&
-                        !ConcurrencyLevelOptions.Contains(value))
+                    var trimmedValue = value?.Trim();
+
+                    if (!string.IsNullOrWhiteSpace(trimmedValue) &&
+                        int.TryParse(trimmedValue, out int intVal) && intVal > 1 &&
+                        !ConcurrencyLevelOptions.Contains(trimmedValue))
                         {
-                        ConcurrencyLevelOptions.Add(value);
+                        ConcurrencyLevelOptions.Add(trimmedValue);
                         }
                     if (!_isLoading) SaveSettings();
                     }
@@ -399,6 +404,11 @@ namespace CADTranslator.UI.ViewModels
             int completedItems = 0;
             UpdateProgress(completedItems, totalItems);
 
+            var cts = new CancellationTokenSource();
+            var cancellationToken = cts.Token;
+            int consecutiveNetworkErrors = 0;
+            const int networkErrorThreshold = 2;
+
             try
                 {
                 ITranslator translator = _apiRegistry.CreateProviderForProfile(CurrentProfile);
@@ -410,17 +420,46 @@ namespace CADTranslator.UI.ViewModels
 
                     var translationTasks = itemsToTranslate.Select(async item =>
                     {
-                        await semaphore.WaitAsync();
+                        await semaphore.WaitAsync(cancellationToken);
+
                         try
                             {
-                            string result = await CreateTranslationTask(translator, item);
-                            if (IsTranslationError(result)) throw new Exception(result);
+                            cancellationToken.ThrowIfCancellationRequested();
+                            string result = await CreateTranslationTask(translator, item, cancellationToken);
                             item.TranslatedText = result;
+                            Interlocked.Exchange(ref consecutiveNetworkErrors, 0);
+                            }
+                        catch (OperationCanceledException)
+                            {
+                            item.TranslatedText = "[已取消] 因连续网络错误或致命错误，任务已熔断。";
+                            lock (_failedItems) { _failedItems.Add(item); }
+                            }
+                        catch (ApiException apiEx)
+                            {
+                            bool isFatalError = apiEx.ErrorType == ApiErrorType.ConfigurationError || apiEx.StatusCode == System.Net.HttpStatusCode.Unauthorized;
+                            if (isFatalError)
+                                {
+                                if (!cts.IsCancellationRequested)
+                                    {
+                                    Log($"检测到致命错误 ({apiEx.Message})，正在触发熔断...", isError: true);
+                                    cts.Cancel();
+                                    }
+                                }
+                            else if (apiEx.ErrorType == ApiErrorType.NetworkError)
+                                {
+                                int currentErrorCount = Interlocked.Increment(ref consecutiveNetworkErrors);
+                                if (currentErrorCount >= networkErrorThreshold && !cts.IsCancellationRequested)
+                                    {
+                                    Log($"已连续遇到 {currentErrorCount} 次网络错误，正在触发熔断...", isError: true);
+                                    cts.Cancel();
+                                    }
+                                }
+                            HandleApiException(apiEx, item);
                             }
                         catch (Exception ex)
                             {
                             var errorMessage = ex.Message.Replace('\t', ' ');
-                            item.TranslatedText = $"[翻译失败] {errorMessage}";
+                            item.TranslatedText = $"[未知错误] {errorMessage}";
                             lock (_failedItems) { _failedItems.Add(item); }
                             _windowService.InvokeOnUIThread(() => RetranslateFailedCommand.RaiseCanExecuteChanged());
                             }
@@ -435,10 +474,30 @@ namespace CADTranslator.UI.ViewModels
                             });
                             }
                     });
-                    await Task.WhenAll(translationTasks);
+
+                    // ▼▼▼ 【核心修复】使用 Task.WhenAny 与一个“取消任务”进行竞赛 ▼▼▼
+                    var whenAllTask = Task.WhenAll(translationTasks);
+                    var cancellationTaskCompletionSource = new TaskCompletionSource<bool>();
+                    using (cancellationToken.Register(() => cancellationTaskCompletionSource.TrySetResult(true)))
+                        {
+                        var completedTask = await Task.WhenAny(whenAllTask, cancellationTaskCompletionSource.Task);
+                        if (completedTask == cancellationTaskCompletionSource.Task)
+                            {
+                            // 如果是“取消任务”先完成了，说明熔断已被触发。
+                            // 我们立刻记录日志，然后直接跳出等待，让 finally 块执行。
+                            Log("熔断已触发，停止等待所有任务完成。");
+                            }
+                        else
+                            {
+                            // 如果是 whenAllTask 先完成了，说明所有任务都正常结束了（没有触发熔断）。
+                            // 我们需要 await 它来传播可能发生的、未被内部捕获的异常。
+                            await whenAllTask;
+                            }
+                        }
                     }
                 else
                     {
+                    // ... (单线程代码保持不变) ...
                     Log($"启动单线程翻译，总数: {totalItems}");
                     foreach (var item in itemsToTranslate)
                         {
@@ -452,54 +511,66 @@ namespace CADTranslator.UI.ViewModels
                         while (!translationTask.IsCompleted)
                             {
                             await Task.Delay(500);
-                            if (!translationTask.IsCompleted) UpdateLastLog($"{initialLog} 已进行 {stopwatch.Elapsed.Seconds} 秒");
+                            if (!translationTask.IsCompleted) UpdateLastLog($"{initialLog} 已进行 {(int)stopwatch.Elapsed.TotalSeconds} 秒");
                             }
                         stopwatch.Stop();
 
                         try
                             {
                             string result = await translationTask;
-                            if (IsTranslationError(result)) throw new Exception(result);
                             item.TranslatedText = result;
-
                             completedItems++;
                             UpdateProgress(completedItems, totalItems);
                             UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems}/{totalItems} 项翻译完成。用时 {stopwatch.Elapsed.TotalSeconds:F1} 秒");
                             _windowService.InvokeOnUIThread(() => ApplyToCadCommand.RaiseCanExecuteChanged());
                             }
+                        catch (ApiException apiEx)
+                            {
+                            HandleApiException(apiEx, item);
+                            UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] [翻译失败] 第 {completedItems + 1} 项，原因: {apiEx.Message}");
+                            Log("任务因错误而中断。");
+                            return;
+                            }
                         catch (Exception ex)
                             {
                             HandleTranslationError(ex, item, stopwatch, completedItems);
-                            lock (_failedItems) { _failedItems.Add(item); }
-                            RetranslateFailedCommand.RaiseCanExecuteChanged();
                             return;
                             }
                         }
                     }
                 }
+            catch (ApiException apiEx)
+                {
+                Log($"[错误] 创建翻译服务时失败: {apiEx.Message}", isError: true);
+                await _windowService.ShowInformationDialogAsync("配置错误", $"创建翻译服务时失败，请检查API配置：\n\n{apiEx.Message}");
+                }
             catch (Exception ex)
                 {
-                Log($"[错误] 创建翻译服务时失败: {ex.Message}");
-                await _windowService.ShowInformationDialogAsync("配置错误", $"创建翻译服务时失败，请检查API配置：\n\n{ex.Message}");
+                Log($"[错误] 翻译任务发生未知异常: {ex.Message}", isError: true);
+                await _windowService.ShowInformationDialogAsync("未知错误", $"翻译过程中发生未知错误:\n\n{ex.Message}");
                 }
             finally
                 {
                 totalStopwatch.Stop();
+                if (cts.IsCancellationRequested)
+                    {
+                    Log("任务已熔断。部分项目可能未被处理。");
+                    }
                 if (_failedItems.Any())
                     {
-                    Log($"任务完成，有 {_failedItems.Count} 个项目翻译失败。总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒");
+                    Log($"任务完成，有 {_failedItems.Count} 个项目翻译失败或被取消。总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒");
                     }
                 else
                     {
                     Log($"全部翻译任务成功完成！总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒");
                     }
-
                 if (totalItems > 0 && !_failedItems.Any())
                     {
                     UpdateUsageStatistics(itemsToTranslate.Count, itemsToTranslate.Sum(i => i.OriginalText.Length), totalStopwatch.Elapsed.TotalSeconds);
                     }
 
                 IsBusy = false;
+                cts.Dispose();
                 }
             }
 
@@ -546,8 +617,7 @@ namespace CADTranslator.UI.ViewModels
         #endregion
 
         #region --- API与模型管理 ---
-        // (这部分方法也不需要改变)
-        // ... OnGetModels, OnGetBalance, OnManageModels 等方法 ...
+
         private async void OnGetModels(object parameter)
             {
             if (CurrentProvider == null) return;
@@ -573,9 +643,16 @@ namespace CADTranslator.UI.ViewModels
                     Log("未能获取到任何模型列表。");
                     }
                 }
+            // ◄◄◄ 【新增】捕获我们自定义的ApiException
+            catch (ApiException apiEx)
+                {
+                // 这里不需要向某个UI项写入错误，所以第二个参数传null
+                HandleApiException(apiEx, null);
+                await _windowService.ShowInformationDialogAsync("操作失败", $"获取模型列表时发生错误:\n\n{apiEx.Message}");
+                }
             catch (Exception ex)
                 {
-                Log($"[错误] 获取模型列表时失败: {ex.Message}");
+                Log($"[错误] 获取模型列表时失败: {ex.Message}", isError: true);
                 await _windowService.ShowInformationDialogAsync("操作失败", $"获取模型列表时发生错误:\n\n{ex.Message}");
                 }
             finally
@@ -608,9 +685,15 @@ namespace CADTranslator.UI.ViewModels
                 SaveSettings();
                 Log("余额查询成功！");
                 }
+            // ◄◄◄ 【新增】捕获我们自定义的ApiException
+            catch (ApiException apiEx)
+                {
+                HandleApiException(apiEx, null);
+                await _windowService.ShowInformationDialogAsync("操作失败", $"查询余额时发生错误:\n\n{apiEx.Message}");
+                }
             catch (Exception ex)
                 {
-                Log($"[错误] 查询余额时失败: {ex.Message}");
+                Log($"[错误] 查询余额时失败: {ex.Message}", isError: true);
                 await _windowService.ShowInformationDialogAsync("操作失败", $"查询余额时发生错误:\n\n{ex.Message}");
                 }
             finally
@@ -673,8 +756,7 @@ namespace CADTranslator.UI.ViewModels
         #endregion
 
         #region --- 设置、日志与辅助方法 ---
-        // (这部分方法也不需要改变)
-        // ... LoadSettings, SaveSettings, UpdateUiFromCurrentProfile 等方法 ...
+        
         private void LoadSettings()
             {
             _isLoading = true;
@@ -806,26 +888,29 @@ namespace CADTranslator.UI.ViewModels
                 }
             }
 
-        private Task<string> CreateTranslationTask(ITranslator translator, TextBlockViewModel item)
+        private Task<string> CreateTranslationTask(ITranslator translator, TextBlockViewModel item, CancellationToken cancellationToken = default)
             {
             string textToTranslate = item.OriginalText;
             if (translator.IsPromptSupported && !string.IsNullOrWhiteSpace(GlobalPrompt))
                 {
                 textToTranslate = $"{GlobalPrompt}\n\n{item.OriginalText}";
                 }
-            return translator.TranslateAsync(textToTranslate, SourceLanguage, TargetLanguage);
+            // 将cancellationToken传递给真正的翻译服务
+            return translator.TranslateAsync(textToTranslate, SourceLanguage, TargetLanguage, cancellationToken);
             }
 
-        private bool IsTranslationError(string result) => result.StartsWith("[") || result.StartsWith("翻译失败") || result.StartsWith("调用") || result.StartsWith("请求失败") || result.StartsWith("百度API返回错误");
 
-        private void Log(string message, bool clearPrevious = false, bool addNewLine = true, bool isListItem = false)
+        private void Log(string message, bool clearPrevious = false, bool addNewLine = true, bool isListItem = false, bool isError = false)
             {
             if (clearPrevious)
                 _windowService.InvokeOnUIThread(() => StatusLog.Clear());
 
             var formattedMessage = isListItem ? message : $"[{DateTime.Now:HH:mm:ss}] {message}";
+            if (isError)
+                {
+                formattedMessage = $"[错误] {formattedMessage}";
+                }
 
-            // ▼▼▼ 【核心修改】只调用WriteToCommandLine，不再有条件判断 ▼▼▼
             CadBridgeService.WriteToCommandLine(formattedMessage);
 
             if (addNewLine) _windowService.InvokeOnUIThread(() => StatusLog.Add(formattedMessage));
@@ -861,6 +946,33 @@ namespace CADTranslator.UI.ViewModels
             Log("任务因错误而中断。");
             item.TranslatedText = $"[翻译失败] {errorMessage}";
             }
+
+        private void HandleApiException(ApiException apiEx, TextBlockViewModel failedItem)
+            {
+            // 准备一个用户友好的错误消息前缀
+            string errorPrefix = apiEx.ErrorType switch
+                {
+                    ApiErrorType.NetworkError => "[网络错误]",
+                    ApiErrorType.ConfigurationError => "[配置错误]",
+                    ApiErrorType.ApiError => "[接口返回错误]",
+                    ApiErrorType.InvalidResponse => "[响应无效]",
+                    _ => "[未知错误]"
+                    };
+
+            // 在译文栏中显示带前缀的用户友好消息
+            if (failedItem != null)
+                {
+                failedItem.TranslatedText = $"{errorPrefix} {apiEx.Message}";
+                // 将失败项加入重试列表
+                lock (_failedItems) { _failedItems.Add(failedItem); }
+                // 更新重试按钮的状态
+                _windowService.InvokeOnUIThread(() => RetranslateFailedCommand.RaiseCanExecuteChanged());
+                }
+
+            // 在状态栏和CAD命令行中记录包含技术细节的完整日志
+            Log($"[{apiEx.Provider}] {errorPrefix} {apiEx.Message} (Status: {apiEx.StatusCode}, Code: {apiEx.ApiErrorCode})", isError: true);
+            }
+
         #endregion
 
         #region --- 表格操作与属性变更 ---

@@ -378,7 +378,7 @@
                 <RowDefinition Height="1*" />
             </Grid.RowDefinitions>
             <ui:TitleBar Grid.Row="0"
-                         CanMaximize="False" />
+                         CanMaximize="True" />
             <Grid Grid.Row="1"
                   Margin="20,0,20,10">
                 <Grid.RowDefinitions>

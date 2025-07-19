@@ -197,6 +197,7 @@
     <Compile Include="AutoCAD\Jigs\BreakLineJig.cs" />
     <Compile Include="AutoCAD\Commands\MainCommands.cs" />
     <Compile Include="Models\ApiDefinition.cs" />
+    <Compile Include="Models\ApiException.cs" />
     <Compile Include="Models\ApiProfile.cs" />
     <Compile Include="Models\ApiServiceDisplay.cs" />
     <Compile Include="Models\ApiUsageStats.cs" />

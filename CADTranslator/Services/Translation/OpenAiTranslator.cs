@@ -1,10 +1,12 @@
 ﻿// 文件路径: CADTranslator/Services/Translation/OpenAiTranslator.cs
+// 【完整文件替换】
 
 using CADTranslator.Models;
 using OpenAI.Chat;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading; // ◄◄◄ 【新增】引入 CancellationToken
 using System.Threading.Tasks;
 
 namespace CADTranslator.Services
@@ -13,10 +15,7 @@ namespace CADTranslator.Services
         {
         #region --- 字段 ---
 
-        // 【核心修改】使用 Lazy<T> 来实现惰性加载
         private readonly Lazy<ChatClient> _lazyClient;
-
-        // 我们仍然需要存储这些值，以便在需要时创建客户端
         private readonly string _model;
         private readonly string _apiKey;
 
@@ -27,17 +26,11 @@ namespace CADTranslator.Services
         public OpenAiTranslator(string apiKey, string model)
             {
             if (string.IsNullOrWhiteSpace(apiKey))
-                throw new ArgumentNullException(nameof(apiKey), "OpenAI API Key cannot be null or empty.");
-            if (string.IsNullOrWhiteSpace(model))
-                throw new ArgumentNullException(nameof(model), "OpenAI 模型名称不能为空。");
+                throw new ApiException(ApiErrorType.ConfigurationError, ApiServiceType.OpenAI, "API Key 不能为空。");
 
             _apiKey = apiKey;
             _model = model;
 
-            // 【核心修改】
-            // 我们不再直接创建 ChatClient。
-            // 相反，我们初始化 _lazyClient，并告诉它“将来”应该如何创建 ChatClient。
-            // 里面的代码只有在第一次访问 _lazyClient.Value 时才会执行。
             _lazyClient = new Lazy<ChatClient>(() => new ChatClient(_model, _apiKey));
             }
 
@@ -65,8 +58,15 @@ namespace CADTranslator.Services
 
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
 
-        public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage)
+        // ▼▼▼ 【方法重写】重写整个 TranslateAsync 方法以支持 CancellationToken ▼▼▼
+        public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
+            if (string.IsNullOrWhiteSpace(_model))
+                throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
+
+            // 在发起API调用前，检查任务是否已被取消
+            cancellationToken.ThrowIfCancellationRequested();
+
             try
                 {
                 var messages = new List<ChatMessage>
@@ -75,24 +75,39 @@ namespace CADTranslator.Services
                     new UserChatMessage(textToTranslate)
                 };
 
-                // 【核心修改】使用 _lazyClient.Value 来获取客户端实例。
-                // 如果这是第一次调用，它会自动创建 ChatClient。
-                ChatCompletion completion = await _lazyClient.Value.CompleteChatAsync(messages);
+                // ▼▼▼ 【核心修改】将 cancellationToken 传递给 CompleteChatAsync 方法 ▼▼▼
+                ChatCompletion completion = await _lazyClient.Value.CompleteChatAsync(messages, cancellationToken: cancellationToken);
 
                 if (completion.Content != null && completion.Content.Any())
                     {
                     return completion.Content[0].Text.Trim();
                     }
-                else
-                    {
-                    return $"翻译失败：API返回内容为空。完成原因: {completion.FinishReason}";
-                    }
+
+                throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API未返回任何内容。完成原因: {completion.FinishReason}");
+                }
+            // ◄◄◄ 【新增】专门捕获由 CancellationToken 引发的 OperationCanceledException
+            catch (OperationCanceledException)
+                {
+                // 当任务被取消时，库会抛出此异常，我们直接重新抛出
+                throw;
                 }
             catch (Exception ex)
                 {
-                // 如果在创建或使用客户端时出错（例如，因为依赖项真的丢失了），
-                // 错误会在这里被捕获，而不会在程序启动时就崩溃。
-                return $"调用OpenAI API时发生异常: {ex.Message.Replace('\t', ' ')}";
+                // 检查是否是因为取消令牌被触发而导致的通用异常
+                if (cancellationToken.IsCancellationRequested)
+                    {
+                    // 如果是，则抛出标准的取消异常
+                    throw new OperationCanceledException();
+                    }
+
+                // 通过检查异常消息来粗略判断是否为网络问题
+                if (ex.Message.Contains("timed out") || ex.Message.Contains("Error while copying content to a stream"))
+                    {
+                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, $"网络请求失败: {ex.Message}");
+                    }
+
+                // 否则，将其视为普通的API错误
+                throw new ApiException(ApiErrorType.ApiError, ServiceType, ex.Message);
                 }
             }
 

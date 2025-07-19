@@ -1,4 +1,5 @@
 ﻿// 文件路径: CADTranslator/Services/Translation/BaiduTranslator.cs
+// 【完整文件替换】
 
 using CADTranslator.Models;
 using Newtonsoft.Json;
@@ -8,6 +9,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CADTranslator.Services
@@ -26,8 +28,10 @@ namespace CADTranslator.Services
 
         public BaiduTranslator(string appId, string appKey)
             {
-            _appId = string.IsNullOrWhiteSpace(appId) ? "20250708002400901" : appId;
-            _appKey = string.IsNullOrWhiteSpace(appKey) ? "1L_Bso6ORO8torYgecjh" : appKey;
+            // 在这里我们不检查AppID和AppKey是否为空，因为您有提供默认值。
+            // 真正的配置检查将在调用时进行，如果用户提供了空值则会失败。
+            _appId = appId;
+            _appKey = appKey;
             }
 
         #endregion
@@ -46,50 +50,67 @@ namespace CADTranslator.Services
         public bool IsUserIdRequired => true;
         public bool IsApiUrlRequired => false;
         public bool IsModelRequired => false;
-        public bool IsPromptSupported => false; // 百度翻译是专用接口，不支持自定义提示词
-        public bool IsModelFetchingSupported => false; // IsModelRequired为false，此项也为false
+        public bool IsPromptSupported => false;
+        public bool IsModelFetchingSupported => false;
         public bool IsBalanceCheckSupported => false;
 
         #endregion
 
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
 
-        public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage)
+        public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken) // ◄◄◄ 【新增】cancellationToken 参数
             {
+            // 1. 配置检查
+            if (string.IsNullOrWhiteSpace(_appId) || string.IsNullOrWhiteSpace(_appKey))
+                {
+                throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "App ID 或 App Key 不能为空。");
+                }
             if (string.IsNullOrWhiteSpace(textToTranslate))
                 {
                 return "";
                 }
 
-            string queryText = textToTranslate.Replace('\n', ' ');
-            var random = new Random();
-            string salt = random.Next(32768, 65536).ToString();
-            string sign = GenerateSign(queryText, salt);
-            string baseUrl = "http://api.fanyi.baidu.com/api/trans/vip/translate";
-
-            var queryParams = new Dictionary<string, string>
-            {
-                { "q", queryText },
-                { "from", fromLanguage },
-                { "to", toLanguage },
-                { "appid", _appId },
-                { "salt", salt },
-                { "sign", sign }
-            };
-
-            string queryString = string.Join("&", queryParams.Select(kvp =>
-                $"{kvp.Key}={Uri.EscapeDataString(kvp.Value)}"));
-
-            string fullUrl = $"{baseUrl}?{queryString}";
-
             try
                 {
-                var response = await _httpClient.GetAsync(fullUrl);
+                string queryText = textToTranslate.Replace('\n', ' ');
+                var random = new Random();
+                string salt = random.Next(32768, 65536).ToString();
+                string sign = GenerateSign(queryText, salt);
+                string baseUrl = "http://api.fanyi.baidu.com/api/trans/vip/translate";
+
+                var queryParams = new Dictionary<string, string>
+                {
+                    { "q", queryText },
+                    { "from", fromLanguage },
+                    { "to", toLanguage },
+                    { "appid", _appId },
+                    { "salt", salt },
+                    { "sign", sign }
+                };
+
+                string queryString = string.Join("&", queryParams.Select(kvp =>
+                    $"{kvp.Key}={Uri.EscapeDataString(kvp.Value)}"));
+
+                string fullUrl = $"{baseUrl}?{queryString}";
+
+                // 2. 发起API请求并处理响应
+                // ▼▼▼ 【核心修改】将 cancellationToken 传递给 GetAsync 方法 ▼▼▼
+                var response = await _httpClient.GetAsync(fullUrl, cancellationToken);
+
+                // 当任务被取消时，上面的调用会抛出 TaskCanceledException，并被下面的catch块捕获
                 response.EnsureSuccessStatusCode();
 
                 string jsonResponse = await response.Content.ReadAsStringAsync();
                 var result = JsonConvert.DeserializeObject<BaiduTranslationResult>(jsonResponse);
 
+                // 3. 处理API返回的业务错误
+                if (!string.IsNullOrEmpty(result?.ErrorCode))
+                    {
+                    string friendlyMessage = $"错误码: {result.ErrorCode}, {result.ErrorMessage?.Replace('\t', ' ')}";
+                    throw new ApiException(ApiErrorType.ApiError, ServiceType, friendlyMessage, response.StatusCode, result.ErrorCode);
+                    }
+
+                // 4. 处理成功的响应
                 if (result?.TransResult != null && result.TransResult.Any())
                     {
                     var translatedText = new StringBuilder();
@@ -99,18 +120,29 @@ namespace CADTranslator.Services
                         }
                     return translatedText.ToString();
                     }
-                else if (!string.IsNullOrEmpty(result?.ErrorCode))
+
+                // 5. 处理未知的成功响应格式
+                throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API未返回有效或可解析的结果。");
+
+                }
+            // 6. 捕获网络层面的异常
+            catch (TaskCanceledException) // ◄◄◄ 这个catch块现在也会捕获由cancellationToken引发的取消
+                {
+                // 检查是不是由我们的令牌主动取消的
+                if (cancellationToken.IsCancellationRequested)
                     {
-                    return $"百度API返回错误: Code={result.ErrorCode}, Message={result.ErrorMessage?.Replace('\t', ' ')}";
+                    throw; // 如果是，直接重新抛出，让ViewModel知道是主动取消
                     }
-                else
-                    {
-                    return "翻译失败：API未返回有效或可解析的结果。";
-                    }
+                // 否则，认为是普通的网络超时
+                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求超时。请检查您的网络连接或VPN设置。");
+                }
+            catch (HttpRequestException ex)
+                {
+                throw new ApiException(ApiErrorType.NetworkError, ServiceType, $"网络请求失败: {ex.Message}");
                 }
             catch (Exception ex)
                 {
-                return $"调用百度翻译API时出错: {ex.Message.Replace('\t', ' ')}";
+                throw new ApiException(ApiErrorType.Unknown, ServiceType, $"调用百度翻译时发生未知错误: {ex.Message.Replace('\t', ' ')}");
                 }
             }
 
