@@ -12,6 +12,7 @@ namespace CADTranslator.Services.UI
     /// </summary>
     public interface IWindowService
         {
+
         /// <summary>
         /// (名称已修改) 显示一个只包含信息和关闭按钮的对话框。
         /// </summary>
@@ -50,5 +51,6 @@ namespace CADTranslator.Services.UI
         void MinimizeMainWindow();
         void ActivateMainWindow();
         void InvokeOnUIThread(Action action);
+        void ScrollToGridItem(object item);
         }
     }

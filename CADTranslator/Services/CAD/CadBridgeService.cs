@@ -1,5 +1,7 @@
 ﻿// 文件路径: CADTranslator/Services/CadBridgeService.cs
 using Autodesk.AutoCAD.ApplicationServices;
+using CADTranslator.ViewModels;
+using System.Collections.ObjectModel;
 using System.Text.RegularExpressions;
 
 namespace CADTranslator.Services.CAD
@@ -9,6 +11,20 @@ namespace CADTranslator.Services.CAD
     /// </summary>
     public static class CadBridgeService
         {
+
+        /// <summary>
+        /// 【新增】向AutoCAD发送一个命令字符串。
+        /// </summary>
+        /// <param name="command">要执行的命令 (需要以 \n 结尾以模拟回车)</param>
+        public static void SendCommandToAutoCAD(string command)
+            {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            doc.SendStringToExecute(command, true, false, false);
+            }
+
+        public static ObservableCollection<TextBlockViewModel> TextBlocksToLayout { get; set; }
         /// <summary>
         /// (已修改) 将消息作为新的一行写入到AutoCAD的命令行历史记录中。
         /// </summary>

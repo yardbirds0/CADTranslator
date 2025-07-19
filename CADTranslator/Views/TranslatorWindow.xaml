@@ -309,7 +309,7 @@
 
                             <ui:NumberBox Grid.Column="1"
                                           Value="{Binding SimilarityThreshold, Mode=TwoWay}"
-                                          Width="80"
+                                          Width="100"
                                           SmallChange="0.05"
                                           LargeChange="0.2" />
                         </Grid>
@@ -432,6 +432,12 @@
                           MouseDoubleClick="DataGrid_MouseDoubleClick"
                           AutoGenerateColumns="False"
                           PreviewMouseWheel="DataGrid_PreviewMouseWheel">
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow">
+                            <Setter Property="Background"
+                                    Value="{Binding RowBackground, UpdateSourceTrigger=PropertyChanged}" />
+                        </Style>
+                    </DataGrid.RowStyle>
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="段落"
                                             Binding="{Binding Id}"

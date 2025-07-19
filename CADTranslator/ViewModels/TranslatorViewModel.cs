@@ -1,12 +1,7 @@
-﻿// 文件路径: CADTranslator/UI/ViewModels/TranslatorViewModel.cs
-// 【注意】这是一个完整的文件替换
-
-using Autodesk.AutoCAD.ApplicationServices; // ◄◄◄ 【注意】为了获取Editor，这里保留
-using CADTranslator.Models;
+﻿using Autodesk.AutoCAD.ApplicationServices;
 using CADTranslator.Models.API;
 using CADTranslator.Models.CAD;
 using CADTranslator.Models.UI;
-using CADTranslator.Services;
 using CADTranslator.Services.CAD;
 using CADTranslator.Services.Settings;
 using CADTranslator.Services.Translation;
@@ -17,16 +12,13 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
-using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Input;
 using System.Windows.Media;
 using Wpf.Ui.Controls;
 using MessageBoxResult = Wpf.Ui.Controls.MessageBoxResult;
-using ObjectId = Autodesk.AutoCAD.DatabaseServices.ObjectId;
 
 namespace CADTranslator.ViewModels
     {
@@ -34,18 +26,23 @@ namespace CADTranslator.ViewModels
         {
         #region --- 字段与服务 ---
 
-        // ▼▼▼ 【核心修改】所有服务都通过接口引用 ▼▼▼
+        // (服务和大部分字段保持不变)
         private readonly IWindowService _windowService;
         private readonly ISettingsService _settingsService;
         private readonly IAdvancedTextService _advancedTextService;
         private readonly ICadLayoutService _cadLayoutService;
         private readonly ApiRegistry _apiRegistry;
-
         private AppSettings _currentSettings;
         private bool _isLoading = false;
         private List<TextBlockViewModel> _failedItems = new List<TextBlockViewModel>();
 
-        // ... (其他私有字段保持不变) ...
+        // 【新增】用于管理背景色的画刷
+        private readonly Brush _translatingBrush = new SolidColorBrush(Color.FromArgb(128, 255, 236, 179)); // 淡黄色
+        private readonly Brush _successBrush = new SolidColorBrush(Color.FromArgb(128, 200, 230, 201));     // 淡绿色
+        private readonly Brush _failedBrush = new SolidColorBrush(Color.FromArgb(128, 255, 205, 210));      // 淡红色
+        private readonly Brush _defaultBrush = Brushes.Transparent;
+
+        // (其他私有字段保持不变)
         private bool _isBusy;
         private ITranslator _currentProvider;
         private string _lastBalanceDisplay = "当前无余额记录";
@@ -57,10 +54,8 @@ namespace CADTranslator.ViewModels
         private string _currentConcurrencyLevelInput;
         private readonly Brush[] _characterBrushes = new Brush[]
         {
-            (Brush)new BrushConverter().ConvertFromString("#1E88E5"),
-            (Brush)new BrushConverter().ConvertFromString("#0CA678"),
-            (Brush)new BrushConverter().ConvertFromString("#FF8F00"),
-            (Brush)new BrushConverter().ConvertFromString("#FF5252"),
+            (Brush)new BrushConverter().ConvertFromString("#1E88E5"), (Brush)new BrushConverter().ConvertFromString("#0CA678"),
+            (Brush)new BrushConverter().ConvertFromString("#FF8F00"), (Brush)new BrushConverter().ConvertFromString("#FF5252"),
             (Brush)new BrushConverter().ConvertFromString("#6741D9")
         };
         private int _brushIndex = 0;
@@ -304,8 +299,6 @@ namespace CADTranslator.ViewModels
         #endregion
 
         #region --- 核心方法 (翻译、选择、应用) ---
-        // (这部分方法除了使用 _windowService 外，逻辑几乎不变，因为它们已经调用了其他服务)
-        // ... OnSelectText, OnTranslate, OnApplyToCad 等方法 ...
         private async void OnSelectText(object parameter)
             {
             try
@@ -371,10 +364,7 @@ namespace CADTranslator.ViewModels
                 }
             }
 
-        private async void OnTranslate(object parameter)
-            {
-            await ExecuteTranslation(TextBlockList.Where(item => string.IsNullOrWhiteSpace(item.TranslatedText) && !string.IsNullOrWhiteSpace(item.OriginalText)).ToList());
-            }
+        private async void OnTranslate(object parameter) { await ExecuteTranslation(TextBlockList.Where(item => string.IsNullOrWhiteSpace(item.TranslatedText) && !string.IsNullOrWhiteSpace(item.OriginalText)).ToList()); }
 
         private async void OnRetranslateFailed(object parameter)
             {
@@ -394,34 +384,17 @@ namespace CADTranslator.ViewModels
 
         private async Task ExecuteTranslation(List<TextBlockViewModel> itemsToTranslate)
             {
-            if (CurrentProvider == null || CurrentProfile == null)
-                {
-                await _windowService.ShowInformationDialogAsync("操作无效", "请先选择一个API配置。");
-                return;
-                }
-
-            if (IsModelRequired && !string.IsNullOrWhiteSpace(CurrentModelInput))
-                {
-                CurrentProfile.LastSelectedModel = CurrentModelInput;
-                if (!ModelList.Contains(CurrentModelInput))
-                    {
-                    ModelList.Add(CurrentModelInput);
-                    CurrentProfile.Models.Add(CurrentModelInput);
-                    }
-                }
+            if (CurrentProvider == null || CurrentProfile == null) { await _windowService.ShowInformationDialogAsync("操作无效", "请先选择一个API配置。"); return; }
+            if (IsModelRequired && !string.IsNullOrWhiteSpace(CurrentModelInput)) { CurrentProfile.LastSelectedModel = CurrentModelInput; if (!ModelList.Contains(CurrentModelInput)) { ModelList.Add(CurrentModelInput); CurrentProfile.Models.Add(CurrentModelInput); } }
 
             IsBusy = true;
+            ClearAllRowHighlights();
             var totalStopwatch = new System.Diagnostics.Stopwatch();
             totalStopwatch.Start();
             Log("翻译任务开始", clearPrevious: true);
 
             int totalItems = itemsToTranslate.Count;
-            if (totalItems == 0)
-                {
-                Log("没有需要翻译的新内容。");
-                IsBusy = false;
-                return;
-                }
+            if (totalItems == 0) { Log("没有需要翻译的新内容。"); IsBusy = false; return; }
 
             int completedItems = 0;
             UpdateProgress(completedItems, totalItems);
@@ -429,146 +402,172 @@ namespace CADTranslator.ViewModels
             var cts = new CancellationTokenSource();
             var cancellationToken = cts.Token;
 
-            var consecutiveFailures = new int[] { 0 };
-            const int failureThreshold = 2;
-
             try
                 {
                 ITranslator translator = _apiRegistry.CreateProviderForProfile(CurrentProfile);
                 if (IsMultiThreadingEnabled)
                     {
+                    // ▼▼▼ 【核心修改】多线程逻辑全面重构 ▼▼▼
+                    #region --- 多线程翻译逻辑 ---
                     int concurrencyLevel = int.TryParse(CurrentConcurrencyLevelInput, out int userLevel) && userLevel > 1 ? userLevel : 2;
                     Log($"启动并发翻译，总数: {totalItems}，最大并发量: {concurrencyLevel}");
-                    var semaphore = new SemaphoreSlim(concurrencyLevel);
 
-                    var translationTasks = itemsToTranslate.Select(async item =>
-                    {
-                        await semaphore.WaitAsync(cancellationToken);
+                    // 1. 将所有任务分批
+                    var batches = itemsToTranslate
+                        .Select((item, index) => new { item, index })
+                        .GroupBy(x => x.index / concurrencyLevel)
+                        .Select(g => g.Select(x => x.item).ToList())
+                        .ToList();
 
-                        try
-                            {
-                            cancellationToken.ThrowIfCancellationRequested();
-                            string result = await CreateTranslationTask(translator, item, cancellationToken);
-                            item.TranslatedText = result;
-                            Interlocked.Exchange(ref consecutiveFailures[0], 0); // 成功后重置计数
-                            }
-                        // ▼▼▼ 【核心修复】重构整个异常处理逻辑 ▼▼▼
-                        catch (Exception ex)
-                            {
-                            // 检查这是否是一个因超时引发的“伪”取消异常
-                            if (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-                                {
-                                // 这是由 HttpClient 超时自动抛出的，应被视为网络错误
-                                HandleApiException(new ApiException(ApiErrorType.NetworkError, CurrentProvider.ServiceType, "请求超时。"), item);
-
-                                // 增加失败计数并尝试触发熔断
-                                int currentFailureCount = Interlocked.Increment(ref consecutiveFailures[0]);
-                                if (currentFailureCount >= failureThreshold && !cts.IsCancellationRequested)
-                                    {
-                                    Log($"已连续遇到 {currentFailureCount} 次网络超时，正在触发熔断...", isError: true);
-                                    cts.Cancel();
-                                    }
-                                }
-                            // 检查这是否是我们主动熔断后，任务开始前或执行中抛出的“真”取消异常
-                            else if (ex is OperationCanceledException && cancellationToken.IsCancellationRequested)
-                                {
-                                item.TranslatedText = "[已取消] 任务已被熔断。";
-                                lock (_failedItems) { _failedItems.Add(item); }
-                                }
-                            // 处理所有其他类型的失败（例如 ApiException, 或其他 Exception）
-                            else
-                                {
-                                // 任何其他错误都计为一次失败
-                                int currentFailureCount = Interlocked.Increment(ref consecutiveFailures[0]);
-                                if (currentFailureCount >= failureThreshold && !cts.IsCancellationRequested)
-                                    {
-                                    Log($"已连续遇到 {currentFailureCount} 次错误，正在触发熔断...", isError: true);
-                                    cts.Cancel();
-                                    }
-
-                                // 格式化并显示具体的错误信息
-                                if (ex is ApiException apiEx)
-                                    {
-                                    HandleApiException(apiEx, item);
-                                    }
-                                else
-                                    {
-                                    var errorMessage = ex.Message.Replace('\t', ' ');
-                                    item.TranslatedText = $"[未知错误] {errorMessage}";
-                                    lock (_failedItems) { _failedItems.Add(item); }
-                                    _windowService.InvokeOnUIThread(() => RetranslateFailedCommand.RaiseCanExecuteChanged());
-                                    }
-                                }
-                            }
-                        finally
-                            {
-                            semaphore.Release();
-                            int currentCompleted = Interlocked.Increment(ref completedItems);
-                            _windowService.InvokeOnUIThread(() =>
-                            {
-                                UpdateProgress(currentCompleted, totalItems);
-                                ApplyToCadCommand.RaiseCanExecuteChanged();
-                            });
-                            }
-                    });
-
-                    var whenAllTask = Task.WhenAll(translationTasks);
-                    var cancellationTaskCompletionSource = new TaskCompletionSource<bool>();
-                    using (cancellationToken.Register(() => cancellationTaskCompletionSource.TrySetResult(true)))
+                    int batchNumber = 0;
+                    foreach (var batch in batches)
                         {
-                        var completedTask = await Task.WhenAny(whenAllTask, cancellationTaskCompletionSource.Task);
-                        if (completedTask == cancellationTaskCompletionSource.Task)
-                            {
-                            Log("熔断已触发，停止等待所有任务完成。");
-                            }
-                        else
-                            {
-                            try { await whenAllTask; } catch { /* 异常已在任务内部处理，这里忽略 */ }
-                            }
+                        batchNumber++;
+                        string batchPrefix = $"第 {batchNumber}/{batches.Count} 批";
+                        Log($"{batchPrefix} 开始处理，包含 {batch.Count} 个项目...");
+
+                        var batchStopwatch = new System.Diagnostics.Stopwatch();
+                        batchStopwatch.Start();
+
+                        // 2. 为当前批次创建一个共享的计时器
+                        var timerCts = new CancellationTokenSource();
+                        var timerTask = Task.Run(async () =>
+                        {
+                            while (!timerCts.IsCancellationRequested)
+                                {
+                                await Task.Delay(1000, timerCts.Token);
+                                // 计时器每秒更新所有仍在翻译中的批内成员的状态
+                                for (int i = 0; i < batch.Count; i++)
+                                    {
+                                    var item = batch[i];
+                                    if (item.Status == TranslationStatus.Translating)
+                                        {
+                                        string itemSentenceNumber = $"第 {i + 1} 句";
+                                        _windowService.InvokeOnUIThread(() => item.TranslatedText = $"{batchPrefix} {itemSentenceNumber}: 翻译中... 已用时 {batchStopwatch.Elapsed.TotalSeconds:F0} 秒");
+                                        }
+                                    }
+                                }
+                        }, timerCts.Token);
+
+                        // 3. 准备当前批次的所有翻译任务
+                        var translationTasksInBatch = batch.Select(async (item, index) => // <-- 这里增加了 index
+                        {
+                            try
+                                {
+                                // 3.1 任务开始前，立即更新UI
+                                string itemSentenceNumber = $"第 {index + 1} 句"; // <-- 新增：创建句内编号
+                                _windowService.ScrollToGridItem(item);
+                                SetItemStatus(item, TranslationStatus.Translating);
+                                item.TranslatedText = $"{batchPrefix} {itemSentenceNumber}: 准备中..."; // <-- 这里使用了句内编号
+
+                                // 3.2 执行翻译
+                                string result = await CreateTranslationTask(translator, item, cancellationToken);
+
+                                var matchResult = FindLegendPosMatch(result); // 使用新的方法
+                                if (item.OriginalText.Contains(AdvancedTextService.LegendPlaceholder) && matchResult.Success)
+                                    {
+                                    // 根据雷达报告，决定是否添加引号
+                                    string finalJigPlaceholder = matchResult.IsQuoted
+                                        ? $"\"{AdvancedTextService.JigPlaceholder}\""
+                                        : AdvancedTextService.JigPlaceholder;
+
+                                    result = result.Remove(matchResult.Index, matchResult.Length).Insert(matchResult.Index, finalJigPlaceholder);
+                                    }
+
+                                SetItemStatus(item, TranslationStatus.Success);
+                                item.TranslatedText = result;
+                                }
+                            catch (Exception ex)
+                                {
+                                // 3.4 失败后更新UI (不会中断其他任务)
+                                SetItemStatus(item, TranslationStatus.Failed);
+                                HandleApiException(ex as ApiException ?? new ApiException(ApiErrorType.Unknown, CurrentProvider.ServiceType, ex.Message), item);
+                                }
+                            finally
+                                {
+                                // 3.5 更新总体进度
+                                int currentCompleted = Interlocked.Increment(ref completedItems);
+                                _windowService.InvokeOnUIThread(() =>
+                                {
+                                    UpdateProgress(currentCompleted, totalItems);
+                                    ApplyToCadCommand.RaiseCanExecuteChanged();
+                                });
+                                }
+                        }).ToList();
+
+                        // 4. 等待当前批次的所有任务完成
+                        await Task.WhenAll(translationTasksInBatch);
+
+                        // 5. 停止当前批次的计时器
+                        batchStopwatch.Stop();
+                        timerCts.Cancel();
+                        try { await timerTask; } catch (OperationCanceledException) { }
+                        Log($"{batchPrefix} 处理完成。用时 {batchStopwatch.Elapsed.TotalSeconds:F1} 秒。");
                         }
+                    #endregion
                     }
                 else
                     {
-                    // --- 单线程逻辑保持不变 ---
+                    // (单线程逻辑保持不变)
+                    #region --- 单线程翻译逻辑 ---
                     Log($"启动单线程翻译，总数: {totalItems}");
                     foreach (var item in itemsToTranslate)
                         {
+                        _windowService.ScrollToGridItem(item);
+                        SetItemStatus(item, TranslationStatus.Translating);
+                        string statusPrefix = $"第 {completedItems + 1}/{totalItems} 项";
+                        item.TranslatedText = $"{statusPrefix}: 发送请求...";
                         var stopwatch = new System.Diagnostics.Stopwatch();
-                        string initialLog = $"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems + 1}/{totalItems} 项翻译中...";
-                        Log(initialLog, addNewLine: true, isListItem: true);
-
-                        Task<string> translationTask = CreateTranslationTask(translator, item);
                         stopwatch.Start();
-
-                        while (!translationTask.IsCompleted)
-                            {
-                            await Task.Delay(500);
-                            if (!translationTask.IsCompleted) UpdateLastLog($"{initialLog} 已进行 {(int)stopwatch.Elapsed.TotalSeconds} 秒");
-                            }
-                        stopwatch.Stop();
-
+                        var timerCts = new CancellationTokenSource();
+                        var timerTask = Task.Run(async () =>
+                        {
+                            while (!timerCts.IsCancellationRequested)
+                                {
+                                await Task.Delay(1000, timerCts.Token);
+                                if (item.Status == TranslationStatus.Translating)
+                                    {
+                                    _windowService.InvokeOnUIThread(() => item.TranslatedText = $"{statusPrefix}: 翻译中... 已用时 {stopwatch.Elapsed.TotalSeconds:F0} 秒");
+                                    }
+                                }
+                        }, timerCts.Token);
                         try
                             {
-                            string result = await translationTask;
+                            string result = await CreateTranslationTask(translator, item, cancellationToken);
+                            var matchResult = FindLegendPosMatch(result); // 使用新的方法
+                                                                          // 检查原始文本是否包含图例，以及翻译结果是否也模糊匹配到了图例
+                            if (item.OriginalText.Contains(AdvancedTextService.LegendPlaceholder) && matchResult.Success)
+                                {
+                                // 根据雷达报告，决定是否添加引号
+                                string finalJigPlaceholder = matchResult.IsQuoted
+                                    ? $"\"{AdvancedTextService.JigPlaceholder}\""
+                                    : AdvancedTextService.JigPlaceholder;
+
+                                result = result.Remove(matchResult.Index, matchResult.Length).Insert(matchResult.Index, finalJigPlaceholder);
+                                }
                             item.TranslatedText = result;
-                            completedItems++;
-                            UpdateProgress(completedItems, totalItems);
-                            UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] -> 第 {completedItems}/{totalItems} 项翻译完成。用时 {stopwatch.Elapsed.TotalSeconds:F1} 秒");
-                            _windowService.InvokeOnUIThread(() => ApplyToCadCommand.RaiseCanExecuteChanged());
-                            }
-                        catch (ApiException apiEx)
-                            {
-                            HandleApiException(apiEx, item);
-                            UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] [翻译失败] 第 {completedItems + 1} 项，原因: {apiEx.Message}");
-                            Log("任务因错误而中断。");
-                            return;
+                            SetItemStatus(item, TranslationStatus.Success);
                             }
                         catch (Exception ex)
                             {
-                            HandleTranslationError(ex, item, stopwatch, completedItems);
-                            return;
+                            timerCts.Cancel();
+                            HandleApiException(ex as ApiException ?? new ApiException(ApiErrorType.Unknown, CurrentProvider.ServiceType, ex.Message), item);
+                            SetItemStatus(item, TranslationStatus.Failed);
+                            Log("任务因错误而中断。");
+                            break;
+                            }
+                        finally
+                            {
+                            stopwatch.Stop();
+                            timerCts.Cancel();
+                            try { await timerTask; } catch (OperationCanceledException) { }
+                            completedItems++;
+                            UpdateProgress(completedItems, totalItems);
+                            Log($"{statusPrefix} 处理完成。用时 {stopwatch.Elapsed.TotalSeconds:F1} 秒。");
+                            _windowService.InvokeOnUIThread(() => ApplyToCadCommand.RaiseCanExecuteChanged());
                             }
                         }
+                    #endregion
                     }
                 }
             catch (ApiException apiEx)
@@ -584,23 +583,11 @@ namespace CADTranslator.ViewModels
             finally
                 {
                 totalStopwatch.Stop();
-                if (cts.IsCancellationRequested)
-                    {
-                    Log("任务因连续错误而熔断。");
-                    }
-                if (_failedItems.Any())
-                    {
-                    Log($"任务完成，有 {_failedItems.Count} 个项目失败或被取消。总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒");
-                    }
-                else
-                    {
-                    Log($"全部翻译任务成功完成！总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒");
-                    }
-                if (totalItems > 0 && !_failedItems.Any())
-                    {
-                    UpdateUsageStatistics(itemsToTranslate.Count, itemsToTranslate.Sum(i => i.OriginalText.Length), totalStopwatch.Elapsed.TotalSeconds);
-                    }
-
+                if (cts.IsCancellationRequested) { Log("任务因连续错误而熔断。"); }
+                ClearAllRowHighlights();
+                if (_failedItems.Any()) { Log($"任务完成，有 {_failedItems.Count} 个项目失败或被取消。总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒"); }
+                else { Log($"全部翻译任务成功完成！总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒"); }
+                if (totalItems > 0 && !_failedItems.Any()) { UpdateUsageStatistics(itemsToTranslate.Count, itemsToTranslate.Sum(i => i.OriginalText.Length), totalStopwatch.Elapsed.TotalSeconds); }
                 IsBusy = false;
                 cts.Dispose();
                 }
@@ -608,52 +595,31 @@ namespace CADTranslator.ViewModels
 
         private async void OnApplyToCad(object parameter)
             {
-            Log("正在切换到CAD窗口并应用翻译...");
-            _windowService.MinimizeMainWindow();
-            await Task.Delay(200);
-            bool success = false;
-            try
+            // 1. 检查是否有可应用的内容
+            var validItems = TextBlockList.Where(item => !string.IsNullOrWhiteSpace(item.TranslatedText) && !item.TranslatedText.StartsWith("["))
+                                          .ToList();
+            if (!validItems.Any())
                 {
-                // 【核心修正】在应用翻译的瞬间，根据当前UI列表动态生成要删除的ID
-                var idsToDelete = TextBlockList
-                    .Where(item => !string.IsNullOrWhiteSpace(item.TranslatedText) && !item.TranslatedText.StartsWith("["))
-                    .SelectMany(item => item.SourceObjectIds)
-                    .Distinct()
-                    .ToList();
+                await _windowService.ShowInformationDialogAsync("无内容可应用", "没有有效的翻译文本可供写入CAD。");
+                return;
+                }
 
-                if (IsLiveLayoutEnabled)
-                    {
-                    Log("“实时排版”已启用，将执行智能布局...");
-                    // 将动态生成的列表传递给服务
-                    success = _cadLayoutService.ApplySmartLayoutToCad(TextBlockList, idsToDelete, CurrentLineSpacingInput);
-                    }
-                else
-                    {
-                    Log("“实时排版”已关闭，将使用基本布局...");
-                    // 基本布局方法也需要更新，我们将在下一步处理
-                    success = await Task.Run(() => _cadLayoutService.ApplyTranslationToCad(TextBlockList, idsToDelete));
-                    }
-                }
-            catch (Exception ex)
-                {
-                Log($"[错误] 应用到CAD时发生意外异常: {ex.Message}");
-                success = false;
-                }
-            finally
-                {
-                if (!success)
-                    {
-                    _windowService.ActivateMainWindow();
-                    }
-                if (success)
-                    {
-                    Log("成功将所有翻译应用到CAD图纸！");
-                    }
-                else
-                    {
-                    Log("[错误] 应用到CAD失败，请检查CAD命令行获取详细信息。");
-                    }
-                }
+            Log("准备将翻译应用到CAD...");
+
+            // 2. 【核心修改】将数据存放到静态桥梁中
+            CadBridgeService.TextBlocksToLayout = new ObservableCollection<TextBlockViewModel>(TextBlockList);
+
+            // 3. 【核心修改】隐藏WPF窗口，而不是最小化
+            _windowService.MinimizeMainWindow();
+
+            // 4. 等待一小段时间，确保WPF窗口完成隐藏动画，让CAD窗口能平滑地获得焦点
+            //await Task.Delay(200);
+
+            // 5. 【核心修改】通过桥梁服务，要求AutoCAD执行内部命令
+            CadBridgeService.SendCommandToAutoCAD("WZPB_APPLY\n"); // WZPB_APPLY 是我们的新内部命令
+
+            // 注意：这里不再有 try-catch 和 finally，也不再有重新激活窗口的逻辑。
+            // 因为从现在起，控制权已经完全交给AutoCAD了。
             }
         #endregion
 
@@ -990,7 +956,6 @@ namespace CADTranslator.ViewModels
 
         private void HandleApiException(ApiException apiEx, TextBlockViewModel failedItem)
             {
-            // 准备一个用户友好的错误消息前缀
             string errorPrefix = apiEx.ErrorType switch
                 {
                     ApiErrorType.NetworkError => "[网络错误]",
@@ -1000,9 +965,9 @@ namespace CADTranslator.ViewModels
                     _ => "[未知错误]"
                     };
 
-            // 在译文栏中显示带前缀的用户友好消息
             if (failedItem != null)
                 {
+                // 在译文栏中显示最终的错误信息
                 failedItem.TranslatedText = $"{errorPrefix} {apiEx.Message}";
                 // 将失败项加入重试列表
                 lock (_failedItems) { _failedItems.Add(failedItem); }
@@ -1010,10 +975,65 @@ namespace CADTranslator.ViewModels
                 _windowService.InvokeOnUIThread(() => RetranslateFailedCommand.RaiseCanExecuteChanged());
                 }
 
-            // 在状态栏和CAD命令行中记录包含技术细节的完整日志
             Log($"[{apiEx.Provider}] {errorPrefix} {apiEx.Message} (Status: {apiEx.StatusCode}, Code: {apiEx.ApiErrorCode})", isError: true);
             }
 
+        #endregion
+
+        #region --- 状态与高亮辅助方法 ---
+
+        /// <summary>
+        /// 【新增】统一设置某个数据项的翻译状态和对应的背景色。
+        /// </summary>
+        private void SetItemStatus(TextBlockViewModel item, TranslationStatus status)
+            {
+            item.Status = status;
+            switch (status)
+                {
+                case TranslationStatus.Translating:
+                    item.RowBackground = _translatingBrush;
+                    break;
+                case TranslationStatus.Success:
+                    item.RowBackground = _successBrush;
+                    break;
+                case TranslationStatus.Failed:
+                    item.RowBackground = _failedBrush;
+                    break;
+                case TranslationStatus.Idle:
+                default:
+                    item.RowBackground = _defaultBrush;
+                    break;
+                }
+            }
+
+        /// <summary>
+        /// 【新增】清除表格中所有行的背景高亮。
+        /// </summary>
+        private void ClearAllRowHighlights()
+            {
+            foreach (var item in TextBlockList)
+                {
+                SetItemStatus(item, TranslationStatus.Idle);
+                }
+            }
+        private (bool Success, int Index, int Length, bool IsQuoted) FindLegendPosMatch(string text)
+            {
+            var regex = new System.Text.RegularExpressions.Regex(@"[\W_]*LEGEND[\W_]*POS[\W_\d]*", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var match = regex.Match(text);
+
+            if (!match.Success)
+                {
+                return (false, 0, 0, false);
+                }
+
+            // 获取匹配到的完整字符串
+            string matchedValue = match.Value;
+
+            // 判断匹配到的内容是否以 " 开头并且以 " 结尾
+            bool isQuoted = matchedValue.Trim().StartsWith("\"") && matchedValue.Trim().EndsWith("\"");
+
+            return (true, match.Index, match.Length, isQuoted);
+            }
         #endregion
 
         #region --- 表格操作与属性变更 ---

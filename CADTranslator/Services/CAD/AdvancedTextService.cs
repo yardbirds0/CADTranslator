@@ -17,7 +17,8 @@ namespace CADTranslator.Services.CAD
     /// </summary>
     public class AdvancedTextService : IAdvancedTextService
         {
-        public const string LegendPlaceholder = "__LEGEND_POS__"; 
+        public const string LegendPlaceholder = "__LEGEND_POS__";
+        public const string JigPlaceholder = "*图例位置*";
         private readonly Database _db;
         private readonly Editor _editor;
 
@@ -42,6 +43,7 @@ namespace CADTranslator.Services.CAD
                     // 2. 分类实体
                     var (textEntities, graphicEntities) = ClassifyEntities(selSet, tr);
                     if (textEntities.Count == 0) return paragraphInfos;
+                    var availableGraphics = new List<Entity>(graphicEntities);
 
                     // 3. 合并文本 (核心修改：传入相似度阈值)
                     List<TextBlock> rawTextBlocks = MergeRawText(textEntities, similarityThreshold);
@@ -95,10 +97,17 @@ namespace CADTranslator.Services.CAD
                             paraInfo.OriginalAnchorPoint = GetTextEndPoint(textBeforeSpaces, paraInfo, tr);
 
                             // c. 关联图形并创建块
-                            var (associatedGraphics, _) = FindAssociatedGraphics(block.SourceObjectIds, graphicEntities, tr);
+                            var (associatedGraphics, _) = FindAssociatedGraphics(block.SourceObjectIds, availableGraphics, tr); // <-- 注意：这里要用 availableGraphics
                             if (associatedGraphics.Any())
                                 {
                                 paraInfo.AssociatedGraphicsBlockId = CreateAnonymousBlockForGraphics(associatedGraphics, paraInfo.OriginalAnchorPoint, tr, bt);
+
+                                // ▼▼▼ 在这里添加新代码 ▼▼▼
+                                // 【核心修正】将“已用”的图形从“素材库”中移除
+                                foreach (var usedGraphic in associatedGraphics)
+                                    {
+                                    availableGraphics.Remove(usedGraphic);
+                                    }
                                 }
 
                             // d.【核心】执行“占位符注入”，生成用于翻译的文本

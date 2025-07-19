@@ -112,5 +112,23 @@ namespace CADTranslator.Services.UI
             // 使用owner窗口的Dispatcher来执行操作
             _owner?.Dispatcher.Invoke(action);
             }
+        public void ScrollToGridItem(object item)
+            {
+            // 安全地在UI线程上执行
+            _owner?.Dispatcher.Invoke(() =>
+            {
+                // 检查item是否为空，以及owner是否是我们预期的TranslatorWindow
+                if (item != null && _owner is TranslatorWindow ownerWindow)
+                    {
+                    // 直接访问在XAML中命名的DataGrid控件
+                    var dataGrid = ownerWindow.dataGridBlocks;
+                    if (dataGrid != null)
+                        {
+                        // 调用WPF DataGrid内置的滚动方法
+                        dataGrid.ScrollIntoView(item);
+                        }
+                    }
+            });
+            }
         }
     }

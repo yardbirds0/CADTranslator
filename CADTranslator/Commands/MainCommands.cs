@@ -239,5 +239,90 @@ namespace CADTranslator.AutoCAD.Commands
                 }
             }
 
+
+        [CommandMethod("WZPB_APPLY")]
+        public void ApplyTranslationLayoutCommand()
+            {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var editor = doc.Editor;
+
+            // 1. 从静态桥梁中获取ViewModel传递过来的数据
+            var textBlockList = CadBridgeService.TextBlocksToLayout;
+
+            if (textBlockList == null || !textBlockList.Any())
+                {
+                // 如果没有数据，可能是异常情况，直接返回
+                // 并且重新显示WPF窗口，让用户可以继续操作
+                if (translatorWindow != null)
+                    {
+                    translatorWindow.Show();
+                    translatorWindow.Activate();
+                    }
+                return;
+                }
+
+            // 2. 加载设置
+            var settingsService = new SettingsService();
+            var currentSettings = settingsService.LoadSettings();
+            bool isLiveLayout = currentSettings.IsLiveLayoutEnabled;
+            string lineSpacing = currentSettings.LastSelectedLineSpacing;
+
+            bool success = false;
+            try
+                {
+                // 3. 计算需要删除的原始实体ID列表
+                var idsToDelete = textBlockList
+                    .Where(item => !string.IsNullOrWhiteSpace(item.TranslatedText) && !item.TranslatedText.StartsWith("["))
+                    .SelectMany(item => item.SourceObjectIds)
+                    .Distinct()
+                    .ToList();
+
+                // 4. 创建布局服务实例并执行
+                var layoutService = new CadLayoutService(doc);
+
+                if (isLiveLayout)
+                    {
+                    editor.WriteMessage("\n“实时排版”已启用，将执行智能布局...");
+                    success = layoutService.ApplySmartLayoutToCad(textBlockList, idsToDelete, lineSpacing);
+                    }
+                else
+                    {
+                    editor.WriteMessage("\n“实时排版”已关闭，将使用基本布局...");
+                    success = layoutService.ApplyTranslationToCad(textBlockList, idsToDelete);
+                    }
+                }
+            catch (System.Exception ex)
+                {
+                editor.WriteMessage($"\n[错误] 应用到CAD时发生意外异常: {ex.Message}");
+                success = false;
+                }
+            finally
+                {
+                // 5. 【核心修改】根据操作结果决定是否重新显示WPF窗口
+                if (translatorWindow != null)
+                    {
+                    // 只有在操作失败时，才重新显示窗口，以便用户看到错误并进行下一步操作
+                    if (!success)
+                        {
+                        translatorWindow.Show();
+                        translatorWindow.Activate();
+                        }
+                    }
+
+                if (success)
+                    {
+                    editor.WriteMessage("\n成功将所有翻译应用到CAD图纸！现在可以查看效果。");
+                    }
+                else
+                    {
+                    editor.WriteMessage("\n[错误] 应用到CAD失败，请检查CAD命令行获取详细信息。");
+                    }
+
+                // 6. 清理静态变量，避免内存泄漏
+                CadBridgeService.TextBlocksToLayout = null;
+                }
+            }
+
         }
     }
