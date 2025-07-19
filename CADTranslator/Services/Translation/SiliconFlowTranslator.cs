@@ -2,6 +2,7 @@
 // 【完整文件替换】
 
 using CADTranslator.Models;
+using CADTranslator.Models.API;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
@@ -13,7 +14,7 @@ using System.Text;
 using System.Threading; // ◄◄◄ 【新增】引入 CancellationToken
 using System.Threading.Tasks;
 
-namespace CADTranslator.Services
+namespace CADTranslator.Services.Translation
     {
     public class SiliconFlowTranslator : ITranslator
         {

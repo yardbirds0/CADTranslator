@@ -1,11 +1,12 @@
 ﻿// 文件路径: CADTranslator/Services/Translation/ITranslator.cs
 
 using CADTranslator.Models;
+using CADTranslator.Models.API;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace CADTranslator.Services
+namespace CADTranslator.Services.Translation
     {
     /// <summary>
     /// 定义了所有翻译服务提供商的统一规范。

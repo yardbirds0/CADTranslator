@@ -1,28 +1,26 @@
 ﻿// 文件路径: CADTranslator/Services/Translation/GeminiTranslator.cs
-// 【完整文件替换】
+// 【请使用此版本替换】
 
 using CADTranslator.Models;
+using CADTranslator.Models.API;
 using Mscc.GenerativeAI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading; // ◄◄◄ 【新增】引入 CancellationToken
+using System.Threading;
 using System.Threading.Tasks;
 
-namespace CADTranslator.Services
+namespace CADTranslator.Services.Translation
     {
     public class GeminiTranslator : ITranslator
         {
         #region --- 字段 ---
-
         private readonly Lazy<IGenerativeAI> _lazyGoogleAI;
         private readonly string _model;
         private readonly string _apiKey;
-
         #endregion
 
         #region --- 构造函数 ---
-
         public GeminiTranslator(string apiKey, string model)
             {
             if (string.IsNullOrWhiteSpace(apiKey))
@@ -30,22 +28,14 @@ namespace CADTranslator.Services
 
             _apiKey = apiKey;
             _model = model;
-
             _lazyGoogleAI = new Lazy<IGenerativeAI>(() => new GoogleAI(apiKey: _apiKey));
             }
-
         #endregion
 
-        #region --- 1. 身份标识 (ITranslator 实现) ---
-
+        #region --- 身份与能力 (ITranslator 实现) ---
         public ApiServiceType ServiceType => ApiServiceType.Gemini;
         public string DisplayName => "谷歌Gemini";
         public string ApiDocumentationUrl => "https://ai.google.dev/docs";
-
-        #endregion
-
-        #region --- 2. 能力声明 (ITranslator 实现) ---
-
         public bool IsApiKeyRequired => true;
         public bool IsUserIdRequired => false;
         public bool IsApiUrlRequired => false;
@@ -53,12 +43,11 @@ namespace CADTranslator.Services
         public bool IsPromptSupported => true;
         public bool IsModelFetchingSupported => true;
         public bool IsBalanceCheckSupported => false;
-
         #endregion
 
-        #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
+        #region --- 核心与扩展功能 (ITranslator 实现) ---
 
-        // ▼▼▼ 【方法重写】重写整个 TranslateAsync 方法以支持 CancellationToken ▼▼▼
+        // ▼▼▼ 请用此方法完整替换旧的 TranslateAsync 方法 ▼▼▼
         public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
@@ -72,38 +61,51 @@ namespace CADTranslator.Services
                 var generativeModel = _lazyGoogleAI.Value.GenerativeModel(model: _model);
                 string prompt = $"You are a professional translator for Civil Engineering drawings. Your task is to translate the user's text from {fromLanguage} to {toLanguage}. Do not add any extra explanations, just return the translated text. If you encounter symbols, keep their original style.\n\nText to translate:\n---\n{textToTranslate}\n---";
 
-                var response = await generativeModel.GenerateContent(prompt);
+                // 【核心修改】创建一个代表网络请求的任务
+                var translationTask = generativeModel.GenerateContent(prompt);
+
+                // 【核心修改】创建一个20秒的超时任务
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(20), cancellationToken);
+
+                // 【核心修改】让网络任务和超时任务进行“赛跑”
+                var completedTask = await Task.WhenAny(translationTask, timeoutTask);
+
+                if (completedTask == timeoutTask)
+                    {
+                    // 如果是超时任务先完成，就抛出网络错误异常
+                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求超时 (超过20秒)。");
+                    }
+
+                // 如果是网络任务先完成，就获取它的结果
+                var response = await translationTask;
 
                 if (response?.Text == null)
                     {
                     throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API返回了空或无效的响应内容。");
                     }
-
                 return response.Text.Trim();
                 }
-            // ◄◄◄ 【新增】捕获 TaskCanceledException
-            catch (TaskCanceledException)
+            // 捕获由我们主动熔断（cancellationToken）引发的取消
+            catch (OperationCanceledException)
                 {
-                // 如果能捕获到这个异常（例如，如果未来的库版本支持取消），我们重新抛出它
                 throw;
                 }
+            // 捕获所有其他异常并进行分类
             catch (Exception ex)
                 {
-                // 检查是否是因为取消令牌被触发而导致的通用异常
+                // 如果在捕获通用异常时，发现取消信号已经被触发了，那么也按“取消”处理
                 if (cancellationToken.IsCancellationRequested)
                     {
-                    // 如果是，则抛出标准的取消异常
-                    throw new TaskCanceledException();
+                    throw new OperationCanceledException();
                     }
 
-                // 否则，将其视为普通的API错误
-                // Gemini库的网络错误和API业务错误通常都封装在Exception的Message中
-                // 我们可以通过检查消息内容来粗略判断是否为网络问题
+                // 通过检查异常消息来判断是否为网络问题
                 if (ex.Message.Contains("Request timed out") || ex.Message.Contains("NameResolutionFailure"))
                     {
                     throw new ApiException(ApiErrorType.NetworkError, ServiceType, $"网络请求失败: {ex.Message}");
                     }
 
+                // 其他所有情况，都视为API接口错误
                 throw new ApiException(ApiErrorType.ApiError, ServiceType, ex.Message);
                 }
             }
@@ -114,12 +116,7 @@ namespace CADTranslator.Services
                 {
                 var generativeModel = _lazyGoogleAI.Value.GenerativeModel();
                 var models = await generativeModel.ListModels();
-
-                if (models == null || !models.Any())
-                    {
-                    return new List<string>();
-                    }
-
+                if (models == null || !models.Any()) return new List<string>();
                 return models
                        .Where(m => m.SupportedGenerationMethods.Contains("generateContent"))
                        .Select(m => m.Name.Replace("models/", ""))
@@ -134,12 +131,10 @@ namespace CADTranslator.Services
                 throw new ApiException(ApiErrorType.ApiError, ServiceType, $"获取模型列表时发生错误: {ex.Message}");
                 }
             }
-
         public Task<List<KeyValuePair<string, string>>> CheckBalanceAsync()
             {
             throw new NotSupportedException("Gemini API 服务不支持在线查询余额。");
             }
-
         #endregion
         }
     }

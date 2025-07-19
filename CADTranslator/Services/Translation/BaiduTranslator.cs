@@ -2,6 +2,7 @@
 // 【完整文件替换】
 
 using CADTranslator.Models;
+using CADTranslator.Models.API;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
@@ -12,7 +13,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace CADTranslator.Services
+namespace CADTranslator.Services.Translation
     {
     public class BaiduTranslator : ITranslator
         {

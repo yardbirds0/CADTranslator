@@ -193,17 +193,17 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="AutoCAD\Helpers\GeometryHelper.cs" />
-    <Compile Include="AutoCAD\Jigs\BreakLineJig.cs" />
-    <Compile Include="AutoCAD\Commands\MainCommands.cs" />
-    <Compile Include="Models\ApiDefinition.cs" />
-    <Compile Include="Models\ApiException.cs" />
-    <Compile Include="Models\ApiProfile.cs" />
-    <Compile Include="Models\ApiServiceDisplay.cs" />
-    <Compile Include="Models\ApiUsageStats.cs" />
-    <Compile Include="Models\BalanceRecord.cs" />
-    <Compile Include="Models\LanguageItem.cs" />
-    <Compile Include="Models\UnderlineOptions.cs" />
+    <Compile Include="Tools\CAD\GeometryHelper.cs" />
+    <Compile Include="Tools\CAD\Jigs\BreakLineJig.cs" />
+    <Compile Include="Commands\MainCommands.cs" />
+    <Compile Include="Models\API\ApiDefinition.cs" />
+    <Compile Include="Models\API\ApiException.cs" />
+    <Compile Include="Models\API\ApiProfile.cs" />
+    <Compile Include="Models\API\ApiServiceDisplay.cs" />
+    <Compile Include="Models\API\ApiUsageStats.cs" />
+    <Compile Include="Models\API\BalanceRecord.cs" />
+    <Compile Include="Models\UI\LanguageItem.cs" />
+    <Compile Include="Models\CAD\UnderlineOptions.cs" />
     <Compile Include="Nullable\AllowNullAttribute.cs" />
     <Compile Include="Nullable\DisallowNullAttribute.cs" />
     <Compile Include="Nullable\DoesNotReturnAttribute.cs" />
@@ -215,77 +215,55 @@
     <Compile Include="Nullable\NotNullAttribute.cs" />
     <Compile Include="Nullable\NotNullIfNotNullAttribute.cs" />
     <Compile Include="Nullable\NotNullWhenAttribute.cs" />
-    <Compile Include="Services\AdvancedTextService.cs" />
-    <Compile Include="Services\ApiRegistry.cs" />
-    <Compile Include="Services\CadBridgeService.cs" />
-    <Compile Include="Services\CadLayoutService.cs" />
-    <Compile Include="Services\CadTextService.cs" />
-    <Compile Include="Services\IAdvancedTextService.cs" />
-    <Compile Include="Services\ICadLayoutService.cs" />
-    <Compile Include="Services\ISettingsService.cs" />
-    <Compile Include="Services\IWindowService.cs" />
-    <Compile Include="Services\SettingsService.cs" />
-    <Compile Include="Services\TextLayoutService.cs" />
+    <Compile Include="Services\CAD\AdvancedTextService.cs" />
+    <Compile Include="Services\Translation\ApiRegistry.cs" />
+    <Compile Include="Services\CAD\CadBridgeService.cs" />
+    <Compile Include="Services\CAD\CadLayoutService.cs" />
+    <Compile Include="Services\CAD\CadTextService.cs" />
+    <Compile Include="Services\CAD\IAdvancedTextService.cs" />
+    <Compile Include="Services\CAD\ICadLayoutService.cs" />
+    <Compile Include="Services\Settings\ISettingsService.cs" />
+    <Compile Include="Services\UI\IWindowService.cs" />
+    <Compile Include="Services\Settings\SettingsService.cs" />
+    <Compile Include="Services\CAD\TextLayoutService.cs" />
     <Compile Include="Services\Translation\SiliconFlowTranslator.cs" />
     <Compile Include="Services\Translation\CustomTranslator.cs" />
     <Compile Include="Services\Translation\GeminiTranslator.cs" />
     <Compile Include="Services\Translation\OpenAiTranslator.cs" />
-    <Compile Include="Services\UnderlineService.cs" />
-    <Compile Include="Services\WindowService.cs" />
-    <Compile Include="UI\Helpers\InverseBooleanConverter.cs" />
-    <Compile Include="UI\Helpers\PasswordBoxHelper.cs" />
-    <Compile Include="UI\ViewModels\ApiDefinitionViewModel.cs" />
-    <Compile Include="UI\ViewModels\BalanceHistoryViewModel.cs" />
-    <Compile Include="UI\ViewModels\ModelManagementViewModel.cs" />
-    <Compile Include="UI\ViewModels\ModelViewModel.cs" />
-    <Compile Include="UI\ViewModels\RelayCommand.cs" />
-    <Compile Include="UI\ViewModels\TranslatorViewModel.cs" />
-    <Compile Include="UI\Views\ApiDefinitionWindow.xaml.cs">
-      <DependentUpon>ApiDefinitionWindow.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="UI\Views\BalanceHistoryWindow.xaml.cs">
-      <DependentUpon>BalanceHistoryWindow.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="UI\Views\EditWindow.xaml.cs">
-      <DependentUpon>EditWindow.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Models\ParagraphInfo.cs" />
-    <Compile Include="Models\TextBlock.cs" />
-    <Compile Include="Models\TextEntityInfo.cs" />
+    <Compile Include="Services\CAD\UnderlineService.cs" />
+    <Compile Include="Services\UI\WindowService.cs" />
+    <Compile Include="Tools\UI\InverseBooleanConverter.cs" />
+    <Compile Include="Tools\UI\PasswordBoxHelper.cs" />
+    <Compile Include="ViewModels\ApiDefinitionViewModel.cs" />
+    <Compile Include="ViewModels\BalanceHistoryViewModel.cs" />
+    <Compile Include="ViewModels\ModelManagementViewModel.cs" />
+    <Compile Include="ViewModels\ModelViewModel.cs" />
+    <Compile Include="ViewModels\RelayCommand.cs" />
+    <Compile Include="ViewModels\TranslatorViewModel.cs" />
+    <Compile Include="Models\CAD\ParagraphInfo.cs" />
+    <Compile Include="Models\CAD\TextBlock.cs" />
+    <Compile Include="Models\CAD\TextEntityInfo.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Services\Translation\BaiduTranslator.cs" />
     <Compile Include="Services\Translation\ITranslator.cs" />
-    <Compile Include="AutoCAD\Jigs\SmartLayoutJig.cs" />
-    <Compile Include="UI\ViewModels\TextBlockViewModel.cs" />
-    <Compile Include="Common\TextFormatter.cs" />
-    <Compile Include="UI\Views\ModelManagementWindow.xaml.cs">
+    <Compile Include="Tools\CAD\Jigs\SmartLayoutJig.cs" />
+    <Compile Include="ViewModels\TextBlockViewModel.cs" />
+    <Compile Include="Tools\CAD\TextFormatter.cs" />
+    <Compile Include="Views\ApiDefinitionWindow.xaml.cs">
+      <DependentUpon>ApiDefinitionWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\BalanceHistoryWindow.xaml.cs">
+      <DependentUpon>BalanceHistoryWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\EditWindow.xaml.cs">
+      <DependentUpon>EditWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\ModelManagementWindow.xaml.cs">
       <DependentUpon>ModelManagementWindow.xaml</DependentUpon>
     </Compile>
-    <Compile Include="UI\Views\TranslatorWindow.xaml.cs">
+    <Compile Include="Views\TranslatorWindow.xaml.cs">
       <DependentUpon>TranslatorWindow.xaml</DependentUpon>
     </Compile>
-  </ItemGroup>
-  <ItemGroup>
-    <Page Include="UI\Views\ApiDefinitionWindow.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="UI\Views\BalanceHistoryWindow.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="UI\Views\EditWindow.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="UI\Views\ModelManagementWindow.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="UI\Views\TranslatorWindow.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
@@ -295,6 +273,28 @@
     <Analyzer Include="E:\Softwares\Work\AutoCad2020\AutoCAD 2020\accoremgd.dll" />
     <Analyzer Include="E:\Softwares\Work\AutoCad2020\AutoCAD 2020\acdbmgd.dll" />
     <Analyzer Include="E:\Softwares\Work\AutoCad2020\AutoCAD 2020\acmgd.dll" />
+  </ItemGroup>
+  <ItemGroup>
+    <Page Include="Views\ApiDefinitionWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>XamlIntelliSenseFileGenerator</Generator>
+    </Page>
+    <Page Include="Views\BalanceHistoryWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>XamlIntelliSenseFileGenerator</Generator>
+    </Page>
+    <Page Include="Views\EditWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>XamlIntelliSenseFileGenerator</Generator>
+    </Page>
+    <Page Include="Views\ModelManagementWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>XamlIntelliSenseFileGenerator</Generator>
+    </Page>
+    <Page Include="Views\TranslatorWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>XamlIntelliSenseFileGenerator</Generator>
+    </Page>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">

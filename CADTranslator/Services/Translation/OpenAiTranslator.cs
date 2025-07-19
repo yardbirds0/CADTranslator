@@ -2,6 +2,7 @@
 // 【完整文件替换】
 
 using CADTranslator.Models;
+using CADTranslator.Models.API;
 using OpenAI.Chat;
 using System;
 using System.Collections.Generic;
@@ -9,7 +10,7 @@ using System.Linq;
 using System.Threading; // ◄◄◄ 【新增】引入 CancellationToken
 using System.Threading.Tasks;
 
-namespace CADTranslator.Services
+namespace CADTranslator.Services.Translation
     {
     public class OpenAiTranslator : ITranslator
         {
@@ -59,6 +60,7 @@ namespace CADTranslator.Services
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
 
         // ▼▼▼ 【方法重写】重写整个 TranslateAsync 方法以支持 CancellationToken ▼▼▼
+        // ▼▼▼ 请用此方法完整替换旧的 TranslateAsync 方法 ▼▼▼
         public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
@@ -75,8 +77,23 @@ namespace CADTranslator.Services
                     new UserChatMessage(textToTranslate)
                 };
 
-                // ▼▼▼ 【核心修改】将 cancellationToken 传递给 CompleteChatAsync 方法 ▼▼▼
-                ChatCompletion completion = await _lazyClient.Value.CompleteChatAsync(messages, cancellationToken: cancellationToken);
+                // 【核心修改】创建一个代表网络请求的任务
+                var translationTask = _lazyClient.Value.CompleteChatAsync(messages, cancellationToken: cancellationToken);
+
+                // 【核心修改】创建一个20秒的超时任务
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(20), cancellationToken);
+
+                // 【核心修改】让网络任务和超时任务进行“赛跑”
+                var completedTask = await Task.WhenAny(translationTask, timeoutTask);
+
+                if (completedTask == timeoutTask)
+                    {
+                    // 如果是超时任务先完成，就抛出网络错误异常
+                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求超时 (超过20秒)。");
+                    }
+
+                // 如果是网络任务先完成，就获取它的结果
+                ChatCompletion completion = await translationTask;
 
                 if (completion.Content != null && completion.Content.Any())
                     {
@@ -85,32 +102,23 @@ namespace CADTranslator.Services
 
                 throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API未返回任何内容。完成原因: {completion.FinishReason}");
                 }
-            // ◄◄◄ 【新增】专门捕获由 CancellationToken 引发的 OperationCanceledException
+            // 捕获由我们主动熔断（cancellationToken）引发的取消
             catch (OperationCanceledException)
                 {
-                // 当任务被取消时，库会抛出此异常，我们直接重新抛出
                 throw;
                 }
             catch (Exception ex)
                 {
-                // 检查是否是因为取消令牌被触发而导致的通用异常
+                // 如果在捕获通用异常时，发现取消信号已经被触发了，那么也按“取消”处理
                 if (cancellationToken.IsCancellationRequested)
                     {
-                    // 如果是，则抛出标准的取消异常
                     throw new OperationCanceledException();
                     }
 
-                // 通过检查异常消息来粗略判断是否为网络问题
-                if (ex.Message.Contains("timed out") || ex.Message.Contains("Error while copying content to a stream"))
-                    {
-                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, $"网络请求失败: {ex.Message}");
-                    }
-
-                // 否则，将其视为普通的API错误
+                // 其他所有情况，都视为API接口错误
                 throw new ApiException(ApiErrorType.ApiError, ServiceType, ex.Message);
                 }
             }
-
         public Task<List<string>> GetModelsAsync()
             {
             throw new NotSupportedException("当前OpenAI集成不支持在线获取模型列表。请在模型管理中手动添加。");
