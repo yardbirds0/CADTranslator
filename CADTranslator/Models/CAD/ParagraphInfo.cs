@@ -21,5 +21,7 @@ namespace CADTranslator.Models.CAD
         public bool ContainsSpecialPattern { get; set; } = false;
         public int OriginalSpaceCount { get; set; } = 0;
         public List<ObjectId> SourceObjectIds { get; set; } = new List<ObjectId>();
+        public bool IsTitle { get; set; } = false;
+        public string GroupKey { get; set; } = null;
         }
 }

@@ -27,20 +27,15 @@ namespace CADTranslator.Services.CAD
             _editor = doc.Editor;
             }
 
-        public List<ParagraphInfo> ExtractAndProcessParagraphs(SelectionSet selSet, out List<ObjectId> allSourceIds)
+        public List<ParagraphInfo> ExtractAndProcessParagraphs(SelectionSet selSet, double similarityThreshold)
             {
             var paragraphInfos = new List<ParagraphInfo>();
-            allSourceIds = new List<ObjectId>();
 
             // 因为外部已经加锁，所以我们可以安全地开启一个包含读写的事务
             using (Transaction tr = _db.TransactionManager.StartTransaction())
                 {
                 try
                     {
-                    foreach (SelectedObject selObj in selSet)
-                        {
-                        allSourceIds.Add(selObj.ObjectId);
-                        }
                     // 1. 在事务开始时就用写模式打开块表，获得最高权限
                     BlockTable bt = (BlockTable)tr.GetObject(_db.BlockTableId, OpenMode.ForWrite);
 
@@ -48,8 +43,8 @@ namespace CADTranslator.Services.CAD
                     var (textEntities, graphicEntities) = ClassifyEntities(selSet, tr);
                     if (textEntities.Count == 0) return paragraphInfos;
 
-                    // 3. 合并文本
-                    List<TextBlock> rawTextBlocks = MergeRawText(textEntities);
+                    // 3. 合并文本 (核心修改：传入相似度阈值)
+                    List<TextBlock> rawTextBlocks = MergeRawText(textEntities, similarityThreshold);
 
                     // 4. 处理段落、图例，并执行“占位符注入”
                     string specialPattern = @"\s{3,}";
@@ -58,6 +53,8 @@ namespace CADTranslator.Services.CAD
                         {
                         var paraInfo = new ParagraphInfo();
                         paraInfo.OriginalText = block.OriginalText; // 始终保存一份未经修改的原文
+                        paraInfo.IsTitle = block.IsTitle;
+                        paraInfo.GroupKey = block.GroupKey;
 
                         var firstId = block.SourceObjectIds.FirstOrDefault(id => !id.IsNull && !id.IsErased);
                         if (firstId.IsNull) continue;
@@ -120,7 +117,6 @@ namespace CADTranslator.Services.CAD
                         }
 
                     tr.Commit();
-                    // ▲▲▲ 请替换到这里结束 ▲▲▲
                     }
                 catch (System.Exception ex)
                     {
@@ -261,6 +257,39 @@ namespace CADTranslator.Services.CAD
             return blockId;
             }
 
+        private static double CalculateSimilarity(string s1, string s2)
+            {
+            if (string.IsNullOrEmpty(s1) || string.IsNullOrEmpty(s2)) return 0.0;
+
+            var maxLength = Math.Max(s1.Length, s2.Length);
+            if (maxLength == 0) return 1.0;
+
+            var d = new int[s1.Length + 1, s2.Length + 1];
+
+            for (int i = 0; i <= s1.Length; i++)
+                {
+                d[i, 0] = i;
+                }
+
+            for (int j = 0; j <= s2.Length; j++)
+                {
+                d[0, j] = j;
+                }
+
+            for (int i = 1; i <= s1.Length; i++)
+                {
+                for (int j = 1; j <= s2.Length; j++)
+                    {
+                    int cost = (s2[j - 1] == s1[i - 1]) ? 0 : 1;
+                    d[i, j] = Math.Min(
+                        Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1),
+                        d[i - 1, j - 1] + cost);
+                    }
+                }
+
+            return 1.0 - ((double)d[s1.Length, s2.Length] / maxLength);
+            }
+
         // 其他不涉及写操作的辅助方法保持原样
         private (List<TextEntityInfo> textEntities, List<Entity> graphicEntities) ClassifyEntities(SelectionSet selSet, Transaction tr)
             {
@@ -277,46 +306,78 @@ namespace CADTranslator.Services.CAD
             return (textEntities, graphicEntities);
             }
 
-        private List<TextBlock> MergeRawText(List<TextEntityInfo> textEntities)
+        private List<TextBlock> MergeRawText(List<TextEntityInfo> textEntities, double similarityThreshold)
             {
             var sortedEntities = textEntities.OrderBy(e => -e.Position.Y).ThenBy(e => e.Position.X).ToList();
             var textBlocks = new List<TextBlock>();
             if (sortedEntities.Count == 0) return textBlocks;
 
-            var currentBlock = new TextBlock { Id = 1, OriginalText = sortedEntities[0].Text, SourceObjectIds = { sortedEntities[0].ObjectId } };
-            textBlocks.Add(currentBlock);
+            var titleMarkers = new Regex(@"(说明|注意|技术要求|参数|示例|NOTES|SPECIFICATION|LEGEND)[\s:：]*$|:$", RegexOptions.IgnoreCase);
+            var paragraphMarkers = new Regex(@"^\s*(?:[<(（【〔](?:\d+|[a-zA-Z])[>)）】〕]|\d+[、.]|[\u25A0\u25CF\u25B2\u25B6]|[a-zA-Z][、.])");
 
-            var paragraphMarkers = new Regex(@"^\s*(?:\d+[、\.]|\(\d+\)\.?)");
-            // ▼▼▼ 【核心修复】我们不再需要这个基于句号的判断规则了 ▼▼▼
-            // var endOfParagraphMarkers = new Regex(@"[：:。]\s*$");
+            var firstEntity = sortedEntities.First();
+            var firstBlock = new TextBlock { Id = 1, OriginalText = firstEntity.Text.Trim(), SourceObjectIds = { firstEntity.ObjectId } };
+            if (titleMarkers.IsMatch(firstBlock.OriginalText))
+                {
+                firstBlock.IsTitle = true;
+                }
+            textBlocks.Add(firstBlock);
+
+            string currentGroupKey = null;
 
             for (int i = 1; i < sortedEntities.Count; i++)
                 {
-                var prev = sortedEntities[i - 1];
-                var curr = sortedEntities[i];
+                var prevEntity = sortedEntities[i - 1];
+                var currEntity = sortedEntities[i];
+                string currentText = currEntity.Text.Trim();
+                if (string.IsNullOrEmpty(currentText)) continue;
 
-                bool isTooFar = (prev.Position.Y - curr.Position.Y) > (prev.Height * 3.5);
-                bool startsNewParagraph = paragraphMarkers.IsMatch(curr.Text);
-                // ▼▼▼ 【核心修复】彻底移除 prevBlockEnds 这个错误的判断条件 ▼▼▼
-                // bool prevBlockEnds = endOfParagraphMarkers.IsMatch(currentBlock.OriginalText);
+                var lastBlock = textBlocks.Last();
 
-                if (startsNewParagraph || isTooFar) // 只根据距离和新段落标记来判断
+                // 规则1: 物理距离过远 -> 强制分割
+                bool isTooFar = (prevEntity.Position.Y - currEntity.Position.Y) > (prevEntity.Height * 2.0);
+                if (isTooFar)
                     {
-                    currentBlock = new TextBlock { Id = textBlocks.Count + 1, OriginalText = curr.Text, SourceObjectIds = { curr.ObjectId } };
-                    textBlocks.Add(currentBlock);
+                    textBlocks.Add(new TextBlock { Id = textBlocks.Count + 1, OriginalText = currentText, SourceObjectIds = { currEntity.ObjectId } });
+                    currentGroupKey = null;
+                    continue;
+                    }
+
+                // 规则2: 显式序号开头 -> 强制分割
+                bool startsNewParagraph = paragraphMarkers.IsMatch(currentText);
+                if (startsNewParagraph)
+                    {
+                    textBlocks.Add(new TextBlock { Id = textBlocks.Count + 1, OriginalText = currentText, SourceObjectIds = { currEntity.ObjectId } });
+                    currentGroupKey = null;
+                    continue;
+                    }
+
+                // 规则3: 【核心逻辑重构】 智能判断 -> 分组或合并
+                double similarity = CalculateSimilarity(lastBlock.OriginalText, currentText);
+                if (similarity > similarityThreshold)
+                    {
+                    // 相似度高 -> 认为是并列项，进行分割和分组
+                    if (currentGroupKey == null)
+                        {
+                        currentGroupKey = Guid.NewGuid().ToString();
+                        lastBlock.GroupKey = currentGroupKey;
+                        }
+                    var newGroupedBlock = new TextBlock { Id = textBlocks.Count + 1, OriginalText = currentText, SourceObjectIds = { currEntity.ObjectId }, GroupKey = currentGroupKey };
+                    textBlocks.Add(newGroupedBlock);
                     }
                 else
                     {
-                    bool onSameLine = Math.Abs(prev.Position.Y - curr.Position.Y) < (prev.Height * 0.5);
+                    // 相似度低 -> 认为是普通换行，进行合并
+                    currentGroupKey = null;
+                    bool onSameLine = Math.Abs(prevEntity.Position.Y - currEntity.Position.Y) < (prevEntity.Height * 0.5);
                     string separator = onSameLine ? " " : "\n";
-
-                    currentBlock.OriginalText += separator + curr.Text;
-                    currentBlock.SourceObjectIds.Add(curr.ObjectId);
+                    lastBlock.OriginalText += separator + currentText;
+                    lastBlock.SourceObjectIds.Add(currEntity.ObjectId);
                     }
                 }
+
             return textBlocks;
             }
-
         private (List<Entity> associatedGraphics, Extents3d paragraphBounds) FindAssociatedGraphics(List<ObjectId> textObjectIds, List<Entity> allGraphics, Transaction tr)
             {
             var pBounds = new Extents3d(Point3d.Origin, Point3d.Origin);

@@ -34,6 +34,7 @@ namespace CADTranslator.Services.Settings
         public bool IsMultiThreadingEnabled { get; set; } = false;
         public List<string> ConcurrencyPresets { get; set; } = new List<string> { "2", "5" };
         public string LastSelectedConcurrency { get; set; } = "5";
+        public double ParagraphSimilarityThreshold { get; set; } = 0.6;
 
         // API相关的设置
         public ApiServiceType LastSelectedApiService { get; set; } = ApiServiceType.Baidu;

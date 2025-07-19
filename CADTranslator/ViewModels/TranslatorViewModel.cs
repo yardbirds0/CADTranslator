@@ -43,7 +43,6 @@ namespace CADTranslator.ViewModels
 
         private AppSettings _currentSettings;
         private bool _isLoading = false;
-        private List<ObjectId> _deletableSourceIds = new List<ObjectId>();
         private List<TextBlockViewModel> _failedItems = new List<TextBlockViewModel>();
 
         // ... (其他私有字段保持不变) ...
@@ -196,6 +195,20 @@ namespace CADTranslator.ViewModels
             get => _isMultiThreadingEnabled;
             set { if (SetField(ref _isMultiThreadingEnabled, value)) { if (!_isLoading) SaveSettings(); } }
             }
+
+        public double SimilarityThreshold
+            {
+            get => _currentSettings.ParagraphSimilarityThreshold;
+            set
+                {
+                if (_currentSettings.ParagraphSimilarityThreshold != value)
+                    {
+                    _currentSettings.ParagraphSimilarityThreshold = value;
+                    if (!_isLoading) SaveSettings();
+                    OnPropertyChanged();
+                    }
+                }
+            }
         public string CurrentConcurrencyLevelInput
             {
             get => _currentConcurrencyLevelInput;
@@ -317,7 +330,7 @@ namespace CADTranslator.ViewModels
                         return;
                         }
 
-                    List<ParagraphInfo> paragraphInfos = _advancedTextService.ExtractAndProcessParagraphs(selRes.Value, out _deletableSourceIds);
+                    List<ParagraphInfo> paragraphInfos = _advancedTextService.ExtractAndProcessParagraphs(selRes.Value, this.SimilarityThreshold);
 
                     if (paragraphInfos.Count == 0)
                         {
@@ -329,6 +342,8 @@ namespace CADTranslator.ViewModels
                         var textBlocks = paragraphInfos.Select(p => new TextBlockViewModel
                             {
                             OriginalText = p.Text,
+                            IsTitle = p.IsTitle,
+                            GroupKey = p.GroupKey,
                             SourceObjectIds = p.SourceObjectIds,
                             AssociatedGraphicsBlockId = p.AssociatedGraphicsBlockId,
                             OriginalAnchorPoint = p.OriginalAnchorPoint,
@@ -599,15 +614,24 @@ namespace CADTranslator.ViewModels
             bool success = false;
             try
                 {
+                // 【核心修正】在应用翻译的瞬间，根据当前UI列表动态生成要删除的ID
+                var idsToDelete = TextBlockList
+                    .Where(item => !string.IsNullOrWhiteSpace(item.TranslatedText) && !item.TranslatedText.StartsWith("["))
+                    .SelectMany(item => item.SourceObjectIds)
+                    .Distinct()
+                    .ToList();
+
                 if (IsLiveLayoutEnabled)
                     {
                     Log("“实时排版”已启用，将执行智能布局...");
-                    success = _cadLayoutService.ApplySmartLayoutToCad(TextBlockList, _deletableSourceIds, CurrentLineSpacingInput);
+                    // 将动态生成的列表传递给服务
+                    success = _cadLayoutService.ApplySmartLayoutToCad(TextBlockList, idsToDelete, CurrentLineSpacingInput);
                     }
                 else
                     {
                     Log("“实时排版”已关闭，将使用基本布局...");
-                    success = await Task.Run(() => _cadLayoutService.ApplyTranslationToCad(TextBlockList));
+                    // 基本布局方法也需要更新，我们将在下一步处理
+                    success = await Task.Run(() => _cadLayoutService.ApplyTranslationToCad(TextBlockList, idsToDelete));
                     }
                 }
             catch (Exception ex)
@@ -1054,17 +1078,20 @@ namespace CADTranslator.ViewModels
                 return;
                 }
 
-            // ▼▼▼ 【核心修复】我们不再手动处理UI，而是重新加载整个列表 ▼▼▼
-
-            // 1. 从UI列表中移除旧的、合并后的行
             int originalIndex = TextBlockList.IndexOf(selectedVM);
             TextBlockList.RemoveAt(originalIndex);
 
-            // 2. 创建拆分后的新行
+            // 【核心修正】为拆分后的新行创建一个唯一的“团队身份证”
+            var newGroupKey = Guid.NewGuid().ToString();
+
             var newBlocks = new List<TextBlockViewModel>();
             for (int i = 0; i < linesToSplit.Count; i++)
                 {
-                var newBlock = new TextBlockViewModel { OriginalText = linesToSplit[i] };
+                var newBlock = new TextBlockViewModel
+                    {
+                    OriginalText = linesToSplit[i],
+                    GroupKey = newGroupKey // 为所有新行打上相同的烙印
+                    };
                 if (isUndoMerge && i < selectedVM.SourceObjectIds.Count)
                     {
                     newBlock.SourceObjectIds.Add(selectedVM.SourceObjectIds[i]);
@@ -1072,14 +1099,12 @@ namespace CADTranslator.ViewModels
                 newBlocks.Add(newBlock);
                 }
 
-            // 3. 将新行插入到原来的位置
             for (int i = 0; i < newBlocks.Count; i++)
                 {
                 TextBlockList.Insert(originalIndex + i, newBlocks[i]);
                 }
 
-            // 4. 【关键】重新运行一遍完整的智能编号算法
-            //    我们先复制一份当前的列表，然后调用 LoadTextBlocks，它会清空并重新填充
+            // 重新加载并应用所有显示逻辑
             var currentBlocksState = TextBlockList.ToList();
             LoadTextBlocks(currentBlocksState);
             }
@@ -1110,7 +1135,6 @@ namespace CADTranslator.ViewModels
             if (result == MessageBoxResult.Primary)
                 {
                 TextBlockList.Clear();
-                _deletableSourceIds.Clear();
                 _failedItems.Clear();
                 RetranslateFailedCommand.RaiseCanExecuteChanged();
                 UpdateProgress(0, 0);
@@ -1176,90 +1200,99 @@ namespace CADTranslator.ViewModels
                 return;
                 }
 
+            // 步骤 1: 完整填充ViewModel列表
+            foreach (var block in blocks)
+                {
+                var newVm = new TextBlockViewModel
+                    {
+                    OriginalText = block.OriginalText,
+                    TranslatedText = block.TranslatedText,
+                    SourceObjectIds = block.SourceObjectIds,
+                    AssociatedGraphicsBlockId = block.AssociatedGraphicsBlockId,
+                    OriginalAnchorPoint = block.OriginalAnchorPoint,
+                    OriginalSpaceCount = block.OriginalSpaceCount,
+                    Position = block.Position,
+                    AlignmentPoint = block.AlignmentPoint,
+                    HorizontalMode = block.HorizontalMode,
+                    VerticalMode = block.VerticalMode,
+                    IsTitle = block.IsTitle,
+                    GroupKey = block.GroupKey
+                    };
+                TextBlockList.Add(newVm);
+                }
+
+            // 步骤 2: 第一次遍历，设置基础“编号”和样式
             try
                 {
-                // --- 步骤 1: 侦察兵出动 (定义正则表达式并进行第一遍扫描) ---
-                var mainNumRegex = new Regex(@"^\s*(\d+([.,、]))");
-                var subNumRegex = new Regex(@"^\s*([\(（【]\s*([a-zA-Z0-9]+)\s*[\)）】]|[a-zA-Z]\s*[.,、)])");
-
-                var analysisList = new List<(TextBlockViewModel Block, string Type, string Value)>();
-                foreach (var block in blocks)
+                var mainNumRegex = new Regex(@"^\s*(\d+)([.,、])");
+                var subNumRegex = new Regex(@"^\s*([<(（【〔](?:\d+|[a-zA-Z])[>)）】〕]|[a-zA-Z]\s*[.,、)])");
+                var analysisList = new List<(TextBlockViewModel Block, string Type, string Value, int Index)>();
+                for (int i = 0; i < TextBlockList.Count; i++)
                     {
-                    // ▼▼▼ 【核心修复】在进行任何匹配前，先去掉原文开头的空格 ▼▼▼
-                    string textForAnalysis = block.OriginalText.TrimStart();
-
-                    var mainMatch = mainNumRegex.Match(textForAnalysis);
-                    if (mainMatch.Success)
-                        {
-                        analysisList.Add((block, "Main", mainMatch.Groups[1].Value));
-                        continue;
-                        }
-                    var subMatch = subNumRegex.Match(textForAnalysis);
-                    if (subMatch.Success)
-                        {
-                        analysisList.Add((block, "Sub", subMatch.Groups[1].Value));
-                        continue;
-                        }
-                    analysisList.Add((block, "None", "无"));
+                    var vm = TextBlockList[i];
+                    string text = vm.OriginalText.TrimStart();
+                    var mainMatch = mainNumRegex.Match(text);
+                    if (mainMatch.Success) { analysisList.Add((vm, "Main", mainMatch.Groups[1].Value, i)); continue; }
+                    var subMatch = subNumRegex.Match(text);
+                    if (subMatch.Success) { analysisList.Add((vm, "Sub", subMatch.Value.Trim(), i)); continue; }
+                    analysisList.Add((vm, "None", "无", i));
                     }
 
-                // --- 步骤 2: 情报分析部 (判断主编号格式) ---
-                bool subIsMain = analysisList.All(x => x.Type == "Sub" || x.Type == "None") && analysisList.Any(x => x.Type == "Sub");
-
-                // --- 步驟 3: 总司令决策 (第二遍扫描，生成最终编号) ---
+                bool hasMainNumbers = analysisList.Any(x => x.Type == "Main");
                 string lastParentNumber = null;
-                for (int i = 0; i < analysisList.Count; i++)
-                    {
-                    var item = analysisList[i];
-                    string baseNumber = "无";
 
-                    if (subIsMain && item.Type == "Sub")
-                        {
-                        baseNumber = item.Value;
-                        }
-                    else if (item.Type == "Main")
-                        {
-                        lastParentNumber = item.Value;
-                        baseNumber = item.Value;
-                        }
+                foreach (var item in analysisList)
+                    {
+                    if (item.Block.IsTitle) { item.Block.Character = "标题"; continue; }
+                    if (!hasMainNumbers && item.Type == "Sub") { item.Block.Character = item.Value; }
+                    else if (item.Type == "Main") { lastParentNumber = item.Value; item.Block.Character = lastParentNumber; }
                     else if (item.Type == "Sub")
                         {
-                        if (!string.IsNullOrEmpty(lastParentNumber))
-                            {
-                            baseNumber = $"{lastParentNumber}{item.Value}";
-                            }
+                        if (!string.IsNullOrEmpty(lastParentNumber)) { item.Block.Character = $"{lastParentNumber}.{item.Value}"; }
                         else
                             {
-                            var nextMain = analysisList.Skip(i + 1).FirstOrDefault(x => x.Type == "Main");
-                            if (nextMain != default && int.TryParse(Regex.Replace(nextMain.Value, @"\D", ""), out int num))
-                                {
-                                baseNumber = $"{num - 1}.{item.Value}";
-                                }
-                            else { baseNumber = item.Value; }
+                            var nextMain = analysisList.FirstOrDefault(x => x.Index > item.Index && x.Type == "Main");
+                            if (nextMain != default && int.TryParse(nextMain.Value, out int num)) { item.Block.Character = $"{num - 1}.{item.Value}"; }
+                            else { item.Block.Character = item.Value; }
                             }
                         }
-
-                    item.Block.Character = baseNumber;
-                    item.Block.BgColor = _characterBrushes[_brushIndex++ % _characterBrushes.Length];
-                    TextBlockList.Add(item.Block);
+                    else { item.Block.Character = "无"; }
                     }
                 }
-            catch (Exception) // 绝对不能闪退
+            catch { foreach (var vm in TextBlockList) { vm.Character = "错误"; } }
+
+            // 步骤 3: 在智能序号的基础上，应用分组显示格式
+            var groups = TextBlockList.Where(vm => !string.IsNullOrEmpty(vm.GroupKey)).GroupBy(vm => vm.GroupKey).ToList();
+            foreach (var group in groups)
                 {
-                // ... (回退逻辑保持不变) ...
-                TextBlockList.Clear();
-                _brushIndex = 0;
-                var numberRegex = new Regex(@"^\s*(\d+[\.,、]?|\(\d+\))");
-                blocks.ForEach(b =>
-                {
-                    var match = numberRegex.Match(b.OriginalText);
-                    b.Character = match.Success ? Regex.Replace(match.Value, @"\D", "") : "无";
-                    b.BgColor = _characterBrushes[_brushIndex++ % _characterBrushes.Length];
-                    TextBlockList.Add(b);
-                });
+                var members = group.OrderBy(m => TextBlockList.IndexOf(m)).ToList();
+                if (!members.Any()) continue;
+
+                // 【核心修正】找到父级的正确基础编号
+                var parent = members.First();
+                string parentNumber = parent.Character;
+
+                // 【核心修正】如果父级的基础编号是“无”，则尝试从组ID（即原始父级的ID）找到正确的编号
+                if (parentNumber == "无")
+                    {
+                    var originalParent = TextBlockList.FirstOrDefault(vm => vm.Id.ToString() == group.Key);
+                    if (originalParent != null)
+                        {
+                        parentNumber = originalParent.Character;
+                        }
+                    }
+
+                for (int i = 0; i < members.Count; i++)
+                    {
+                    members[i].Character = $"{parentNumber} (行{i + 1})";
+                    }
                 }
 
+            // 步骤 4: 设置背景色并最终刷新
+            foreach (var vm in TextBlockList) { vm.BgColor = _characterBrushes[_brushIndex++ % _characterBrushes.Length]; }
             RenumberItems();
+            ApplyToCadCommand.RaiseCanExecuteChanged();
+            TranslateCommand.RaiseCanExecuteChanged();
             }
 
         private void RenumberItems()

@@ -13,7 +13,7 @@
                  Width="1080"
                  WindowStartupLocation="CenterScreen"
                  WindowBackdropType="Mica"
-                 d:DesignHeight="1000"
+                 d:DesignHeight="1200"
                  ExtendsContentIntoTitleBar="True">
 
     <Window.Resources>
@@ -283,6 +283,37 @@
                                  TextWrapping="Wrap"
                                  AcceptsReturn="True"
                                  VerticalScrollBarVisibility="Auto" />
+                        <TextBlock Text="高级设置"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   FontSize="16"
+                                   Margin="0,15,0,0" />
+                        <TextBlock Text="段落合并灵敏度 (值越高越容易合并)"
+                                   Margin="0,10,0,5"
+                                   Opacity="0.8" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <Slider Grid.Column="0"
+                                    Minimum="0.1"
+                                    Maximum="0.9"
+                                    TickFrequency="0.05"
+                                    IsSnapToTickEnabled="True"
+                                    Value="{Binding SimilarityThreshold, Mode=TwoWay}"
+                                    Margin="0,0,10,0"
+                                    VerticalAlignment="Center"
+                                    Cursor="" />
+
+                            <ui:NumberBox Grid.Column="1"
+                                          Value="{Binding SimilarityThreshold, Mode=TwoWay}"
+                                          Width="80"
+                                          SmallChange="0.05"
+                                          LargeChange="0.2" />
+                        </Grid>
+
                         <TextBlock Text="多线程设置"
                                    FontWeight="Bold"
                                    HorizontalAlignment="Center"
@@ -429,8 +460,7 @@
                             </DataGridTextColumn.ElementStyle>
                         </DataGridTextColumn>
                         <DataGridTemplateColumn Header="原文"
-                                                Width="*"
-                                                IsReadOnly="True">
+                                                Width="*">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding OriginalText}"
@@ -438,6 +468,17 @@
                                                Margin="5" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <TextBox Text="{Binding OriginalText, Mode=OneWay}"
+                                             TextWrapping="Wrap"
+                                             AcceptsReturn="True"
+                                             BorderThickness="0"
+                                             Background="Transparent"
+                                             Margin="5"
+                                             IsReadOnly="True" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
                         </DataGridTemplateColumn>
                         <DataGridTemplateColumn Header="译文"
                                                 Width="*"

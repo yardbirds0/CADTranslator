@@ -49,7 +49,8 @@ namespace CADTranslator.ViewModels
         public ObjectId AssociatedGraphicsBlockId { get; set; } = ObjectId.Null;
         public Point3d OriginalAnchorPoint { get; set; }
 
-
+        public bool IsTitle { get; set; } = false;
+        public string GroupKey { get; set; } = null;
 
         public event PropertyChangedEventHandler PropertyChanged;
 

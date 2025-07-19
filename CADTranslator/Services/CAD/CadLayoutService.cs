@@ -1,4 +1,4 @@
-﻿// 文件路径: CADTranslator/Services/CadLayoutService.cs
+﻿    // 文件路径: CADTranslator/Services/CadLayoutService.cs
 
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -219,9 +219,8 @@ namespace CADTranslator.Services.CAD
                 }
             }
 
-        public bool ApplyTranslationToCad(ObservableCollection<TextBlockViewModel> textBlockList)
+        public bool ApplyTranslationToCad(ObservableCollection<TextBlockViewModel> textBlockList, List<ObjectId> idsToDelete)
             {
-            // 这个方法在“实时排版”关闭时使用，其逻辑保持不变
             try
                 {
                 using (_doc.LockDocument())
@@ -230,25 +229,28 @@ namespace CADTranslator.Services.CAD
                         {
                         BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
 
+                        // 【核心修正】使用从ViewModel传入的、精确的待删除列表
+                        foreach (var objectId in idsToDelete)
+                            {
+                            if (!objectId.IsNull && !objectId.IsErased)
+                                {
+                                var entityToErase = tr.GetObject(objectId, OpenMode.ForWrite) as Entity;
+                                entityToErase?.Erase();
+                                }
+                            }
+
                         foreach (var item in textBlockList)
                             {
-                            if (string.IsNullOrWhiteSpace(item.TranslatedText) || item.SourceObjectIds == null || !item.SourceObjectIds.Any()) continue;
+                            if (string.IsNullOrWhiteSpace(item.TranslatedText) || item.TranslatedText.StartsWith("[")) continue;
 
-                            string final_text = item.TranslatedText.Replace(LegendPlaceholder, new string(' ', item.OriginalSpaceCount));
-
-                            var firstObjectId = item.SourceObjectIds.First();
+                            var firstObjectId = item.SourceObjectIds.FirstOrDefault();
                             if (firstObjectId.IsNull || firstObjectId.IsErased) continue;
                             var baseEntity = tr.GetObject(firstObjectId, OpenMode.ForRead) as Entity;
                             if (baseEntity == null) continue;
 
-                            foreach (var objectId in item.SourceObjectIds)
-                                {
-                                if (objectId.IsNull || objectId.IsErased) continue;
-                                var entityToErase = tr.GetObject(objectId, OpenMode.ForWrite) as Entity;
-                                entityToErase?.Erase();
-                                }
-
+                            string final_text = item.TranslatedText.Replace(LegendPlaceholder, new string(' ', item.OriginalSpaceCount));
                             string singleLineText = final_text.Replace('\n', ' ').Replace('\r', ' ');
+
                             using (DBText newText = new DBText())
                                 {
                                 newText.TextString = singleLineText;

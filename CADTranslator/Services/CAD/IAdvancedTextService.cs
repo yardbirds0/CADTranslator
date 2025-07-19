@@ -18,7 +18,7 @@ namespace CADTranslator.Services.CAD
         /// <param name="selSet">用户在CAD中选择的对象集合。</param>
         /// <param name="allSourceIds">一个输出参数，返回所有被处理过的原始对象的ID。</param>
         /// <returns>一个包含详细段落信息的列表。</returns>
-        List<ParagraphInfo> ExtractAndProcessParagraphs(SelectionSet selSet, out List<ObjectId> allSourceIds);
+        public List<ParagraphInfo> ExtractAndProcessParagraphs(SelectionSet selSet, double similarityThreshold);
         List<string> GetOriginalTextsByIds(List<ObjectId> ids);
         }
     }

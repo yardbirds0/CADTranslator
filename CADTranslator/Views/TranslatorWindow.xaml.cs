@@ -65,19 +65,7 @@ namespace CADTranslator.Views
 
             if (dependencyObject is DataGridCell cell)
                 {
-                var column = cell.Column;
-
-                if (column != null && column.Header?.ToString() == "原文")
-                    {
-                    if (this.DataContext is TranslatorViewModel viewModel && dataGridBlocks.SelectedItem != null)
-                        {
-                        if (viewModel.EditCommand.CanExecute(dataGridBlocks.SelectedItem))
-                            {
-                            viewModel.EditCommand.Execute(dataGridBlocks.SelectedItem);
-                            }
-                        }
-                    e.Handled = true;
-                    }
+                // var column = cell.Column; // 这一行也可以一并删除，因为它不再被使用
                 }
             }
 

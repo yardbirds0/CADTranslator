@@ -9,5 +9,7 @@ namespace CADTranslator.Models.CAD
         public string OriginalText { get; set; }
         public string TranslatedText { get; set; }
         public List<ObjectId> SourceObjectIds { get; set; } = new List<ObjectId>();
-    }
+        public bool IsTitle { get; set; } = false;
+        public string GroupKey { get; set; } = null;
+        }
 }
