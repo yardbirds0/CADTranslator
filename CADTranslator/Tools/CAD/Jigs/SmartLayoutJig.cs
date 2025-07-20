@@ -43,7 +43,7 @@ namespace CADTranslator.Tools.CAD.Jigs
             FinalLineInfo = new List<Tuple<string, bool, bool, int, Point3d>>();
 
             // 在Jig初始化时，就对所有段落进行一次分词，并缓存结果
-            var tokenizer = new Regex(@"%%\w+@\d+|\w+=\S+|[a-zA-Z0-9\.-]+|\s+|.", RegexOptions.Compiled);
+            var tokenizer = new Regex(@"[\u4e00-\u9fa5]|([a-zA-Z0-9\.-]+)|(\S)", RegexOptions.Compiled);
             for (int i = 0; i < _paragraphInfos.Count; i++)
                 {
                 var text = _paragraphInfos[i].Text;
@@ -93,20 +93,28 @@ namespace CADTranslator.Tools.CAD.Jigs
             Point3d currentDrawingPosition = _basePoint;
             bool useCustomSpacing = double.TryParse(_lineSpacing, out double customSpacingValue);
 
+            string previousGroupKey = null;
+
             for (int p_idx = 0; p_idx < _paragraphInfos.Count; p_idx++)
                 {
                 var paraInfo = _paragraphInfos[p_idx];
                 if (string.IsNullOrEmpty(paraInfo.Text)) continue;
 
-                // 从缓存中获取分词结果
                 var tokens = _tokenCache.ContainsKey(p_idx) ? _tokenCache[p_idx] : new List<string>();
                 var linesInParagraph = GetWrappedLines(tokens, currentWidth, paraInfo.Height, paraInfo.WidthFactor, paraInfo.TextStyleId);
-                bool applyIndent = linesInParagraph.Count > 1;
+
+                bool isContinuation = !string.IsNullOrEmpty(paraInfo.GroupKey) && paraInfo.GroupKey == previousGroupKey;
 
                 for (int i = 0; i < linesInParagraph.Count; i++)
                     {
                     string lineText = linesInParagraph[i];
-                    double xOffset = (i > 0 && applyIndent) ? FinalIndent : 0;
+
+                    // --- 【核心修正】在这里定义一个绝对正确的“是否为逻辑第一行”的标志位 ---
+                    bool isFirstLogicalLine = (i == 0 && !isContinuation);
+
+                    // --- 【核心修正】用这个新的标志位来决定是否缩进 ---
+                    double xOffset = isFirstLogicalLine ? 0 : FinalIndent;
+
                     Point3d textPosition = currentDrawingPosition + new Vector3d(xOffset, 0, 0);
 
                     using (var previewText = new DBText())
@@ -122,11 +130,15 @@ namespace CADTranslator.Tools.CAD.Jigs
                         draw.Geometry.Draw(previewText);
                         }
 
-                    FinalLineInfo.Add(new Tuple<string, bool, bool, int, Point3d>(lineText, applyIndent, i == 0, p_idx, textPosition));
+                    // --- 【核心修正】将正确的标志位存入Tuple中 ---
+                    bool applyIndent = !isFirstLogicalLine; // applyIndent现在和缩进逻辑完全一致
+                    FinalLineInfo.Add(new Tuple<string, bool, bool, int, Point3d>(lineText, applyIndent, isFirstLogicalLine, p_idx, textPosition));
 
                     double lineHeight = useCustomSpacing ? paraInfo.Height + customSpacingValue : paraInfo.Height * 1.5;
                     currentDrawingPosition += new Vector3d(0, -lineHeight, 0);
                     }
+
+                previousGroupKey = paraInfo.GroupKey;
                 }
             return true;
             }
