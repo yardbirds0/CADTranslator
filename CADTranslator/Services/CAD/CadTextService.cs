@@ -4,9 +4,7 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using CADTranslator.Models;
 using CADTranslator.Models.CAD;
-using CADTranslator.Services.Settings;
 using CADTranslator.ViewModels;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -116,7 +114,5 @@ namespace CADTranslator.Services.CAD
                 }
             return textBlocks;
             }
-        
         }
     }
-
