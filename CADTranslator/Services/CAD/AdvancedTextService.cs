@@ -361,9 +361,17 @@ namespace CADTranslator.Services.CAD
                     continue;
                     }
 
-                // 规则3: 【核心逻辑重构】 智能判断 -> 分组或合并
-                double similarity = CalculateSimilarity(lastBlock.OriginalText, currentText);
-                if (similarity > similarityThreshold)
+                // ▼▼▼ 【核心修改】智能判断逻辑升级为“双轨制” ▼▼▼
+                // 我们现在同时使用两种算法进行判断
+
+                // 算法1: 计算原始的莱文斯坦距离相似度
+                double levenshteinSimilarity = CalculateSimilarity(lastBlock.OriginalText, currentText);
+
+                // 算法2: 计算新的结构化相似度 (LCS)
+                double structuralSimilarity = CalculateStructuralSimilarity(lastBlock.OriginalText, currentText);
+
+                // 如果【任何一个】算法认为相似度足够高，就执行分割和分组
+                if (levenshteinSimilarity > similarityThreshold || structuralSimilarity > similarityThreshold)
                     {
                     // 相似度高 -> 认为是并列项，进行分割和分组
                     if (currentGroupKey == null)
@@ -376,13 +384,14 @@ namespace CADTranslator.Services.CAD
                     }
                 else
                     {
-                    // 相似度低 -> 认为是普通换行，进行合并
+                    // 两个算法都认为相似度低 -> 认为是普通换行，进行合并
                     currentGroupKey = null;
                     bool onSameLine = Math.Abs(prevEntity.Position.Y - currEntity.Position.Y) < (prevEntity.Height * 0.5);
-                    string separator = onSameLine ? " " : "\n";
+                    string separator = onSameLine ? " " : "";
                     lastBlock.OriginalText += separator + currentText;
                     lastBlock.SourceObjectIds.Add(currEntity.ObjectId);
                     }
+                // ▲▲▲ 修改结束 ▲▲▲
                 }
 
             return textBlocks;
@@ -403,5 +412,50 @@ namespace CADTranslator.Services.CAD
             var associatedGraphics = allGraphics.Where(g => g?.Bounds != null && pBounds.MinPoint.X <= g.Bounds.Value.MinPoint.X && (pBounds.MinPoint.Y - maxLineHeight) <= g.Bounds.Value.MinPoint.Y && pBounds.MaxPoint.X >= g.Bounds.Value.MaxPoint.X && (pBounds.MaxPoint.Y + maxLineHeight) >= g.Bounds.Value.MaxPoint.Y).ToList();
             return (associatedGraphics, pBounds);
             }
+
+        #region --- 结构相似度计算 (LCS 算法) ---
+
+        /// <summary>
+        /// 【新增方法】使用基于词语的“最长公共子序列”(LCS)算法，计算两个句子的结构相似度。
+        /// </summary>
+        /// <param name="s1">第一个句子</param>
+        /// <param name="s2">第二个句子</param>
+        /// <returns>一个 0.0 到 1.0 之间的相似度分数</returns>
+        private double CalculateStructuralSimilarity(string s1, string s2)
+            {
+            if (string.IsNullOrEmpty(s1) || string.IsNullOrEmpty(s2)) return 0.0;
+
+            // 步骤 1: 分词 (Tokenization)
+            // 这个正则表达式会把连续的字母/数字/特定符号视为一个词，其他所有字符（汉字、标点）都单个作为词。
+            var tokenizer = new Regex(@"[a-zA-Z0-9\.-]+|%%[a-zA-Z0-9@]+|[^\s]");
+            var tokens1 = tokenizer.Matches(s1).Cast<Match>().Select(m => m.Value).ToList();
+            var tokens2 = tokenizer.Matches(s2).Cast<Match>().Select(m => m.Value).ToList();
+
+            if (tokens1.Count == 0 || tokens2.Count == 0) return 0.0;
+
+            // 步骤 2: 使用动态规划计算LCS的长度
+            int[,] dp = new int[tokens1.Count + 1, tokens2.Count + 1];
+            for (int i = 1; i <= tokens1.Count; i++)
+                {
+                for (int j = 1; j <= tokens2.Count; j++)
+                    {
+                    if (tokens1[i - 1] == tokens2[j - 1])
+                        {
+                        dp[i, j] = dp[i - 1, j - 1] + 1;
+                        }
+                    else
+                        {
+                        dp[i, j] = Math.Max(dp[i - 1, j], dp[i, j - 1]);
+                        }
+                    }
+                }
+
+            int lcsLength = dp[tokens1.Count, tokens2.Count];
+
+            // 步骤 3: 根据LCS长度计算相似度分数
+            return (2.0 * lcsLength) / (tokens1.Count + tokens2.Count);
+            }
+
+        #endregion
         }
     }
