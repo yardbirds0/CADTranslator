@@ -112,5 +112,119 @@ namespace CADTranslator.Views
                 e.Handled = true;
                 }
             }
+
+        private void RootNavigationView_OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+            {
+            // 如果侧边栏已经是展开状态，则不做任何处理
+            if (RootNavigationView.IsPaneOpen)
+                {
+                return;
+                }
+
+            // 查找被点击的 NavigationViewItem
+            if (e.OriginalSource is DependencyObject depObj)
+                {
+                var item = FindParent<NavigationViewItem>(depObj);
+
+                // 如果确实点击了一个菜单项
+                if (item != null)
+                    {
+                    // 手动展开侧边栏
+                    RootNavigationView.IsPaneOpen = true;
+
+                    // 手动展开被点击的菜单项
+                    item.IsExpanded = true;
+
+                    // 阻止事件继续传播，以防止默认的Flyout弹出
+                    e.Handled = true;
+                    }
+                }
+            }
+
+        private void SettingsPanel_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+            {
+            // 将事件的原始来源转换为一个依赖对象，以便在可视化树中遍历
+            var currentElement = e.OriginalSource as DependencyObject;
+
+            // 从被点击的最深层元素开始，向上遍历可视化树
+            while (currentElement != null)
+                {
+                // 如果遍历到了我们挂载事件的StackPanel本身，就停止
+                if (currentElement == sender)
+                    {
+                    break;
+                    }
+
+                // --- 这是“白名单”检查 ---
+                if (currentElement is ComboBox ||
+                    currentElement is ComboBoxItem ||
+                    currentElement is System.Windows.Controls.TextBox ||
+                    currentElement is System.Windows.Controls.PasswordBox ||
+                    currentElement is System.Windows.Controls.Button ||
+                    currentElement is CheckBox ||
+                    currentElement is RadioButton ||
+                    currentElement is Slider ||
+                    currentElement is Wpf.Ui.Controls.NumberBox ||
+                    currentElement is Wpf.Ui.Controls.ToggleSwitch // <--- 【请在这里添加这一行】
+                   )
+                    {
+                    return; // 放行事件
+                    }
+
+                // 继续向上移动一个节点
+                currentElement = VisualTreeHelper.GetParent(currentElement);
+                }
+
+            e.Handled = true;
+            }
+
+        public static T FindParent<T>(DependencyObject child) where T : DependencyObject
+            {
+            DependencyObject parentObject = child;
+
+            while (parentObject != null)
+                {
+                // 检查当前父元素是否是我们想要的类型
+                if (parentObject is T parent)
+                    {
+                    return parent;
+                    }
+
+                // 继续向上查找
+                parentObject = VisualTreeHelper.GetParent(parentObject);
+                }
+            return null;
+            }
+
+        private void TranslatorWindow_Loaded(object sender, RoutedEventArgs e)
+            {
+            // 当窗口完全加载后，再设置导航栏为展开状态。
+            // 因为此时所有控件都已就绪，所以不会有任何启动动画。
+            RootNavigationView.IsPaneOpen = true;
+            }
+
+        private void RootNavigationView_PaneOpened(object sender, RoutedEventArgs e)
+            {
+            // 当用户手动展开导航栏时，将列宽设置为展开宽度
+            NavColumn.Width = new GridLength(320);
+            }
+
+        private void RootNavigationView_PaneClosed(object sender, RoutedEventArgs e)
+            {
+            // 当用户手动收起导航栏时，将列宽设置为紧凑宽度
+            NavColumn.Width = new GridLength(48);
+
+            // ▼▼▼ 从这里开始是新增的代码 ▼▼▼
+            // 遍历导航栏中的所有主菜单项
+            foreach (var item in RootNavigationView.MenuItems)
+                {
+                // 检查这个项是不是一个可以展开/折叠的 NavigationViewItem
+                if (item is Wpf.Ui.Controls.NavigationViewItem navigationViewItem)
+                    {
+                    // 如果是，就命令它折叠起来
+                    navigationViewItem.IsExpanded = false;
+                    }
+                }
+            }
         }
     }

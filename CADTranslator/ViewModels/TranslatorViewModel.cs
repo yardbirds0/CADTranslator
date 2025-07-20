@@ -35,6 +35,7 @@ namespace CADTranslator.ViewModels
         private AppSettings _currentSettings;
         private bool _isLoading = false;
         private List<TextBlockViewModel> _failedItems = new List<TextBlockViewModel>();
+        private bool _isProgressIndeterminate = true;
 
         // 【新增】用于管理背景色的画刷
         private readonly Brush _translatingBrush = new SolidColorBrush(Color.FromArgb(128, 255, 236, 179)); // 淡黄色
@@ -224,6 +225,11 @@ namespace CADTranslator.ViewModels
                 }
             }
         public ObservableCollection<string> ConcurrencyLevelOptions { get; set; }
+        public bool IsProgressIndeterminate
+            {
+            get => _isProgressIndeterminate;
+            set => SetField(ref _isProgressIndeterminate, value);
+            }
         #endregion
 
         #region --- 命令 ---
@@ -361,6 +367,7 @@ namespace CADTranslator.ViewModels
                 // ▼▼▼ 【核心修改】使用_windowService控制窗口 ▼▼▼
                 _windowService.ShowMainWindow();
                 TranslateCommand.RaiseCanExecuteChanged();
+                IsProgressIndeterminate = false;
                 }
             }
 
@@ -388,6 +395,7 @@ namespace CADTranslator.ViewModels
             if (IsModelRequired && !string.IsNullOrWhiteSpace(CurrentModelInput)) { CurrentProfile.LastSelectedModel = CurrentModelInput; if (!ModelList.Contains(CurrentModelInput)) { ModelList.Add(CurrentModelInput); CurrentProfile.Models.Add(CurrentModelInput); } }
 
             IsBusy = true;
+            IsProgressIndeterminate = true;
             ClearAllRowHighlights();
             var totalStopwatch = new System.Diagnostics.Stopwatch();
             totalStopwatch.Start();
@@ -404,6 +412,7 @@ namespace CADTranslator.ViewModels
 
             try
                 {
+                IsProgressIndeterminate = false;
                 ITranslator translator = _apiRegistry.CreateProviderForProfile(CurrentProfile);
                 if (IsMultiThreadingEnabled)
                     {
@@ -589,6 +598,7 @@ namespace CADTranslator.ViewModels
                 else { Log($"全部翻译任务成功完成！总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒"); }
                 if (totalItems > 0 && !_failedItems.Any()) { UpdateUsageStatistics(itemsToTranslate.Count, itemsToTranslate.Sum(i => i.OriginalText.Length), totalStopwatch.Elapsed.TotalSeconds); }
                 IsBusy = false;
+                IsProgressIndeterminate = false;
                 cts.Dispose();
                 }
             }
@@ -763,7 +773,7 @@ namespace CADTranslator.ViewModels
         #endregion
 
         #region --- 设置、日志与辅助方法 ---
-        
+
         private void LoadSettings()
             {
             _isLoading = true;
@@ -1158,6 +1168,7 @@ namespace CADTranslator.ViewModels
                 _failedItems.Clear();
                 RetranslateFailedCommand.RaiseCanExecuteChanged();
                 UpdateProgress(0, 0);
+                IsProgressIndeterminate = false;
                 Log("界面已重置，请重新选择CAD文字。");
                 }
             }

@@ -36,6 +36,8 @@ namespace CADTranslator.Services.CAD
             _editor = doc.Editor;
             }
 
+        // 文件路径: CADTranslator/Services/CAD/CadLayoutService.cs
+
         public bool ApplySmartLayoutToCad(ObservableCollection<TextBlockViewModel> textBlockList, List<ObjectId> idsToDelete, string lineSpacing)
             {
             var paragraphInfos = new List<ParagraphInfo>();
@@ -47,16 +49,28 @@ namespace CADTranslator.Services.CAD
                     {
                     if (string.IsNullOrWhiteSpace(block.TranslatedText) || block.TranslatedText.StartsWith("[")) continue;
 
-                    var firstId = block.SourceObjectIds.FirstOrDefault(id => !id.IsNull && !id.IsErased);
-                    if (firstId.IsNull) continue;
+                    // ▼▼▼【核心修正】从这里开始修改 ▼▼▼
+                    Entity templateEntity = null;
+                    // 迭代源ID列表，直到找到第一个真正的“文字”对象作为模板
+                    foreach (var id in block.SourceObjectIds)
+                        {
+                        if (id.IsNull || id.IsErased) continue;
+                        var entity = tr.GetObject(id, OpenMode.ForRead);
+                        // 只有DBText或MText才能作为模板
+                        if (entity is DBText || entity is MText)
+                            {
+                            templateEntity = entity as Entity;
+                            break; // 找到模板，立即跳出循环
+                            }
+                        }
 
-                    var templateEntity = tr.GetObject(firstId, OpenMode.ForRead) as Entity;
+                    // 如果在这个区块的所有源ID中都找不到一个有效的文字模板，则跳过这个区块
                     if (templateEntity == null) continue;
+                    // ▲▲▲【核心修正】到这里结束 ▲▲▲
 
                     var pInfo = new ParagraphInfo
                         {
                         Text = block.TranslatedText,
-                        //ContainsSpecialPattern = block.TranslatedText.Contains(LegendPlaceholder),
                         TemplateEntity = templateEntity,
                         AssociatedGraphicsBlockId = block.AssociatedGraphicsBlockId,
                         OriginalAnchorPoint = block.OriginalAnchorPoint,
@@ -65,7 +79,8 @@ namespace CADTranslator.Services.CAD
                         AlignmentPoint = block.AlignmentPoint,
                         HorizontalMode = block.HorizontalMode,
                         VerticalMode = block.VerticalMode,
-                        SourceObjectIds = block.SourceObjectIds.ToList()
+                        SourceObjectIds = block.SourceObjectIds.ToList(),
+                        GroupKey = block.GroupKey
                         };
 
                     if (templateEntity is DBText dbText)
@@ -92,7 +107,7 @@ namespace CADTranslator.Services.CAD
                 return true;
                 }
 
-            // 2. 开始交互式排版
+            // 2. 开始交互式排版 (这部分代码保持原样，无需修改)
             try
                 {
                 using (_doc.LockDocument())
@@ -105,7 +120,7 @@ namespace CADTranslator.Services.CAD
                     var dragResult = _editor.Drag(jig);
                     if (dragResult.Status != PromptStatus.OK) return false;
 
-                    // 3. 用户确认后，将最终结果写入数据库
+                    // 3. 用户确认后，将最终结果写入数据库 (这部分代码也保持原样，无需修改)
                     using (Transaction tr = _db.TransactionManager.StartTransaction())
                         {
                         var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
@@ -129,17 +144,10 @@ namespace CADTranslator.Services.CAD
 
                             if (match.Success)
                                 {
-                                // 1. 调用图例定位方法（这部分逻辑不变且正确）
                                 PlaceGraphicsAlongsideText(finalLineText, match, currentParaInfo, linePosition, jig, tr, modelSpace);
-
-                                // 2. 【核心修正】执行智能替换
-                                string matchedValue = match.Value; // 获取匹配到的完整字符串，如 "*图例位置*"
-                                string corePlaceholder = AdvancedTextService.JigPlaceholder; // 获取核心占位符，如 *图例位置*
-
-                                // 3. 只替换核心部分：将 "*图例位置*" 内部的 *图例位置* 替换为空格
+                                string matchedValue = match.Value;
+                                string corePlaceholder = AdvancedTextService.JigPlaceholder;
                                 string replacementString = matchedValue.Replace(corePlaceholder, new string(' ', currentParaInfo.OriginalSpaceCount));
-
-                                // 4. 将原文中的整个匹配项，替换为我们新构造的、保留了引号的字符串
                                 finalLineText = finalLineText.Remove(match.Index, match.Length).Insert(match.Index, replacementString);
                                 }
 
@@ -147,38 +155,25 @@ namespace CADTranslator.Services.CAD
 
                             using (var newText = new DBText())
                                 {
-                                // 1. 先从模板继承基础样式
                                 newText.SetPropertiesFrom(currentParaInfo.TemplateEntity);
                                 newText.TextString = finalLineText;
                                 newText.Height = currentParaInfo.Height;
                                 newText.WidthFactor = currentParaInfo.WidthFactor;
                                 newText.TextStyleId = currentParaInfo.TextStyleId;
-
-                                // 2. 【核心修改】根据原始文本的对齐方式，设置正确的位置属性
-                                // 我们从 ParagraphInfo 中获取原始的对齐模式
                                 var originalHMode = currentParaInfo.HorizontalMode;
                                 var originalVMode = currentParaInfo.VerticalMode;
-
                                 newText.HorizontalMode = originalHMode;
                                 newText.VerticalMode = originalVMode;
-
-                                // 3. 判断：到底该用 Position 还是 AlignmentPoint？
                                 if (originalHMode == TextHorizontalMode.TextLeft && originalVMode == TextVerticalMode.TextBase)
                                     {
-                                    // 对于默认的“左下角”对齐，我们设置 Position
                                     newText.Position = linePosition;
                                     }
                                 else
                                     {
-                                    // 对于所有其他的对齐方式，我们必须设置 AlignmentPoint
                                     newText.AlignmentPoint = linePosition;
                                     }
-
-                                // 4. 将新文字添加到模型空间
                                 modelSpace.AppendEntity(newText);
                                 tr.AddNewlyCreatedDBObject(newText, true);
-
-                                // 5. 【关键】在添加后，调用一次 AdjustAlignment，确保万无一失
                                 newText.AdjustAlignment(_db);
                                 }
                             }

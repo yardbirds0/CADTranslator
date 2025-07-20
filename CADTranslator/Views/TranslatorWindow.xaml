@@ -9,11 +9,12 @@
                  mc:Ignorable="d"
                  d:DataContext="{d:DesignInstance Type=vm:TranslatorViewModel,IsDesignTimeCreatable=False}"
                  Title="CAD Translator Toolbox"
-                 Height="725"
+                 Height="720"
                  Width="1080"
                  WindowStartupLocation="CenterScreen"
                  WindowBackdropType="Mica"
-                 d:DesignHeight="1200"
+                 d:DesignHeight="1400"
+                 Loaded="TranslatorWindow_Loaded"
                  ExtendsContentIntoTitleBar="True">
 
     <Window.Resources>
@@ -49,363 +50,581 @@
                 <Setter Property="VerticalContentAlignment"
                         Value="Center" />
             </Style>
+            <Style x:Key="HoverHighlightNavigationViewItemStyle"
+                   TargetType="ui:NavigationViewItem">
+                <Setter Property="BorderThickness"
+                        Value="1" />
+                <Setter Property="BorderBrush"
+                        Value="Transparent" />
+                <Setter Property="FontSize"
+                        Value="14" />
+                <Setter Property="FontWeight"
+                        Value="SemiBold" />
+            </Style>
         </ResourceDictionary>
     </Window.Resources>
 
     <Grid Name="MainGrid"
           IsEnabled="{Binding IsUiEnabled}">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="300" />
+            <ColumnDefinition x:Name="NavColumn"
+                              Width="320" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <Border Grid.Column="0"
-                Background="{DynamicResource ApplicationBackgroundBrush}"
-                CornerRadius="8,0,0,8"
-                BorderThickness="0,0,1,0"
-                BorderBrush="{DynamicResource ControlElevationBorderBrush}">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel>
-                    <Border Padding="5"
-                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            Margin="10,10,20,0"
-                            Background="SkyBlue"
-                            CornerRadius="10">
+        <ui:NavigationView x:Name="RootNavigationView"
+                           PaneOpened="RootNavigationView_PaneOpened"
+                           PaneClosed="RootNavigationView_PaneClosed"
+                           Grid.Column="0"
+                           IsPaneOpen="True"
+                           OpenPaneLength="320"
+                           PaneDisplayMode="Left"
+                           IsBackButtonVisible="Collapsed"
+                           PreviewMouseLeftButtonUp="RootNavigationView_OnPreviewMouseLeftButtonUp">
 
-                        <TextBlock Text="翻译工具箱"
-                                   FontSize="24"
-                                   Padding="10"
-                                   FontWeight="Bold"
-                                   TextAlignment="Center" />
-                    </Border>
-                    <StackPanel Margin="20,15,20,0">
-                        <Border Padding="5,5,5,5"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1"
-                                Margin="-5,0,0,0"
-                                Background="{DynamicResource CardBackgroundFillColorSecondaryBrush}"
-                                CornerRadius="10">
-                            <StackPanel>
-                                <TextBlock Text="翻译语言设置"
+            <ui:NavigationView.Style>
+                <Style TargetType="ui:NavigationView"
+                       BasedOn="{StaticResource {x:Type ui:NavigationView}}">
+                    <Setter Property="PaneHeader">
+                        <Setter.Value>
+                            <Border Margin="4,4,4,10"
+                                    Background="SkyBlue"
+                                    CornerRadius="8">
+                                <TextBlock Padding="10"
+                                           FontSize="20"
                                            FontWeight="Bold"
+                                           TextAlignment="Center"
+                                           Text="翻译工具箱" />
+                            </Border>
+                        </Setter.Value>
+                    </Setter>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=IsPaneOpen}"
+                                     Value="False">
+                            <Setter Property="PaneHeader"
+                                    Value="{x:Null}" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ui:NavigationView.Style>
+
+            <ui:NavigationView.MenuItems>
+
+                <ui:NavigationViewItem Icon="{ui:SymbolIcon Translate24}"
+                                       d:IsExpanded="True"
+                                       Margin="-3,0,0,0"
+                                       Style="{StaticResource HoverHighlightNavigationViewItemStyle}">
+                    <ui:NavigationViewItem.Content>
+                        <TextBlock Text="翻译语言设置"
+                                   FontSize="16"
+                                   Margin="10,0,0,0"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FF003366" />
+                    </ui:NavigationViewItem.Content>
+                    <ui:NavigationViewItem.MenuItems>
+                        <StackPanel Margin="45, 10, 20, 10"
+                                    PreviewMouseDown="SettingsPanel_PreviewMouseDown">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="源语言"
                                            HorizontalAlignment="Center"
+                                           VerticalAlignment="Top"
+                                           Margin="0,0,0,5"
+                                           Opacity="0.8" />
+                                <TextBlock Grid.Column="1"
+                                           Text="目标语言"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Top"
+                                           Margin="0,0,0,5"
+                                           Opacity="0.8" />
+                            </Grid>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <ComboBox Grid.Column="0"
+                                          ItemsSource="{Binding SupportedLanguages}"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedValuePath="Value"
+                                          SelectedValue="{Binding SourceLanguage}"
+                                          Margin="0,0,5,0" />
+                                <ComboBox Grid.Column="1"
+                                          ItemsSource="{Binding SupportedLanguages}"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedValuePath="Value"
+                                          SelectedValue="{Binding TargetLanguage}"
+                                          Margin="5,0,0,0" />
+                            </Grid>
+                        </StackPanel>
+                    </ui:NavigationViewItem.MenuItems>
+                </ui:NavigationViewItem>
+
+                <ui:NavigationViewItem Icon="{ui:SymbolIcon Key24}"
+                                       d:IsExpanded="True"
+                                       Margin="-3,0,0,0"
+                                       IsExpanded="True"
+                                       Style="{StaticResource HoverHighlightNavigationViewItemStyle}">
+                    <ui:NavigationViewItem.Content>
+                        <TextBlock Text="翻译接口设置"
+                                   Margin="10,0,0,0"
+                                   FontSize="16"
+                                   Foreground="#FF003366"
+                                   FontWeight="SemiBold" />
+                    </ui:NavigationViewItem.Content>
+                    <ui:NavigationViewItem.MenuItems>
+                        <StackPanel Margin="45, 10, 20, 10"
+                                    PreviewMouseDown="SettingsPanel_PreviewMouseDown">
+                            <TextBlock Text="API 服务"
+                                       Margin="0,0,0,5"
+                                       Opacity="0.8" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <ComboBox Grid.Column="0"
+                                          ItemsSource="{Binding ApiServiceOptions}"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedItem="{Binding CurrentProvider, Mode=TwoWay}" />
+
+                                <ui:Button Grid.Column="1"
+                                           Command="{Binding ManageApiDefinitionsCommand}"
+                                           Content="+"
                                            FontSize="16"
-                                           Margin="0,0,0,10" />
+                                           FontWeight="Bold"
+                                           Padding="10,5"
+                                           Margin="8,0,0,0" />
+                            </Grid>
 
-                                <Grid Margin="0,0,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="源语言"
-                                               Grid.Column="0"
+                            <TextBlock Text="用户 ID"
+                                       Margin="0,10,0,5"
+                                       Opacity="0.8" />
+                            <Grid>
+                                <TextBox Text="{Binding CurrentProfile.UserId, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding IsUserIdEnabled}" />
+                                <TextBlock Text="当前API无需设置该内容"
+                                           Foreground="LightGray"
+                                           FontStyle="Italic"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding IsUserIdEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                           IsHitTestVisible="False" />
+                            </Grid>
+
+                            <TextBlock Text="API 密钥"
+                                       Margin="0,10,0,5"
+                                       Opacity="0.8" />
+                            <Grid>
+                                <TextBox Text="{Binding CurrentProfile.ApiKey, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding IsApiKeyEnabled}" />
+                                <TextBlock Text="当前API无需设置该内容"
+                                           Foreground="LightGray"
+                                           FontStyle="Italic"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding IsApiKeyEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                           IsHitTestVisible="False" />
+                            </Grid>
+
+                            <TextBlock Text="API URL"
+                                       Margin="0,10,0,5"
+                                       Opacity="0.8" />
+                            <Grid>
+                                <TextBox Text="{Binding CurrentProfile.ApiEndpoint, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding IsApiUrlEnabled}" />
+                                <TextBlock Text="当前API无需设置该内容"
+                                           Foreground="LightGray"
+                                           FontStyle="Italic"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding IsApiUrlEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                           IsHitTestVisible="False" />
+                            </Grid>
+
+                            <TextBlock Text="模型列表"
+                                       Margin="0,10,0,5"
+                                       Opacity="0.8" />
+                            <Border Padding="5"
+                                    Background="{DynamicResource CardBackgroundFillColorSecondaryBrush}"
+                                    CornerRadius="4">
+                                <StackPanel>
+                                    <ComboBox ItemsSource="{Binding ModelList}"
+                                              SelectedValue="{Binding CurrentProfile.LastSelectedModel}"
+                                              Text="{Binding CurrentModelInput, UpdateSourceTrigger=PropertyChanged}"
+                                              IsEditable="True"
+                                              IsEnabled="{Binding IsModelListEnabled}" />
+                                    <Grid Margin="0,8,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <ui:Button Grid.Column="0"
+                                                   Content="管理模型列表"
+                                                   Appearance="Dark"
+                                                   Margin="0,0,4,0"
+                                                   Command="{Binding ManageModelsCommand}"
+                                                   IsEnabled="{Binding IsModelListEnabled}" />
+                                        <ui:Button Grid.Column="1"
+                                                   Content="获取模型列表"
+                                                   Margin="4,0,0,0"
+                                                   Command="{Binding GetModelsCommand}"
+                                                   IsEnabled="{Binding IsModelListEnabled}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="API 余额"
+                                       Margin="0,10,0,5"
+                                       Opacity="0.8" />
+                            <Grid>
+                                <TextBox Text="{Binding LastBalanceDisplay}"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         IsEnabled="{Binding IsBalanceFeatureEnabled}"
+                                         VerticalContentAlignment="Center"
+                                         Padding="5">
+                                    <TextBox.Style>
+                                        <Style TargetType="TextBox"
+                                               BasedOn="{StaticResource {x:Type TextBox}}">
+                                            <Style.Triggers>
+                                                <Trigger Property="IsEnabled"
+                                                         Value="False">
+                                                    <Setter Property="Foreground"
+                                                            Value="Transparent" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBox.Style>
+                                </TextBox>
+                                <TextBlock Text="当前API不支持余额查询"
+                                           Foreground="LightGray"
+                                           FontStyle="Italic"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding IsBalanceFeatureEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                           IsHitTestVisible="False" />
+                            </Grid>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <ui:Button Grid.Column="0"
+                                           Content="历史记录"
+                                           Margin="0,0,4,0"
+                                           Appearance="Dark"
+                                           Command="{Binding ViewHistoryCommand}"
+                                           IsEnabled="{Binding IsBalanceFeatureEnabled}" />
+                                <ui:Button Grid.Column="1"
+                                           Content="获取余额"
+                                           Margin="4,0,0,0"
+                                           Command="{Binding GetBalanceCommand}"
+                                           IsEnabled="{Binding IsBalanceFeatureEnabled}" />
+                            </Grid>
+
+                            <TextBlock Text="提示词(如不是必要，请不要填写)"
+                                       Margin="0,10,0,5"
+                                       Opacity="0.8" />
+                            <Grid>
+                                <TextBox Text="{Binding GlobalPrompt, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding IsPromptSupported}"
+                                         MinHeight="100"
+                                         TextWrapping="Wrap"
+                                         AcceptsReturn="True"
+                                         VerticalScrollBarVisibility="Auto">
+                                    <TextBox.Style>
+                                        <Style TargetType="TextBox"
+                                               BasedOn="{StaticResource {x:Type TextBox}}">
+                                            <Style.Triggers>
+                                                <Trigger Property="IsEnabled"
+                                                         Value="False">
+                                                    <Setter Property="Foreground"
+                                                            Value="Transparent" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBox.Style>
+                                </TextBox>
+                                <TextBlock Text="当前API无需填写提示词"
+                                           Foreground="LightGray"
+                                           FontStyle="Italic"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding IsPromptSupported, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                           IsHitTestVisible="False" />
+                            </Grid>
+
+                        </StackPanel>
+                    </ui:NavigationViewItem.MenuItems>
+                </ui:NavigationViewItem>
+
+                <ui:NavigationViewItem Icon="{ui:SymbolIcon Settings24}"
+                                       d:IsExpanded="True"
+                                       Margin="-3,0,0,0"
+                                       Style="{StaticResource HoverHighlightNavigationViewItemStyle}">
+                    <ui:NavigationViewItem.Content>
+                        <TextBlock Text="功能设置"
+                                   Margin="10,0,0,0"
+                                   FontSize="16"
+                                   Foreground="#FF003366"
+                                   FontWeight="SemiBold" />
+                    </ui:NavigationViewItem.Content>
+                    <ui:NavigationViewItem.MenuItems>
+                        <StackPanel Margin="45, 10, 20, 10"
+                                    PreviewMouseDown="SettingsPanel_PreviewMouseDown">
+
+                            <Border Background="{DynamicResource SystemAccentColorLight3Brush}"
+                                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,8">
+                                <StackPanel>
+                                    <TextBlock Text="实时排版功能"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               HorizontalAlignment="Center" />
+                                    <Grid Margin="0,8,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <ui:ToggleSwitch x:Name="LiveLayoutToggleSwitch"
+                                                         Grid.Column="0"
+                                                         VerticalAlignment="Center"
+                                                         IsChecked="{Binding IsLiveLayoutEnabled}"
+                                                         OnContent="打开"
+                                                         OffContent="关闭" />
+
+                                        <TextBlock Grid.Column="1"
+                                                   VerticalAlignment="Center"
+                                                   Text="行间距:"
+                                                   Margin="15,0,5,0"
+                                                   FontWeight="Regular"
+                                                   Opacity="1"
+                                                   Visibility="{Binding IsLiveLayoutEnabled, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                                        <ComboBox Grid.Column="2"
+                                                  VerticalAlignment="Center"
+                                                  ItemsSource="{Binding LineSpacingOptions}"
+                                                  Text="{Binding CurrentLineSpacingInput, UpdateSourceTrigger=LostFocus}"
+                                                  IsEditable="True"
+                                                  IsEnabled="{Binding IsLiveLayoutEnabled}"
+                                                  Visibility="{Binding IsLiveLayoutEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
+
+                                            <ComboBox.Style>
+                                                <Style TargetType="ComboBox"
+                                                       BasedOn="{StaticResource {x:Type ComboBox}}">
+                                                    <Style.Triggers>
+                                                        <Trigger Property="IsEnabled"
+                                                                 Value="False">
+                                                            <Setter Property="Foreground"
+                                                                    Value="Transparent" />
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ComboBox.Style>
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0"
+                                                                   Text="{Binding}"
+                                                                   VerticalAlignment="Center"
+                                                                   Padding="3,0,0,0" />
+                                                        <ui:Button Grid.Column="1"
+                                                                   Command="{Binding DataContext.DeleteLineSpacingOptionCommand, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                                   CommandParameter="{Binding}"
+                                                                   Appearance="Transparent"
+                                                                   FontSize="16"
+                                                                   FontWeight="Bold"
+                                                                   Padding="8,0">
+                                                            <ui:Button.Style>
+                                                                <Style TargetType="ui:Button"
+                                                                       BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                                    <Setter Property="Content"
+                                                                            Value="×" />
+                                                                    <Setter Property="Foreground"
+                                                                            Value="Gray" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding}"
+                                                                                     Value="不指定">
+                                                                            <Setter Property="Visibility"
+                                                                                    Value="Collapsed" />
+                                                                        </DataTrigger>
+                                                                        <Trigger Property="IsMouseOver"
+                                                                                 Value="True">
+                                                                            <Setter Property="Foreground"
+                                                                                    Value="Red" />
+                                                                        </Trigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </ui:Button.Style>
+                                                        </ui:Button>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{DynamicResource SystemAccentColorLight3Brush}"
+                                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,8"
+                                    Margin="0,15,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="段落合并灵敏度"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               HorizontalAlignment="Center" />
+                                    <TextBlock Text="(值越高越容易合并)"
+                                               Margin="0,-2,0,5"
+                                               Opacity="0.8"
                                                HorizontalAlignment="Center"
-                                               VerticalAlignment="Top"
-                                               Margin="0,0,0,5"
-                                               Opacity="0.8" />
-                                    <TextBlock Text="目标语言"
-                                               Margin="0,0,0,5"
-                                               Grid.Column="1"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Top"
-                                               Opacity="0.8" />
-                                </Grid>
-                                <Grid Margin="0,0,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <ComboBox ItemsSource="{Binding SupportedLanguages}"
-                                              DisplayMemberPath="DisplayName"
-                                              Grid.Column="0"
-                                              Margin="0,0,5,0"
-                                              SelectedValuePath="Value"
-                                              SelectedValue="{Binding SourceLanguage}" />
-                                    <ComboBox ItemsSource="{Binding SupportedLanguages}"
-                                              DisplayMemberPath="DisplayName"
-                                              SelectedValuePath="Value"
-                                              Margin="5,0,5,0"
-                                              Grid.Column="1"
-                                              SelectedValue="{Binding TargetLanguage}" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
+                                               FontSize="11" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Slider Grid.Column="0"
+                                                Minimum="0.1"
+                                                Maximum="0.9"
+                                                TickFrequency="0.01"
+                                                IsSnapToTickEnabled="True"
+                                                Value="{Binding SimilarityThreshold, Mode=TwoWay}"
+                                                Margin="0,0,10,0"
+                                                VerticalAlignment="Center" />
+                                        <TextBox Grid.Column="1"
+                                                 Text="{Binding SimilarityThreshold, Mode=TwoWay, StringFormat=F2}"
+                                                 Width="70"
+                                                 TextAlignment="Center"
+                                                 VerticalContentAlignment="Center" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{DynamicResource SystemAccentColorLight3Brush}"
+                                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,8"
+                                    Margin="0,15,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="多线程并发翻译"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               HorizontalAlignment="Center" />
+                                    <Grid Margin="0,8,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <ui:ToggleSwitch x:Name="MultiThreadingToggleSwitch"
+                                                         Grid.Column="0"
+                                                         VerticalAlignment="Center"
+                                                         IsChecked="{Binding IsMultiThreadingEnabled}"
+                                                         OnContent="打开"
+                                                         OffContent="关闭" />
+
+                                        <TextBlock Grid.Column="1"
+                                                   VerticalAlignment="Center"
+                                                   Text="最大并发量:"
+                                                   Margin="15,0,5,0"
+                                                   FontWeight="Regular"
+                                                   Opacity="1"
+                                                   Visibility="{Binding IsMultiThreadingEnabled, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                                        <ComboBox Grid.Column="2"
+                                                  VerticalAlignment="Center"
+                                                  ItemsSource="{Binding ConcurrencyLevelOptions}"
+                                                  Text="{Binding CurrentConcurrencyLevelInput, UpdateSourceTrigger=LostFocus}"
+                                                  IsEditable="True"
+                                                  IsEnabled="{Binding IsMultiThreadingEnabled}"
+                                                  Visibility="{Binding IsMultiThreadingEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
+
+                                            <ComboBox.Style>
+                                                <Style TargetType="ComboBox"
+                                                       BasedOn="{StaticResource {x:Type ComboBox}}">
+                                                    <Style.Triggers>
+                                                        <Trigger Property="IsEnabled"
+                                                                 Value="False">
+                                                            <Setter Property="Foreground"
+                                                                    Value="Transparent" />
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ComboBox.Style>
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0"
+                                                                   VerticalAlignment="Center"
+                                                                   Text="{Binding}" />
+                                                        <ui:Button Grid.Column="1"
+                                                                   Command="{Binding DataContext.DeleteConcurrencyOptionCommand, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                                   CommandParameter="{Binding}"
+                                                                   Appearance="Transparent"
+                                                                   FontSize="14"
+                                                                   FontWeight="Bold"
+                                                                   Padding="8,0">
+                                                            <ui:Button.Style>
+                                                                <Style TargetType="ui:Button"
+                                                                       BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                                    <Setter Property="Content"
+                                                                            Value="×" />
+                                                                    <Setter Property="Foreground"
+                                                                            Value="Gray" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding}"
+                                                                                     Value="2">
+                                                                            <Setter Property="Visibility"
+                                                                                    Value="Collapsed" />
+                                                                        </DataTrigger>
+                                                                        <Trigger Property="IsMouseOver"
+                                                                                 Value="True">
+                                                                            <Setter Property="Foreground"
+                                                                                    Value="Red" />
+                                                                        </Trigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </ui:Button.Style>
+                                                        </ui:Button>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+                    </ui:NavigationViewItem.MenuItems>
+                </ui:NavigationViewItem>
+
+            </ui:NavigationView.MenuItems>
+        </ui:NavigationView>
 
 
-                        <TextBlock Text="API 设置"
-                                   FontWeight="Bold"
-                                   HorizontalAlignment="Center"
-                                   FontSize="16"
-                                   Margin="0,15,0,0" />
-                        <TextBlock Text="API 服务"
-                                   Margin="0,0,0,0"
-                                   Opacity="0.8" />
-                        <ComboBox ItemsSource="{Binding ApiServiceOptions}"
-                                  DisplayMemberPath="DisplayName"
-                                  SelectedItem="{Binding CurrentProvider, Mode=TwoWay}" />
-                        <ui:Button Content="新增/管理API..."
-                                   Command="{Binding ManageApiDefinitionsCommand}"
-                                   Icon="Add24"
-                                   Appearance="Transparent"
-                                   HorizontalAlignment="Right"
-                                   Margin="0,5,0,0" />
-                        <TextBlock Text="用户 ID"
-                                   Margin="0,10,0,5"
-                                   Opacity="0.8" />
-                        <Grid>
-                            <TextBox Text="{Binding CurrentProfile.UserId, UpdateSourceTrigger=PropertyChanged}"
-                                     IsEnabled="{Binding IsUserIdEnabled}" />
-                            <TextBlock Text="当前API无需设置该内容"
-                                       Foreground="LightGray"
-                                       FontStyle="Italic"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center"
-                                       Visibility="{Binding IsUserIdEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                       IsHitTestVisible="False" />
-                        </Grid>
-                        <TextBlock Text="API 密钥"
-                                   Margin="0,10,0,5"
-                                   Opacity="0.8" />
-                        <Grid>
-                            <TextBox Text="{Binding CurrentProfile.ApiKey, UpdateSourceTrigger=PropertyChanged}"
-                                     IsEnabled="{Binding IsApiKeyEnabled}" />
-                            <TextBlock Text="当前API无需设置该内容"
-                                       Foreground="LightGray"
-                                       FontStyle="Italic"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center"
-                                       Visibility="{Binding IsApiKeyEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                       IsHitTestVisible="False" />
-                        </Grid>
-                        <TextBlock Text="API URL"
-                                   Margin="0,10,0,5"
-                                   Opacity="0.8" />
-                        <Grid>
-                            <TextBox Text="{Binding CurrentProfile.ApiEndpoint, UpdateSourceTrigger=PropertyChanged}"
-                                     IsEnabled="{Binding IsApiUrlEnabled}" />
-                            <TextBlock Text="当前API无需设置该内容"
-                                       Foreground="LightGray"
-                                       FontStyle="Italic"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center"
-                                       Visibility="{Binding IsApiUrlEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                       IsHitTestVisible="False" />
-                        </Grid>
-                        <TextBlock Text="模型列表"
-                                   Margin="0,10,0,5"
-                                   Opacity="0.8" />
-                        <Border Padding="5"
-                                Background="{DynamicResource CardBackgroundFillColorSecondaryBrush}"
-                                CornerRadius="4">
-                            <StackPanel>
-                                <ComboBox ItemsSource="{Binding ModelList}"
-                                          SelectedValue="{Binding CurrentProfile.LastSelectedModel}"
-                                          Text="{Binding CurrentModelInput, UpdateSourceTrigger=PropertyChanged}"
-                                          IsEditable="True"
-                                          IsEnabled="{Binding IsModelListEnabled}" />
-                                <Grid Margin="0,8,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <ui:Button Grid.Column="0"
-                                               Content="管理模型列表"
-                                               Appearance="Dark"
-                                               Margin="0,0,0,0"
-                                               Command="{Binding ManageModelsCommand}"
-                                               IsEnabled="{Binding IsModelListEnabled}" />
-                                    <ui:Button Grid.Column="1"
-                                               Content="获取模型列表"
-                                               Margin="4,0,0,0"
-                                               Command="{Binding GetModelsCommand}"
-                                               IsEnabled="{Binding IsModelListEnabled}" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-                        <TextBlock Text="API 余额"
-                                   Margin="0,10,0,10" />
-
-                        <Grid Margin="0,0,0,10">
-                            <TextBox Text="{Binding LastBalanceDisplay}"
-                                     IsReadOnly="True"
-                                     TextWrapping="Wrap"
-                                     IsEnabled="{Binding IsBalanceFeatureEnabled}"
-                                     VerticalContentAlignment="Center"
-                                     Padding="5">
-                                <TextBox.Style>
-                                    <Style TargetType="TextBox"
-                                           BasedOn="{StaticResource {x:Type TextBox}}">
-                                        <Style.Triggers>
-                                            <Trigger Property="IsEnabled"
-                                                     Value="False">
-                                                <Setter Property="Foreground"
-                                                        Value="Transparent" />
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBox.Style>
-                            </TextBox>
-
-                            <TextBlock Text="当前API不支持余额查询"
-                                       Foreground="LightGray"
-                                       FontStyle="Italic"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center"
-                                       Visibility="{Binding IsBalanceFeatureEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                       IsHitTestVisible="False" />
-                        </Grid>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-
-                            <ui:Button Grid.Column="0"
-                                       Content="历史记录"
-                                       Margin="4,0,10,0"
-                                       Appearance="Dark"
-                                       Command="{Binding ViewHistoryCommand}"
-                                       IsEnabled="{Binding IsBalanceFeatureEnabled}" />
-
-                            <ui:Button Grid.Column="1"
-                                       Content="获取余额"
-                                       Margin="10,0,0,0"
-                                       Command="{Binding GetBalanceCommand}"
-                                       IsEnabled="{Binding IsBalanceFeatureEnabled}" />
-
-                        </Grid>
-                        <TextBlock Text="提示词(如不是必要，请不要填写)"
-                                   Margin="0,10,0,5"
-                                   Opacity="0.8" />
-                        <TextBox Text="{Binding GlobalPrompt, UpdateSourceTrigger=PropertyChanged}"
-                                 MinHeight="100"
-                                 TextWrapping="Wrap"
-                                 AcceptsReturn="True"
-                                 VerticalScrollBarVisibility="Auto" />
-                        <TextBlock Text="高级设置"
-                                   FontWeight="Bold"
-                                   HorizontalAlignment="Center"
-                                   FontSize="16"
-                                   Margin="0,15,0,0" />
-                        <TextBlock Text="段落合并灵敏度 (值越高越容易合并)"
-                                   Margin="0,10,0,5"
-                                   Opacity="0.8" />
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-
-                            <Slider Grid.Column="0"
-                                    Minimum="0.1"
-                                    Maximum="0.9"
-                                    TickFrequency="0.05"
-                                    IsSnapToTickEnabled="True"
-                                    Value="{Binding SimilarityThreshold, Mode=TwoWay}"
-                                    Margin="0,0,10,0"
-                                    VerticalAlignment="Center"
-                                    Cursor="" />
-
-                            <ui:NumberBox Grid.Column="1"
-                                          Value="{Binding SimilarityThreshold, Mode=TwoWay}"
-                                          Width="100"
-                                          SmallChange="0.05"
-                                          LargeChange="0.2" />
-                        </Grid>
-
-                        <TextBlock Text="多线程设置"
-                                   FontWeight="Bold"
-                                   HorizontalAlignment="Center"
-                                   FontSize="16"
-                                   Margin="0,15,0,0" />
-                        <ui:ToggleSwitch 
-                                         OnContent="开启多线程并发"
-                                         OffContent="关闭多线程并发"
-                                         IsChecked="{Binding IsMultiThreadingEnabled}"
-                                         Margin="0,10,0,5" />
-                        <TextBlock Text="最大并发量"
-                                   Margin="0,0,0,5"
-                                   Opacity="0.8" />
-                        <Grid>
-                            <ComboBox ItemsSource="{Binding ConcurrencyLevelOptions}"
-                                      Text="{Binding CurrentConcurrencyLevelInput, UpdateSourceTrigger=LostFocus}"
-                                      IsEditable="True"
-                                      Margin="0,0,0,50"
-                                      IsEnabled="{Binding IsMultiThreadingEnabled}">
-                                <ComboBox.Style>
-                                    <Style TargetType="ComboBox"
-                                           BasedOn="{StaticResource {x:Type ComboBox}}">
-                                        <Style.Triggers>
-                                            <Trigger Property="IsEnabled"
-                                                     Value="False">
-                                                <Setter Property="Foreground"
-                                                        Value="Transparent" />
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </ComboBox.Style>
-                                <ComboBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-
-                                            <TextBlock Grid.Column="0"
-                                                       VerticalAlignment="Center"
-                                                       Text="{Binding}" />
-
-                                            <ui:Button Grid.Column="1"
-                                                       Command="{Binding DataContext.DeleteConcurrencyOptionCommand, RelativeSource={RelativeSource AncestorType=ComboBox}}"
-                                                       CommandParameter="{Binding}"
-                                                       Appearance="Transparent"
-                                                       FontSize="14"
-                                                       FontWeight="Bold"
-                                                       Padding="8,0">
-                                                <ui:Button.Style>
-                                                    <Style TargetType="ui:Button"
-                                                           BasedOn="{StaticResource {x:Type ui:Button}}">
-                                                        <Setter Property="Content"
-                                                                Value="×" />
-                                                        <Setter Property="Foreground"
-                                                                Value="Gray" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding}"
-                                                                         Value="2">
-                                                                <Setter Property="Visibility"
-                                                                        Value="Collapsed" />
-                                                            </DataTrigger>
-                                                            <Trigger Property="IsMouseOver"
-                                                                     Value="True">
-                                                                <Setter Property="Foreground"
-                                                                        Value="Red" />
-                                                            </Trigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </ui:Button.Style>
-                                            </ui:Button>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ComboBox.ItemTemplate>
-                            </ComboBox>
-
-                            <TextBlock Text="多线程未采用"
-                                       Foreground="LightGray"
-                                       FontStyle="Italic"
-                                       HorizontalAlignment="Center"
-                                       Margin="0,0,0,50"
-                                       VerticalAlignment="Center"
-                                       Visibility="{Binding IsMultiThreadingEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                       IsHitTestVisible="False" />
-                        </Grid>
-                    </StackPanel>
-                </StackPanel>
-            </ScrollViewer>
-        </Border>
-
-        
 
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
@@ -574,7 +793,7 @@
             <Border Grid.Row="3"
                     Padding="15,10"
                     Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                    BorderThickness="0,1,0,0"
+                    BorderThickness="5,1,0,0"
                     BorderBrush="{DynamicResource ControlElevationBorderBrush}">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -612,117 +831,31 @@
 
                     <Grid Grid.Column="2"
                           VerticalAlignment="Stretch">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <ui:ToggleSwitch IsChecked="{Binding IsLiveLayoutEnabled}"
-                                         Grid.Row="1"
-                                         FontSize="16"
-                                         Height="40"
-                                         OnContent="实时排版已开启"
-                                         OffContent="已关闭实时排版"
-                                         HorizontalAlignment="Left"
-                                         VerticalAlignment="Stretch" />
-                        <TextBlock Grid.Row="2"
-                                   Text="排版后行间距"
-                                   Opacity="0.8"
-                                   Margin="0,0,0,5" />
 
-                        <Grid Grid.Row="3">
-                            <ComboBox ItemsSource="{Binding LineSpacingOptions}"
-                                      Text="{Binding CurrentLineSpacingInput, UpdateSourceTrigger=LostFocus}"
-                                      IsEditable="True"
-                                      IsEnabled="{Binding IsLiveLayoutEnabled}">
-                                <ComboBox.Style>
-                                    <Style TargetType="ComboBox"
-                                           BasedOn="{StaticResource {x:Type ComboBox}}">
-                                        <Style.Triggers>
-                                            <Trigger Property="IsEnabled"
-                                                     Value="False">
-                                                <Setter Property="Foreground"
-                                                        Value="Transparent" />
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </ComboBox.Style>
-                                <ComboBox.ItemTemplate>
 
-                                    <DataTemplate>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
+                        <TextBlock Text="当前任务进度"
+                                   Opacity="1"
+                                   Margin="0,40,0,0"
+                                   FontWeight="Bold"
+                                   Foreground="SteelBlue"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
 
-                                            <TextBlock Grid.Column="0"
-                                                       Text="{Binding}"
-                                                       VerticalAlignment="Center"
-                                                       Padding="3,0,0,0" />
-
-                                            <ui:Button Grid.Column="1"
-                                                       Command="{Binding DataContext.DeleteLineSpacingOptionCommand, RelativeSource={RelativeSource AncestorType=ComboBox}}"
-                                                       CommandParameter="{Binding}"
-                                                       Appearance="Transparent"
-                                                       FontSize="14"
-                                                       FontWeight="Bold"
-                                                       Padding="8,0">
-                                                <ui:Button.Style>
-                                                    <Style TargetType="ui:Button"
-                                                           BasedOn="{StaticResource {x:Type ui:Button}}">
-                                                        <Setter Property="Content"
-                                                                Value="×" />
-                                                        <Setter Property="Foreground"
-                                                                Value="Gray" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding}"
-                                                                         Value="不指定">
-                                                                <Setter Property="Visibility"
-                                                                        Value="Collapsed" />
-                                                            </DataTrigger>
-                                                            <Trigger Property="IsMouseOver"
-                                                                     Value="True">
-                                                                <Setter Property="Foreground"
-                                                                        Value="Red" />
-                                                            </Trigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </ui:Button.Style>
-                                            </ui:Button>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ComboBox.ItemTemplate>
-                            </ComboBox>
-
-                            <TextBlock Text="实时排版未采用"
-                                       Foreground="LightGray"
-                                       FontStyle="Italic"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center"
-                                       Visibility="{Binding IsLiveLayoutEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                       IsHitTestVisible="False" />
-                        </Grid>
-
-                        <TextBlock Grid.Row="5"
-                                   Text="当前任务进度"
-                                   Opacity="0.8"
-                                   Margin="0,0,0,5"
-                                   VerticalAlignment="Bottom" />
-
-                        <Grid Grid.Row="6"
+                        <Grid Grid.RowSpan="2"
                               VerticalAlignment="Bottom">
-                            <ProgressBar Value="{Binding ProgressValue}"
-                                         Height="20" />
+                            <ui:ProgressRing Progress="{Binding ProgressValue}"
+                                             Width="150"
+                                             Background="SkyBlue"
+                                             Foreground="SkyBlue"
+                                             IsIndeterminate="{Binding IsProgressIndeterminate}"
+                                             Height="150" />
                             <TextBlock Text="{Binding ProgressText}"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center"
-                                       Foreground="White"
-                                       FontWeight="Bold" />
+                                       Margin="0,-20,0,0"                                      
+                                       FontSize="16"
+                                       FontWeight="Bold"
+                                       Foreground="SteelBlue" />
                         </Grid>
                     </Grid>
 

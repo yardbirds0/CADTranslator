@@ -75,6 +75,7 @@ namespace CADTranslator.Services.CAD
 
                         var firstId = block.SourceObjectIds.FirstOrDefault(id => !id.IsNull && !id.IsErased);
                         var paraInfo = new ParagraphInfo();
+                        paraInfo.GroupKey = block.GroupKey;
 
                         var paragraphBounds = new Extents3d(Point3d.Origin, Point3d.Origin);
                         double maxLineHeight = 0;

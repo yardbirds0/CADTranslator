@@ -233,6 +233,7 @@
     <Compile Include="Services\CAD\UnderlineService.cs" />
     <Compile Include="Services\UI\WindowService.cs" />
     <Compile Include="Tools\UI\InverseBooleanConverter.cs" />
+    <Compile Include="Tools\UI\PaneStateToGridLengthConverter.cs" />
     <Compile Include="Tools\UI\PasswordBoxHelper.cs" />
     <Compile Include="ViewModels\ApiDefinitionViewModel.cs" />
     <Compile Include="ViewModels\BalanceHistoryViewModel.cs" />

@@ -102,6 +102,9 @@ namespace CADTranslator.Services.CAD
                                 {
                                 paraInfo.AssociatedGraphicsBlockId = CreateAnonymousBlockForGraphics(associatedGraphics, paraInfo.OriginalAnchorPoint, tr, bt);
 
+                                // 将找到的原始图例的ID，也加入到这个段落的“源对象ID列表”中，以便后续统一删除
+                                paraInfo.SourceObjectIds.AddRange(associatedGraphics.Select(g => g.ObjectId));
+
                                 // ▼▼▼ 在这里添加新代码 ▼▼▼
                                 // 【核心修正】将“已用”的图形从“素材库”中移除
                                 foreach (var usedGraphic in associatedGraphics)
