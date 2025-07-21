@@ -255,6 +255,36 @@ namespace CADTranslator.AutoCAD.Commands
                         {
                         editor.WriteMessage($"\n未知关键字: '{ex.Input}'。");
                         }
+                    // 1. 在清除选择之前，先获取当前所有高亮的对象ID
+                    var impliedSelectionResult = editor.SelectImplied();
+
+                    // 2. 清除逻辑上的选择（这步依然需要）
+                    editor.SetImpliedSelection(new ObjectId[0]);
+
+                    // 3. 【关键】如果确实存在预选择集，则手动取消这些对象的视觉高亮
+                    if (impliedSelectionResult.Status == PromptStatus.OK)
+                        {
+                        var impliedSelectionSet = impliedSelectionResult.Value;
+                        if (impliedSelectionSet != null && impliedSelectionSet.Count > 0)
+                            {
+                            using (Transaction tr = doc.TransactionManager.StartTransaction())
+                                {
+                                foreach (ObjectId id in impliedSelectionSet.GetObjectIds())
+                                    {
+                                    // 增加一个try-catch以防止对象ID失效等意外情况
+                                    try
+                                        {
+                                        var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                                        ent?.Unhighlight(); // 调用 Unhighlight 方法
+                                        }
+                                    catch { } // 忽略单个对象的失败
+                                    }
+                                tr.Commit();
+                                }
+                            }
+                        }
+                    // 4. 给予用户清晰的提示
+                    editor.WriteMessage("\n设置已更新，请重新选择文字对象。");
                     continue; // 处理完关键字后，继续下一次循环
                     }
                 catch (System.Exception ex)

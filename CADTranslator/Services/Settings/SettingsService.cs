@@ -35,6 +35,10 @@ namespace CADTranslator.Services.Settings
         public string LastSelectedConcurrency { get; set; } = "5";
         public double ParagraphSimilarityThreshold { get; set; } = 0.6;
         public bool AddUnderlineAfterWzpb { get; set; } = false;
+        public bool AddUnderlineAfterSmartLayout { get; set; } = false;
+        public bool IsLanguageSettingsExpanded { get; set; } = true;
+        public bool IsApiSettingsExpanded { get; set; } = true;
+        public bool IsFunctionSettingsExpanded { get; set; } = false;
 
         // API相关的设置
         public ApiServiceType LastSelectedApiService { get; set; } = ApiServiceType.Baidu;

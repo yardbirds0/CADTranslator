@@ -85,6 +85,9 @@
     <Reference Include="Microsoft.Extensions.Primitives, Version=9.0.0.3, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
       <HintPath>..\packages\Microsoft.Extensions.Primitives.9.0.3\lib\net462\Microsoft.Extensions.Primitives.dll</HintPath>
     </Reference>
+    <Reference Include="Microsoft.Xaml.Behaviors, Version=1.1.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
+      <HintPath>..\packages\Microsoft.Xaml.Behaviors.Wpf.1.1.135\lib\net462\Microsoft.Xaml.Behaviors.dll</HintPath>
+    </Reference>
     <Reference Include="Mscc.GenerativeAI, Version=2.6.6.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>..\packages\Mscc.GenerativeAI.2.6.6\lib\net472\Mscc.GenerativeAI.dll</HintPath>
     </Reference>
@@ -193,6 +196,8 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Models\CAD\UnderlineStyle.cs" />
+    <Compile Include="Tools\Behaviors\EllipseProgressBehavior.cs" />
     <Compile Include="Tools\CAD\GeometryHelper.cs" />
     <Compile Include="Tools\CAD\Jigs\BreakLineJig.cs" />
     <Compile Include="Commands\MainCommands.cs" />
@@ -232,9 +237,11 @@
     <Compile Include="Services\Translation\OpenAiTranslator.cs" />
     <Compile Include="Services\CAD\UnderlineService.cs" />
     <Compile Include="Services\UI\WindowService.cs" />
+    <Compile Include="Tools\Controls\WaveProgressBar.cs" />
     <Compile Include="Tools\UI\InverseBooleanConverter.cs" />
     <Compile Include="Tools\UI\PaneStateToGridLengthConverter.cs" />
     <Compile Include="Tools\UI\PasswordBoxHelper.cs" />
+    <Compile Include="Tools\UI\ProgressConverter.cs" />
     <Compile Include="ViewModels\ApiDefinitionViewModel.cs" />
     <Compile Include="ViewModels\BalanceHistoryViewModel.cs" />
     <Compile Include="ViewModels\ModelManagementViewModel.cs" />
@@ -297,6 +304,7 @@
       <Generator>XamlIntelliSenseFileGenerator</Generator>
     </Page>
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>

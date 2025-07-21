@@ -41,7 +41,7 @@ namespace CADTranslator.Services.Translation
 
         public ApiServiceType ServiceType => ApiServiceType.Baidu;
         public string DisplayName => "百度翻译";
-        public string ApiDocumentationUrl => "https://fanyi-api.baidu.com/doc/21";
+        public string ApiDocumentationUrl => "https://api.fanyi.baidu.com/api/trans/product/desktop";
 
         #endregion
 

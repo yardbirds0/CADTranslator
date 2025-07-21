@@ -7,6 +7,7 @@ using CADTranslator.Services.Settings;
 using CADTranslator.Services.Translation;
 using CADTranslator.Services.UI;
 using CADTranslator.Views;
+using System.Windows;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -112,6 +113,7 @@ namespace CADTranslator.ViewModels
                     GetBalanceCommand.RaiseCanExecuteChanged();
                     ViewHistoryCommand.RaiseCanExecuteChanged();
                     ManageModelsCommand.RaiseCanExecuteChanged();
+                    ViewApiDocumentationCommand.RaiseCanExecuteChanged();
 
                     // 更新余额显示
                     UpdateBalanceDisplayForCurrentProvider();
@@ -164,6 +166,19 @@ namespace CADTranslator.ViewModels
             {
             get => _isLiveLayoutEnabled;
             set { if (SetField(ref _isLiveLayoutEnabled, value)) { if (!_isLoading) SaveSettings(); } }
+            }
+        public bool AddUnderlineAfterSmartLayout
+            {
+            get => _currentSettings.AddUnderlineAfterSmartLayout;
+            set
+                {
+                if (_currentSettings.AddUnderlineAfterSmartLayout != value)
+                    {
+                    _currentSettings.AddUnderlineAfterSmartLayout = value;
+                    if (!_isLoading) SaveSettings();
+                    OnPropertyChanged();
+                    }
+                }
             }
         public string CurrentLineSpacingInput
             {
@@ -230,6 +245,45 @@ namespace CADTranslator.ViewModels
             get => _isProgressIndeterminate;
             set => SetField(ref _isProgressIndeterminate, value);
             }
+        public bool IsLanguageSettingsExpanded
+            {
+            get => _currentSettings.IsLanguageSettingsExpanded;
+            set
+                {
+                if (_currentSettings.IsLanguageSettingsExpanded != value)
+                    {
+                    _currentSettings.IsLanguageSettingsExpanded = value;
+                    if (!_isLoading) SaveSettings();
+                    OnPropertyChanged();
+                    }
+                }
+            }
+        public bool IsApiSettingsExpanded
+            {
+            get => _currentSettings.IsApiSettingsExpanded;
+            set
+                {
+                if (_currentSettings.IsApiSettingsExpanded != value)
+                    {
+                    _currentSettings.IsApiSettingsExpanded = value;
+                    if (!_isLoading) SaveSettings();
+                    OnPropertyChanged();
+                    }
+                }
+            }
+        public bool IsFunctionSettingsExpanded
+            {
+            get => _currentSettings.IsFunctionSettingsExpanded;
+            set
+                {
+                if (_currentSettings.IsFunctionSettingsExpanded != value)
+                    {
+                    _currentSettings.IsFunctionSettingsExpanded = value;
+                    if (!_isLoading) SaveSettings();
+                    OnPropertyChanged();
+                    }
+                }
+            }
         #endregion
 
         #region --- 命令 ---
@@ -250,10 +304,17 @@ namespace CADTranslator.ViewModels
         public RelayCommand RetranslateFailedCommand { get; }
         public RelayCommand DeleteConcurrencyOptionCommand { get; }
         public RelayCommand ManageApiDefinitionsCommand { get; }
+        public RelayCommand ViewApiDocumentationCommand { get; }
         #endregion
 
         #region --- 构造函数 ---
-
+        public TranslatorViewModel()
+            {
+            // 初始化设计时所需的数据
+            IsBusy = true;       // 让进度条在设计器中可见
+            ProgressValue = 65;  // 设置一个预览用的进度值
+            ProgressText = "65%"; // 设置预览用的文字
+            }
         // ▼▼▼ 【核心修改】构造函数现在接收所有需要的服务接口 ▼▼▼
         public TranslatorViewModel(
             IWindowService windowService,
@@ -296,6 +357,10 @@ namespace CADTranslator.ViewModels
             RetranslateFailedCommand = new RelayCommand(OnRetranslateFailed, p => _failedItems.Any() && !IsBusy);
             DeleteConcurrencyOptionCommand = new RelayCommand(OnDeleteConcurrencyOption, p => p is string option && option != "2");
             ManageApiDefinitionsCommand = new RelayCommand(OnManageApiDefinitions);
+            ViewApiDocumentationCommand = new RelayCommand(
+    p => OnViewApiDocumentation(),
+    p => !string.IsNullOrWhiteSpace(CurrentProvider?.ApiDocumentationUrl)
+);
 
             // 加载初始设置
             LoadSettings();
@@ -309,7 +374,7 @@ namespace CADTranslator.ViewModels
             {
             try
                 {
-                var doc = Application.DocumentManager.MdiActiveDocument;
+                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
                 if (doc == null)
                     {
                     await _windowService.ShowInformationDialogAsync("操作失败", "未找到活动的CAD文档。");
@@ -770,6 +835,25 @@ namespace CADTranslator.ViewModels
                 await _windowService.ShowInformationDialogAsync("功能待实现", $"已成功创建API定义: '{newDefinition.DisplayName}'。\n下一步我们将实现让这个配置真正生效的逻辑。");
                 }
             }
+        private void OnViewApiDocumentation()
+            {
+            if (CurrentProvider == null || string.IsNullOrWhiteSpace(CurrentProvider.ApiDocumentationUrl))
+                {
+                return;
+                }
+
+            try
+                {
+                // 这会调用系统的默认浏览器来打开链接
+                System.Diagnostics.Process.Start(CurrentProvider.ApiDocumentationUrl);
+                }
+            catch (Exception ex)
+                {
+                Log($"[错误] 无法打开帮助文档链接: {ex.Message}", isError: true);
+                // 如果需要，这里可以弹出一个错误提示框
+                _windowService.ShowInformationDialogAsync("操作失败", $"无法打开链接: {CurrentProvider.ApiDocumentationUrl}\n\n错误: {ex.Message}");
+                }
+            }
         #endregion
 
         #region --- 设置、日志与辅助方法 ---
@@ -808,7 +892,9 @@ namespace CADTranslator.ViewModels
             _currentSettings.ConcurrencyPresets.Distinct().ToList().ForEach(p => ConcurrencyLevelOptions.Add(p));
             CurrentConcurrencyLevelInput = _currentSettings.LastSelectedConcurrency;
 
+
             _isLoading = false;
+
             }
 
         private void SaveSettings()
@@ -824,6 +910,7 @@ namespace CADTranslator.ViewModels
             _currentSettings.ConcurrencyPresets = ConcurrencyLevelOptions.Distinct().ToList();
             _currentSettings.ApiProfiles = ApiProfiles.ToList();
             _currentSettings.BalanceHistory = BalanceHistory.ToList();
+
 
             if (CurrentProvider != null)
                 _currentSettings.LastSelectedApiService = CurrentProvider.ServiceType;

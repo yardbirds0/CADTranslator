@@ -55,7 +55,7 @@ namespace CADTranslator.Services.Translation
 
         public ApiServiceType ServiceType => ApiServiceType.SiliconFlow;
         public string DisplayName => "硅基流动";
-        public string ApiDocumentationUrl => "https://www.siliconflow.cn/zh-cn/doc";
+        public string ApiDocumentationUrl => "https://www.siliconflow.cn/pricing";
 
         #endregion
 

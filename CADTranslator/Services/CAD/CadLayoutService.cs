@@ -6,6 +6,7 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using CADTranslator.Models;
 using CADTranslator.Models.CAD;
+using CADTranslator.Services.Settings;
 using CADTranslator.Tools.CAD.Jigs;
 using CADTranslator.ViewModels;
 using System;
@@ -40,33 +41,34 @@ namespace CADTranslator.Services.CAD
 
         public bool ApplySmartLayoutToCad(ObservableCollection<TextBlockViewModel> textBlockList, List<ObjectId> idsToDelete, string lineSpacing)
             {
+            // ▼▼▼ 【新增代码】在这里加载设置 ▼▼▼
+            var settingsService = new SettingsService();
+            var currentSettings = settingsService.LoadSettings();
+            bool addUnderline = currentSettings.AddUnderlineAfterSmartLayout;
+            // ▲▲▲ 新增结束 ▲▲▲
+
             var paragraphInfos = new List<ParagraphInfo>();
 
-            // 1. 准备Jig所需的数据。我们现在完全信任从ViewModel传来的数据。
+            // 1. 准备Jig所需的数据 (这部分不变)
             using (var tr = _db.TransactionManager.StartTransaction())
                 {
                 foreach (var block in textBlockList)
                     {
                     if (string.IsNullOrWhiteSpace(block.TranslatedText) || block.TranslatedText.StartsWith("[")) continue;
-
-                    // ▼▼▼【核心修正】从这里开始修改 ▼▼▼
                     Entity templateEntity = null;
-                    // 迭代源ID列表，直到找到第一个真正的“文字”对象作为模板
                     foreach (var id in block.SourceObjectIds)
                         {
                         if (id.IsNull || id.IsErased) continue;
                         var entity = tr.GetObject(id, OpenMode.ForRead);
-                        // 只有DBText或MText才能作为模板
                         if (entity is DBText || entity is MText)
                             {
                             templateEntity = entity as Entity;
-                            break; // 找到模板，立即跳出循环
+                            break;
                             }
                         }
-
-                    // 如果在这个区块的所有源ID中都找不到一个有效的文字模板，则跳过这个区块
                     if (templateEntity == null) continue;
-                    // ▲▲▲【核心修正】到这里结束 ▲▲▲
+
+                    // ... (这部分数据准备的代码也完全不变) ...
 
                     var pInfo = new ParagraphInfo
                         {
@@ -99,7 +101,7 @@ namespace CADTranslator.Services.CAD
 
                     paragraphInfos.Add(pInfo);
                     }
-                tr.Abort(); // 只读操作，中止事务
+                tr.Abort();
                 }
             if (paragraphInfos.Count == 0)
                 {
@@ -107,7 +109,7 @@ namespace CADTranslator.Services.CAD
                 return true;
                 }
 
-            // 2. 开始交互式排版 (这部分代码保持原样，无需修改)
+            // 2. 开始交互式排版 (这部分不变)
             try
                 {
                 using (_doc.LockDocument())
@@ -120,7 +122,7 @@ namespace CADTranslator.Services.CAD
                     var dragResult = _editor.Drag(jig);
                     if (dragResult.Status != PromptStatus.OK) return false;
 
-                    // 3. 用户确认后，将最终结果写入数据库 (这部分代码也保持原样，无需修改)
+                    // 3. 用户确认后，将最终结果写入数据库
                     using (Transaction tr = _db.TransactionManager.StartTransaction())
                         {
                         var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
@@ -134,8 +136,12 @@ namespace CADTranslator.Services.CAD
                                 }
                             }
 
+                        // ▼▼▼ 【新增代码】创建一个列表来收集新生成的文字ID ▼▼▼
+                        var newTextIds = new List<ObjectId>();
+
                         for (int i = 0; i < jig.FinalLineInfo.Count; i++)
                             {
+                            // ... (这部分Jig结果处理和文字创建的逻辑完全不变) ...
                             var (lineText, paraNeedsIndent, isFirstLineOfPara, currentParaIndex, linePosition) = jig.FinalLineInfo[i];
                             var currentParaInfo = paragraphInfos[currentParaIndex];
                             string finalLineText = lineText;
@@ -175,9 +181,31 @@ namespace CADTranslator.Services.CAD
                                 modelSpace.AppendEntity(newText);
                                 tr.AddNewlyCreatedDBObject(newText, true);
                                 newText.AdjustAlignment(_db);
+
+                                // ▼▼▼ 【新增代码】将新文字的ID添加到列表中 ▼▼▼
+                                newTextIds.Add(newText.ObjectId);
                                 }
                             }
-                        tr.Commit();
+
+                        // ▼▼▼ 【新增代码】在这里实装下划线功能 ▼▼▼
+                        if (addUnderline && newTextIds.Any())
+                            {
+                            _editor.WriteMessage($"\n正在为新生成的 {newTextIds.Count} 个文本对象添加下划线...");
+                            var underlineService = new UnderlineService(_doc);
+                            var underlineOptions = new UnderlineOptions(); // 使用默认的标题/正文样式
+
+                            // 注意：这里我们不能直接调用 underlineService 的方法，因为它需要自己的事务。
+                            // 因此，我们先提交当前事务，然后再调用它。
+                            tr.Commit(); // 先提交文字创建
+
+                            // 在新的独立事务中添加下划线
+                            underlineService.AddUnderlinesToObjectIds(newTextIds, underlineOptions);
+                            }
+                        else
+                            {
+                            tr.Commit(); // 如果不需要添加下划线，正常提交即可
+                            }
+
                         }
                     return true;
                     }

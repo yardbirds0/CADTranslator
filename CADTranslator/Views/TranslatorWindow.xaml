@@ -6,6 +6,9 @@
                  xmlns:vm="clr-namespace:CADTranslator.ViewModels"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  xmlns:Tools="clr-namespace:CADTranslator.Tools.UI"
+                 xmlns:interactivity="http://schemas.microsoft.com/xaml/behaviors"
+                 xmlns:behaviors="clr-namespace:CADTranslator.Tools.Behaviors"
+                 xmlns:controls="clr-namespace:CADTranslator.Tools.Controls"
                  mc:Ignorable="d"
                  d:DataContext="{d:DesignInstance Type=vm:TranslatorViewModel,IsDesignTimeCreatable=False}"
                  Title="CAD Translator Toolbox"
@@ -23,8 +26,11 @@
                 <ui:ThemesDictionary Theme="Light" />
                 <ui:ControlsDictionary />
             </ResourceDictionary.MergedDictionaries>
+
             <Tools:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
             <Tools:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter" />
+            <Tools:ProgressConverter x:Key="ProgressConverter" />
+
             <Style TargetType="{x:Type DataGridCell}"
                    BasedOn="{StaticResource {x:Type DataGridCell}}">
                 <Setter Property="SnapsToDevicePixels"
@@ -61,6 +67,77 @@
                 <Setter Property="FontWeight"
                         Value="SemiBold" />
             </Style>
+
+            <Style x:Key="ComboBoxWithDocumentationButtonStyle"
+                   TargetType="{x:Type ComboBox}"
+                   BasedOn="{StaticResource {x:Type ComboBox}}">
+            </Style>
+
+            <Style TargetType="{x:Type controls:WaveProgressBar}">
+                <Setter Property="Background"
+                        Value="#7bcdd9" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type controls:WaveProgressBar}">
+                            <Viewbox x:Name="Root"
+                                     Stretch="Uniform">
+                                <Viewbox.Resources>
+                                    <Storyboard x:Key="ProgressStoryboard"
+                                                FillBehavior="HoldEnd"
+                                                Duration="0:0:1">
+                                        <PointAnimation Storyboard.TargetName="PART_LineSegment"
+                                                        Storyboard.TargetProperty="Point">
+                                            <PointAnimation.EasingFunction>
+                                                <BackEase Amplitude="0.5" />
+                                            </PointAnimation.EasingFunction>
+                                        </PointAnimation>
+                                        <PointAnimation Storyboard.TargetName="PART_BezierSegment"
+                                                        Storyboard.TargetProperty="Point1">
+                                            <PointAnimation.EasingFunction>
+                                                <BackEase Amplitude="1.5" />
+                                            </PointAnimation.EasingFunction>
+                                        </PointAnimation>
+                                        <PointAnimation Storyboard.TargetName="PART_BezierSegment"
+                                                        Storyboard.TargetProperty="Point2">
+                                            <PointAnimation.EasingFunction>
+                                                <BackEase Amplitude="0.1" />
+                                            </PointAnimation.EasingFunction>
+                                        </PointAnimation>
+                                        <PointAnimation Storyboard.TargetName="PART_BezierSegment"
+                                                        Storyboard.TargetProperty="Point3">
+                                            <PointAnimation.EasingFunction>
+                                                <BackEase Amplitude="0.5" />
+                                            </PointAnimation.EasingFunction>
+                                        </PointAnimation>
+                                    </Storyboard>
+                                </Viewbox.Resources>
+                                <Path Width="100"
+                                      Height="100"
+                                      Fill="{TemplateBinding Background}">
+                                    <Path.Data>
+                                        <PathGeometry>
+                                            <PathGeometry.Figures>
+                                                <PathFigure StartPoint="0,100">
+                                                    <PathFigure.Segments>
+                                                        <LineSegment x:Name="PART_LineSegment"
+                                                                     Point="0,0" />
+                                                        <BezierSegment x:Name="PART_BezierSegment"
+                                                                       Point1="35,0"
+                                                                       Point2="65,0"
+                                                                       Point3="100,0" />
+                                                        <LineSegment Point="100,100" />
+                                                    </PathFigure.Segments>
+                                                </PathFigure>
+                                            </PathGeometry.Figures>
+                                        </PathGeometry>
+                                    </Path.Data>
+                                </Path>
+                            </Viewbox>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
         </ResourceDictionary>
     </Window.Resources>
 
@@ -69,6 +146,7 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="NavColumn"
                               Width="320" />
+            <ColumnDefinition Width="1" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
@@ -105,6 +183,7 @@
                                     Value="{x:Null}" />
                         </DataTrigger>
                     </Style.Triggers>
+
                 </Style>
             </ui:NavigationView.Style>
 
@@ -113,7 +192,8 @@
                 <ui:NavigationViewItem Icon="{ui:SymbolIcon Translate24}"
                                        d:IsExpanded="True"
                                        Margin="-3,0,0,0"
-                                       Style="{StaticResource HoverHighlightNavigationViewItemStyle}">
+                                       Style="{StaticResource HoverHighlightNavigationViewItemStyle}"
+                                       IsExpanded="{Binding IsLanguageSettingsExpanded, Mode=TwoWay}">
                     <ui:NavigationViewItem.Content>
                         <TextBlock Text="翻译语言设置"
                                    FontSize="16"
@@ -167,8 +247,8 @@
                 <ui:NavigationViewItem Icon="{ui:SymbolIcon Key24}"
                                        d:IsExpanded="True"
                                        Margin="-3,0,0,0"
-                                       IsExpanded="True"
-                                       Style="{StaticResource HoverHighlightNavigationViewItemStyle}">
+                                       Style="{StaticResource HoverHighlightNavigationViewItemStyle}"
+                                       IsExpanded="{Binding IsApiSettingsExpanded, Mode=TwoWay}">
                     <ui:NavigationViewItem.Content>
                         <TextBlock Text="翻译接口设置"
                                    Margin="10,0,0,0"
@@ -186,6 +266,7 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
                                 <ComboBox Grid.Column="0"
@@ -194,10 +275,40 @@
                                           SelectedItem="{Binding CurrentProvider, Mode=TwoWay}" />
 
                                 <ui:Button Grid.Column="1"
+                                           Command="{Binding ViewApiDocumentationCommand}"
+                                           Icon="{ui:SymbolIcon BookOpenGlobe24}"
+                                           Height="38"
+                                           Padding="10,5"
+                                           FontSize="16"
+                                           FontWeight="Bold"
+                                           Margin="8,0,0,0"
+                                           ToolTip="查看当前API的帮助文档"
+                                           ToolTipService.InitialShowDelay="200">
+                                    <ui:Button.Style>
+                                        <Style TargetType="ui:Button"
+                                               BasedOn="{StaticResource {x:Type ui:Button}}">
+                                            <Setter Property="IsEnabled"
+                                                    Value="True" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=Command.CanExecute}"
+                                                             Value="True">
+                                                    <Setter Property="IsEnabled"
+                                                            Value="True" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </ui:Button.Style>
+                                </ui:Button>
+
+                                <ui:Button Grid.Column="2"
                                            Command="{Binding ManageApiDefinitionsCommand}"
                                            Content="+"
                                            FontSize="16"
                                            FontWeight="Bold"
+                                           Height="38"
+                                           Width="38"
+                                           ToolTip="新增自定义API服务"
+                                           ToolTipService.InitialShowDelay="200"
                                            Padding="10,5"
                                            Margin="8,0,0,0" />
                             </Grid>
@@ -247,18 +358,34 @@
                                            IsHitTestVisible="False" />
                             </Grid>
 
-                            <TextBlock Text="模型列表"
-                                       Margin="0,10,0,5"
-                                       Opacity="0.8" />
-                            <Border Padding="5"
-                                    Background="{DynamicResource CardBackgroundFillColorSecondaryBrush}"
-                                    CornerRadius="4">
+                            <Border Background="{DynamicResource SystemAccentColorLight3Brush}"
+                                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,8"
+                                    Margin="0,10,0,0">
                                 <StackPanel>
-                                    <ComboBox ItemsSource="{Binding ModelList}"
-                                              SelectedValue="{Binding CurrentProfile.LastSelectedModel}"
-                                              Text="{Binding CurrentModelInput, UpdateSourceTrigger=PropertyChanged}"
-                                              IsEditable="True"
-                                              IsEnabled="{Binding IsModelListEnabled}" />
+                                    <TextBlock Text="模型列表"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               HorizontalAlignment="Left"
+                                               Margin="0,0,0,8" />
+
+                                    <Grid>
+                                        <ComboBox ItemsSource="{Binding ModelList}"
+                                                  SelectedValue="{Binding CurrentProfile.LastSelectedModel}"
+                                                  Text="{Binding CurrentModelInput, UpdateSourceTrigger=PropertyChanged}"
+                                                  IsEditable="True"
+                                                  IsEnabled="{Binding IsModelListEnabled}" />
+
+                                        <TextBlock Text="当前API无需选择模型"
+                                                   Foreground="LightGray"
+                                                   FontStyle="Italic"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   Visibility="{Binding IsModelListEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                                   IsHitTestVisible="False" />
+                                    </Grid>
                                     <Grid Margin="0,8,0,0">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
@@ -279,86 +406,66 @@
                                 </StackPanel>
                             </Border>
 
-                            <TextBlock Text="API 余额"
-                                       Margin="0,10,0,5"
-                                       Opacity="0.8" />
-                            <Grid>
-                                <TextBox Text="{Binding LastBalanceDisplay}"
-                                         IsReadOnly="True"
-                                         TextWrapping="Wrap"
-                                         IsEnabled="{Binding IsBalanceFeatureEnabled}"
-                                         VerticalContentAlignment="Center"
-                                         Padding="5">
-                                    <TextBox.Style>
-                                        <Style TargetType="TextBox"
-                                               BasedOn="{StaticResource {x:Type TextBox}}">
-                                            <Style.Triggers>
-                                                <Trigger Property="IsEnabled"
-                                                         Value="False">
-                                                    <Setter Property="Foreground"
-                                                            Value="Transparent" />
-                                                </Trigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBox.Style>
-                                </TextBox>
-                                <TextBlock Text="当前API不支持余额查询"
-                                           Foreground="LightGray"
-                                           FontStyle="Italic"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           Visibility="{Binding IsBalanceFeatureEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                           IsHitTestVisible="False" />
-                            </Grid>
-                            <Grid Margin="0,8,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <ui:Button Grid.Column="0"
-                                           Content="历史记录"
-                                           Margin="0,0,4,0"
-                                           Appearance="Dark"
-                                           Command="{Binding ViewHistoryCommand}"
-                                           IsEnabled="{Binding IsBalanceFeatureEnabled}" />
-                                <ui:Button Grid.Column="1"
-                                           Content="获取余额"
-                                           Margin="4,0,0,0"
-                                           Command="{Binding GetBalanceCommand}"
-                                           IsEnabled="{Binding IsBalanceFeatureEnabled}" />
-                            </Grid>
+                            <Border Background="{DynamicResource SystemAccentColorLight3Brush}"
+                                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,8"
+                                    Margin="0,10,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="API 余额"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               HorizontalAlignment="Left"
+                                               Margin="0,0,0,8" />
 
-                            <TextBlock Text="提示词(如不是必要，请不要填写)"
-                                       Margin="0,10,0,5"
-                                       Opacity="0.8" />
-                            <Grid>
-                                <TextBox Text="{Binding GlobalPrompt, UpdateSourceTrigger=PropertyChanged}"
-                                         IsEnabled="{Binding IsPromptSupported}"
-                                         MinHeight="100"
-                                         TextWrapping="Wrap"
-                                         AcceptsReturn="True"
-                                         VerticalScrollBarVisibility="Auto">
-                                    <TextBox.Style>
-                                        <Style TargetType="TextBox"
-                                               BasedOn="{StaticResource {x:Type TextBox}}">
-                                            <Style.Triggers>
-                                                <Trigger Property="IsEnabled"
-                                                         Value="False">
-                                                    <Setter Property="Foreground"
-                                                            Value="Transparent" />
-                                                </Trigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBox.Style>
-                                </TextBox>
-                                <TextBlock Text="当前API无需填写提示词"
-                                           Foreground="LightGray"
-                                           FontStyle="Italic"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           Visibility="{Binding IsPromptSupported, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                           IsHitTestVisible="False" />
-                            </Grid>
+                                    <Grid>
+                                        <TextBox Text="{Binding LastBalanceDisplay}"
+                                                 IsReadOnly="True"
+                                                 TextWrapping="Wrap"
+                                                 IsEnabled="{Binding IsBalanceFeatureEnabled}"
+                                                 VerticalContentAlignment="Center"
+                                                 Padding="5">
+                                            <TextBox.Style>
+                                                <Style TargetType="TextBox"
+                                                       BasedOn="{StaticResource {x:Type TextBox}}">
+                                                    <Style.Triggers>
+                                                        <Trigger Property="IsEnabled"
+                                                                 Value="False">
+                                                            <Setter Property="Foreground"
+                                                                    Value="Transparent" />
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBox.Style>
+                                        </TextBox>
+                                        <TextBlock Text="当前API不支持余额查询"
+                                                   Foreground="LightGray"
+                                                   FontStyle="Italic"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   Visibility="{Binding IsBalanceFeatureEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                                   IsHitTestVisible="False" />
+                                    </Grid>
+                                    <Grid Margin="0,8,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <ui:Button Grid.Column="0"
+                                                   Content="历史记录"
+                                                   Margin="0,0,4,0"
+                                                   Appearance="Dark"
+                                                   Command="{Binding ViewHistoryCommand}"
+                                                   IsEnabled="{Binding IsBalanceFeatureEnabled}" />
+                                        <ui:Button Grid.Column="1"
+                                                   Content="获取余额"
+                                                   Margin="4,0,0,0"
+                                                   Command="{Binding GetBalanceCommand}"
+                                                   IsEnabled="{Binding IsBalanceFeatureEnabled}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
 
                         </StackPanel>
                     </ui:NavigationViewItem.MenuItems>
@@ -367,7 +474,8 @@
                 <ui:NavigationViewItem Icon="{ui:SymbolIcon Settings24}"
                                        d:IsExpanded="True"
                                        Margin="-3,0,0,0"
-                                       Style="{StaticResource HoverHighlightNavigationViewItemStyle}">
+                                       Style="{StaticResource HoverHighlightNavigationViewItemStyle}"
+                                       IsExpanded="{Binding IsFunctionSettingsExpanded, Mode=TwoWay}">
                     <ui:NavigationViewItem.Content>
                         <TextBlock Text="功能设置"
                                    Margin="10,0,0,0"
@@ -475,6 +583,13 @@
                                                 </DataTemplate>
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
+                                    </Grid>
+                                    <Grid Margin="0,8,0,0"
+                                          Visibility="{Binding IsLiveLayoutEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <ui:ToggleSwitch IsChecked="{Binding AddUnderlineAfterSmartLayout}"
+                                                         OnContent="排版后增加下划线"
+                                                         OffContent="排版后不增加下划线"
+                                                         HorizontalAlignment="Left" />
                                     </Grid>
                                 </StackPanel>
                             </Border>
@@ -650,9 +765,10 @@
             </ui:NavigationView.MenuItems>
         </ui:NavigationView>
 
+        <Border Grid.Column="1"
+                Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
 
-
-        <Grid Grid.Column="1">
+        <Grid Grid.Column="2">
             <Grid.RowDefinitions>
                 <RowDefinition Height="40" />
                 <RowDefinition Height="2.5*" />
@@ -819,7 +935,7 @@
             <Border Grid.Row="3"
                     Padding="15,10"
                     Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                    BorderThickness="5,1,0,0"
+                    BorderThickness="1,1,1,1"
                     BorderBrush="{DynamicResource ControlElevationBorderBrush}">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -857,31 +973,53 @@
 
                     <Grid Grid.Column="2"
                           VerticalAlignment="Stretch">
-
-
-                        <TextBlock Text="当前任务进度"
-                                   Opacity="1"
-                                   Margin="0,40,0,0"
-                                   FontWeight="Bold"
-                                   Foreground="SteelBlue"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center" />
-
                         <Grid Grid.RowSpan="2"
-                              VerticalAlignment="Bottom">
-                            <ui:ProgressRing Progress="{Binding ProgressValue}"
-                                             Width="150"
-                                             Background="SkyBlue"
-                                             Foreground="SkyBlue"
-                                             IsIndeterminate="{Binding IsProgressIndeterminate}"
-                                             Height="150" />
-                            <TextBlock Text="{Binding ProgressText}"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center"
-                                       Margin="0,-20,0,0"
-                                       FontSize="16"
+                              VerticalAlignment="Center"
+                              Width="150"
+                              Height="150"
+                              HorizontalAlignment="Center"
+                              Margin="5">
+
+                            <Grid>
+                                <Grid.Clip>
+                                    <EllipseGeometry Center="75,75"
+                                                     RadiusX="75"
+                                                     RadiusY="75" />
+                                </Grid.Clip>
+
+                                <controls:WaveProgressBar Progress="{Binding ProgressValue, Converter={StaticResource ProgressConverter}}" />
+                            </Grid>
+
+                            <Ellipse Stroke="WhiteSmoke"
+                                     StrokeDashCap="Round"
+                                     Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                     StrokeThickness="12">
+                                <interactivity:Interaction.Behaviors>
+                                    <behaviors:EllipseProgressBehavior EndAngle="150"
+                                                                       Progress="100"
+                                                                       StartAngle="-150" />
+                                </interactivity:Interaction.Behaviors>
+                            </Ellipse>
+
+                            <Ellipse Margin="4"
+                                     Stroke="LightBlue"
+                                     StrokeDashCap="Round"
+                                     Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                     StrokeThickness="4">
+                                <interactivity:Interaction.Behaviors>
+                                    <behaviors:EllipseProgressBehavior Progress="{Binding ProgressValue}"
+                                                                       EndAngle="150"
+                                                                       StartAngle="-150"
+                                                                       AnimationDuration="0:0:1" />
+                                </interactivity:Interaction.Behaviors>
+                            </Ellipse>
+
+                            <TextBlock Text="{Binding ProgressValue, StringFormat={}{0}%}"
+                                       Foreground="#feffe4"
+                                       FontSize="30"
                                        FontWeight="Bold"
-                                       Foreground="SteelBlue" />
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
                         </Grid>
                     </Grid>
 
