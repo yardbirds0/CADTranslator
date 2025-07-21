@@ -486,15 +486,41 @@
                                     Padding="10,8"
                                     Margin="0,15,0,0">
                                 <StackPanel>
-                                    <TextBlock Text="段落合并灵敏度"
-                                               FontWeight="Bold"
-                                               FontSize="14"
-                                               HorizontalAlignment="Center" />
-                                    <TextBlock Text="(值越高越容易合并)"
-                                               Margin="0,-2,0,5"
-                                               Opacity="0.8"
-                                               HorizontalAlignment="Center"
-                                               FontSize="11" />
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="1"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Text="段落合并相似度阈值"
+                                                       FontWeight="Bold"
+                                                       FontSize="14"
+                                                       HorizontalAlignment="Center" />
+
+                                        </StackPanel>
+
+                                        <ui:SymbolIcon Grid.Column="2"
+                                                       Symbol="Info24"
+                                                       FontSize="14"
+                                                       Margin="5,0,0,0"
+                                                       HorizontalAlignment="Left"
+                                                       VerticalAlignment="Center"
+                                                       ToolTipService.InitialShowDelay="100">
+                                            <ui:SymbolIcon.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock TextWrapping="Wrap"
+                                                               MaxWidth="250">
+                            当一整句话在图纸中按多行排布的时候，程序会智能识别这几行字应该归并为多少个并列项。当多行字的结构相似度大于设定值的时候，会将它们识别为并列项。
+                                                    </TextBlock>
+                                                </ToolTip>
+                                            </ui:SymbolIcon.ToolTip>
+                                        </ui:SymbolIcon>
+                                    </Grid>
+
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
@@ -852,7 +878,7 @@
                             <TextBlock Text="{Binding ProgressText}"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center"
-                                       Margin="0,-20,0,0"                                      
+                                       Margin="0,-20,0,0"
                                        FontSize="16"
                                        FontWeight="Bold"
                                        Foreground="SteelBlue" />
