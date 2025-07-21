@@ -3,17 +3,18 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
-using CADTranslator.Tools.CAD.Jigs;
 using CADTranslator.Models.CAD;
 using CADTranslator.Services.CAD;
+using CADTranslator.Services.Settings;
+using CADTranslator.Tools.CAD.Jigs;
 using CADTranslator.Views;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
-using CADTranslator.Services.Settings;
 
 
 namespace CADTranslator.AutoCAD.Commands
@@ -127,6 +128,7 @@ namespace CADTranslator.AutoCAD.Commands
                 }
             }
 
+
         [CommandMethod("WZPB")]
         public void TextLayoutCommand()
             {
@@ -138,8 +140,9 @@ namespace CADTranslator.AutoCAD.Commands
             var settingsService = new Services.Settings.SettingsService();
             var currentSettings = settingsService.LoadSettings();
             string currentLineSpacing = currentSettings.WzpbLineSpacing;
-            object oldShortcutMenu = Application.GetSystemVariable("SHORTCUTMENU");
+            bool addUnderline = currentSettings.AddUnderlineAfterWzpb;
 
+            object oldShortcutMenu = Application.GetSystemVariable("SHORTCUTMENU");
 
             // 2. 启动交互循环
             while (true)
@@ -149,13 +152,16 @@ namespace CADTranslator.AutoCAD.Commands
                     {
                     // 3. 创建选择选项
                     var selOpts = new PromptSelectionOptions();
-                    selOpts.MessageForAdding = $"\n请选择要重新排版的文字对象, 或 [设置行间距(H)] (当前: {currentLineSpacing})";
-
+                    string underlineStatus = addUnderline ? "是" : "否";
+                    selOpts.MessageForAdding = "\n请选择要重新排版的文字对象";
                     // 4. 添加关键字
-                    selOpts.Keywords.Add("H");
-                    selOpts. PrepareOptionalDetails= false;
+                    selOpts.Keywords.Add("H", "H", $"设置行间距(H) (当前: {currentLineSpacing})");
+                    selOpts.Keywords.Add("UL", "UL", $"添加下划线(UL) (当前: {underlineStatus})");
+                    selOpts.MessageForAdding += selOpts.Keywords.GetDisplayString(true);
 
-                    // 5. 添加关键字输入事件处理，这里我们抛出自定义异常
+                    selOpts.PrepareOptionalDetails = false;
+
+                    // 5. 添加关键字输入事件处理，抛出自定义异常
                     selOpts.KeywordInput += (s, args) =>
                     {
                         throw new KeywordException(args.Input.ToUpper());
@@ -165,24 +171,37 @@ namespace CADTranslator.AutoCAD.Commands
                     var selRes = editor.GetSelection(selOpts);
                     if (selRes.Status != PromptStatus.OK)
                         {
-                        // 用户按下了ESC或发生其他错误，直接退出命令
+                        Application.SetSystemVariable("SHORTCUTMENU", oldShortcutMenu);
                         return;
                         }
 
-                    // 7. 用户成功选择了对象，执行排版并退出
+                        // 7. 用户成功选择了对象，执行排版
+                        List<ObjectId> newTextIds;
                     using (doc.LockDocument())
                         {
                         var layoutService = new TextLayoutService(doc);
-                        layoutService.Execute(selRes.Value, currentLineSpacing);
+                        newTextIds = layoutService.Execute(selRes.Value, currentLineSpacing);
+                        }
+
+                    // 8. 如果需要，则调用新的自动化接口添加下划线
+                    if (addUnderline && newTextIds != null && newTextIds.Any())
+                        {
+                        editor.WriteMessage($"\n正在为新生成的 {newTextIds.Count} 个文本对象添加下划线...");
+
+                        var underlineService = new UnderlineService(doc);
+                        var underlineOptions = new UnderlineOptions(); // 使用默认选项
+
+                        // 直接调用我们新增的自动化方法
+                        underlineService.AddUnderlinesToObjectIds(newTextIds, underlineOptions);
                         }
                     break; // 完成操作，跳出循环
                     }
-                // 8. 捕获我们自己抛出的关键字异常
                 catch (KeywordException ex)
                     {
+                    // 9. 捕获关键字异常并处理
                     if (ex.Input == "H")
                         {
-                        // 用户输入了 "H"，进入行间距设置流程
+                        // (处理 "H" 的逻辑保持不变)
                         using (doc.LockDocument())
                             {
                             var pso = new PromptStringOptions($"\n当前行间距为: {currentLineSpacing}。请输入新值 (或直接回车使用'不指定'): ");
@@ -191,7 +210,6 @@ namespace CADTranslator.AutoCAD.Commands
 
                             if (psr.Status == PromptStatus.OK)
                                 {
-                                // 更新临时的行间距变量，并立即保存到设置
                                 currentLineSpacing = string.IsNullOrWhiteSpace(psr.StringResult) ? "不指定" : psr.StringResult;
                                 currentSettings.WzpbLineSpacing = currentLineSpacing;
                                 settingsService.SaveSettings(currentSettings);
@@ -199,24 +217,60 @@ namespace CADTranslator.AutoCAD.Commands
                                 }
                             }
                         }
+                    else if (ex.Input == "UL")
+                        {
+                        // (处理 "U" 的逻辑)
+                        using (doc.LockDocument())
+                            {
+                            var pko = new PromptKeywordOptions($"\n是否在排版后添加下划线? [是(Yes)/否(No)] 当前：<{(addUnderline ? "Y" : "N")}>，默认：Y  : ");
+                            pko.Keywords.Add("Yes", "Y", "是(Y)");
+                            pko.Keywords.Add("No", "N", "否(N)");
+                            pko.AllowNone = true; // 允许用户直接回车
+                            var pkr = editor.GetKeywords(pko);
+
+                            // 如果用户按了ESC，就什么都不做
+                            if (pkr.Status == PromptStatus.Cancel)
+                                {
+                                // continue to the next loop iteration
+                                }
+                            // 如果用户直接回车，结果是 pkr.Default
+                            else if (string.IsNullOrEmpty(pkr.StringResult))
+                                {
+                                addUnderline = true;
+                                currentSettings.AddUnderlineAfterWzpb = addUnderline;
+                                settingsService.SaveSettings(currentSettings);
+                                editor.WriteMessage($"\n添加下划线已设置为: {(addUnderline ? "是" : "否")}");
+                                }
+                            // 如果用户输入了关键字
+                            else if (pkr.Status == PromptStatus.OK)
+                                {
+                                addUnderline = (pkr.StringResult == "Yes");
+                                currentSettings.AddUnderlineAfterWzpb = addUnderline;
+                                settingsService.SaveSettings(currentSettings);
+                                editor.WriteMessage($"\n添加下划线已设置为: {(addUnderline ? "是" : "否")}");
+                                }
+                            }
+                        }
                     else
                         {
-                        // 用户输入了无效的关键字
-                        editor.WriteMessage($"\n未知关键字: '{ex.Input}'。请输入正确命令。");
+                        editor.WriteMessage($"\n未知关键字: '{ex.Input}'。");
                         }
-                    // 处理完关键字后，继续下一次循环
-                    continue;
+                    continue; // 处理完关键字后，继续下一次循环
                     }
-                // 捕获其他所有可能的意外错误
                 catch (System.Exception ex)
                     {
-                    editor.WriteMessage($"\n执行过程中出错: {ex.Message}");
+                    editor.WriteMessage($"\n执行过程中出错: {ex.Message}\n{ex.StackTrace}");
+                    Application.SetSystemVariable("SHORTCUTMENU", oldShortcutMenu);
                     return;
                     }
                 }
             Application.SetSystemVariable("SHORTCUTMENU", oldShortcutMenu);
             }
 
+        private void SelOpts_KeywordInput(object sender, SelectionTextInputEventArgs e)
+            {
+            throw new NotImplementedException();
+            }
 
         [CommandMethod("WZXHX")]
         public void AddUnderlineCommand()

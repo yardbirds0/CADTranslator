@@ -30,28 +30,27 @@ namespace CADTranslator.Services.CAD
 
         #region --- 1. 核心执行逻辑 (Execute) ---
 
-        public void Execute(SelectionSet selSet, string lineSpacing)
+        public List<ObjectId> Execute(SelectionSet selSet, string lineSpacing)
             {
-            if (selSet == null || selSet.Count == 0) return;
+            if (selSet == null || selSet.Count == 0) return null; // 如果没有选择，返回 null
 
             var settingsService = new SettingsService();
             var settings = settingsService.LoadSettings();
             double similarityThreshold = settings.ParagraphSimilarityThreshold;
 
+            var newTextIds = new List<ObjectId>();
+
             using (Transaction tr = _db.TransactionManager.StartTransaction())
                 {
                 try
                     {
-                    // 步骤 1: 使用移植过来的新方法，分类实体
                     var (textEntities, graphicEntities) = ClassifyEntities(selSet, tr);
                     if (textEntities.Count == 0)
                         {
                         _editor.WriteMessage("\n选择的对象中未找到任何有效文字。");
-                        return;
+                        return null;
                         }
 
-                    // 步骤 2: 使用移植过来的新方法，智能合并文本
-                    // 【已修正】这里的数据源现在是 List<TextBlock>
                     List<TextBlock> rawTextBlocks = MergeRawText(textEntities, similarityThreshold);
 
                     // ====================================================================
@@ -212,12 +211,12 @@ namespace CADTranslator.Services.CAD
                         }
 
                     var ppr = _editor.GetPoint($"\n请为整个段落集合指定左上角基点:");
-                    if (ppr.Status != PromptStatus.OK) { tr.Abort(); return; }
+                    if (ppr.Status != PromptStatus.OK) { tr.Abort(); return null; }
                     Point3d basePoint = ppr.Value;
 
                     var jig = new SmartLayoutJig(paragraphInfos, basePoint, lineSpacing);
                     var dragResult = _editor.Drag(jig);
-                    if (dragResult.Status != PromptStatus.OK) { tr.Abort(); return; }
+                    if (dragResult.Status != PromptStatus.OK) { tr.Abort(); return null; }
 
                     foreach (var id in deletableObjectIds)
                         {
@@ -327,6 +326,7 @@ namespace CADTranslator.Services.CAD
 
                             modelSpace.AppendEntity(newText);
                             tr.AddNewlyCreatedDBObject(newText, true);
+                            newTextIds.Add(newText.ObjectId);
                             }
                         }
                     tr.Commit();
@@ -335,14 +335,16 @@ namespace CADTranslator.Services.CAD
                     {
                     _editor.WriteMessage($"\n[WZPB] 命令在服务层执行时发生错误: {ex.Message}");
                     tr.Abort();
+                    return null;
                     }
                 }
+            return newTextIds;
             }
         #endregion
 
         #region --- 2. 移植过来的高级文本处理及辅助方法 ---
-
-        // 【已修正】FindAssociatedGraphics 方法现在在这里，解决了“不存在”的错误
+                                                                                                                                    
+        // 【已修正】FindAssociatedGraphics 方法现在在这里，解决了“不存在”的错误                                                                                                  
         private (List<Entity> associatedGraphics, Extents3d paragraphBounds, double maxLineHeight) FindAssociatedGraphics(List<ObjectId> textObjectIds, List<Entity> allGraphics, Transaction tr)
             {
             var pBounds = new Extents3d(Point3d.Origin, Point3d.Origin);

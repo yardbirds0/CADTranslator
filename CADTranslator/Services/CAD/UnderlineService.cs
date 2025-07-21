@@ -1,10 +1,10 @@
 ﻿// 文件路径: CADTranslator/Services/UnderlineService.cs
+// 【请用此代码完整替换】
 
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
-using CADTranslator.Models;
 using CADTranslator.Models.CAD;
 using System;
 using System.Collections.Generic;
@@ -28,14 +28,49 @@ namespace CADTranslator.Services.CAD
             _editor = doc.Editor;
             }
 
+        #region --- 1. 交互式入口 (供 WZXHX 命令调用) ---
+
         /// <summary>
-        /// 执行添加下划线的主逻辑
+        /// 【保持不变】这是给用户直接使用的 WZXHX 命令的入口。
+        /// 它会提示用户去选择对象。
         /// </summary>
         public void AddUnderlinesToSelectedText(UnderlineOptions options)
             {
             var selRes = _editor.GetSelection();
             if (selRes.Status != PromptStatus.OK) return;
 
+            // 调用核心的执行逻辑
+            ExecuteUnderlining(selRes.Value, options);
+            }
+
+        #endregion
+
+        #region --- 2. 自动化入口 (供 WZPB 命令调用) ---
+
+        /// <summary>
+        /// 【新增方法】这是给其他命令自动化调用的新入口。
+        /// 它直接接收一个ID列表，不再需要用户交互。
+        /// </summary>
+        public void AddUnderlinesToObjectIds(List<ObjectId> objectIds, UnderlineOptions options)
+            {
+            if (objectIds == null || !objectIds.Any()) return;
+
+            // 将ID列表转换成CAD能够理解的选择集
+            var selSet = SelectionSet.FromObjectIds(objectIds.ToArray());
+
+            // 调用核心的执行逻辑
+            ExecuteUnderlining(selSet, options);
+            }
+
+        #endregion
+
+        #region --- 3. 核心执行逻辑 ---
+
+        /// <summary>
+        /// 【新增方法】这是真正干活的核心方法，它被上面两个入口共享。
+        /// </summary>
+        private void ExecuteUnderlining(SelectionSet selSet, UnderlineOptions options)
+            {
             using (var tr = _db.TransactionManager.StartTransaction())
                 {
                 try
@@ -43,7 +78,7 @@ namespace CADTranslator.Services.CAD
                     EnsureLayerAndLinetype(tr, options.Layer, options.Linetype);
 
                     var textEntities = new List<Entity>();
-                    foreach (SelectedObject selObj in selRes.Value)
+                    foreach (SelectedObject selObj in selSet)
                         {
                         var ent = tr.GetObject(selObj.ObjectId, OpenMode.ForRead) as Entity;
                         if (ent is DBText || ent is MText)
@@ -54,11 +89,14 @@ namespace CADTranslator.Services.CAD
 
                     if (textEntities.Count == 0)
                         {
-                        _editor.WriteMessage("\n选择的对象中未找到任何有效文字。");
+                        // 只有在交互模式下才需要提示，自动化调用时静默处理
+                        if (_editor.IsQuiescent)
+                            {
+                            _editor.WriteMessage("\n选择的对象中未找到任何有效文字。");
+                            }
                         return;
                         }
 
-                    // 计算整个文本块的边界和最大宽度
                     var overallBounds = new Extents3d();
                     double maxWidth = 0;
                     foreach (var ent in textEntities)
@@ -70,7 +108,6 @@ namespace CADTranslator.Services.CAD
                             }
                         }
 
-                    // 按Y坐标对文本进行分组，识别出每一行
                     var lines = textEntities.GroupBy(e => e.Bounds.Value.MinPoint.Y.ToString("F4"))
                                             .OrderByDescending(g => g.Key)
                                             .ToList();
@@ -81,7 +118,6 @@ namespace CADTranslator.Services.CAD
                         {
                         double lineY = lineGroup.First().Bounds.Value.MinPoint.Y;
 
-                        // 根据文本块的整体左边界和计算出的最大宽度来确定下划线的位置
                         Point3d startPoint = new Point3d(overallBounds.MinPoint.X, lineY + options.VerticalOffset, 0);
                         Point3d endPoint = new Point3d(overallBounds.MinPoint.X + maxWidth, lineY + options.VerticalOffset, 0);
 
@@ -99,7 +135,11 @@ namespace CADTranslator.Services.CAD
                         }
 
                     tr.Commit();
-                    _editor.WriteMessage($"\n成功为 {lines.Count} 行文字添加了下划线。");
+
+                    if (_editor.IsQuiescent)
+                        {
+                        _editor.WriteMessage($"\n成功为 {lines.Count} 行文字添加了下划线。");
+                        }
                     }
                 catch (Exception ex)
                     {
@@ -109,9 +149,9 @@ namespace CADTranslator.Services.CAD
                 }
             }
 
-        /// <summary>
-        /// 确保目标图层和线型存在，如果不存在则创建。
-        /// </summary>
+        #endregion
+
+        #region --- 4. 辅助方法 ---
         private void EnsureLayerAndLinetype(Transaction tr, string layerName, string linetypeName)
             {
             // 确保图层存在
@@ -144,5 +184,6 @@ namespace CADTranslator.Services.CAD
                     }
                 }
             }
+        #endregion
         }
     }

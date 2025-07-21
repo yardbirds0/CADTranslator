@@ -1,5 +1,4 @@
-﻿// 文件路径: CADTranslator/Services/SettingsService.cs
-using CADTranslator.Models;
+﻿using CADTranslator.Models;
 using CADTranslator.Models.API;
 using Newtonsoft.Json;
 using System;
@@ -35,6 +34,7 @@ namespace CADTranslator.Services.Settings
         public List<string> ConcurrencyPresets { get; set; } = new List<string> { "2", "5" };
         public string LastSelectedConcurrency { get; set; } = "5";
         public double ParagraphSimilarityThreshold { get; set; } = 0.6;
+        public bool AddUnderlineAfterWzpb { get; set; } = false;
 
         // API相关的设置
         public ApiServiceType LastSelectedApiService { get; set; } = ApiServiceType.Baidu;
