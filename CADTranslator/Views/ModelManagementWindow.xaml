@@ -10,7 +10,7 @@
                  d:DataContext="{d:DesignInstance Type=vm:ModelManagementViewModel, IsDesignTimeCreatable=True}"
                  Title="{Binding ProfileName, StringFormat='管理模型列表 - {0}'}"
                  Height="450"
-                 Width="400"
+                 Width="500"
                  WindowStartupLocation="CenterOwner"
                  WindowBackdropType="Mica"
                  ExtendsContentIntoTitleBar="True">
@@ -67,7 +67,30 @@
                          ColumnHeaderStyle="{StaticResource DataGridColumnHeaderStyleWithBorders}"
                          HeadersVisibility="Column"
                          GridLinesVisibility="All">
-                <DataGrid.Columns>
+                <ui:DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsFavorite}"
+                                         Value="True">
+                                <Setter Property="Background"
+                                        Value="#E8F5E9" />
+                                <Setter Property="ToolTip"
+                                        Value="这是一个常用模型" />
+                                <Setter Property="ToolTipService.InitialShowDelay"
+                                        Value="150" />
+                            </DataTrigger>
+
+                            <Trigger Property="IsSelected"
+                                     Value="True">
+                                <Setter Property="Background"
+                                        Value="LightGray" />
+                                <Setter Property="Foreground"
+                                        Value="Black" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                    </ui:DataGrid.RowStyle>
+                    <DataGrid.Columns>
                     <DataGridTextColumn Header="序号"
                                         Binding="{Binding Index}"
                                         Width="60"
@@ -89,21 +112,40 @@
             </ui:DataGrid>
         </Border>
 
-        <StackPanel Grid.Row="2"
-                    Orientation="Horizontal"
-                    HorizontalAlignment="Right"
-                    Margin="0,15,0,0">
-            <ui:Button Content="保存"
-                       Click="SaveButton_Click"
-                       Appearance="Primary" />
-            <ui:Button Content="应用选择模型"
-                       Click="ApplyButton_Click"
-                       Margin="10,0,0,0"
-                       Appearance="Caution"
-                       IsDefault="True" />
-            <ui:Button Content="取消"
-                       Click="CancelButton_Click"
-                       Margin="10,0,0,0" />
-        </StackPanel>
+        <Grid Grid.Row="2"
+              Margin="0,15,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Left">
+                <ui:Button Content="设为常用"
+                           Icon="{ui:SymbolIcon Star24}"
+                           Command="{Binding SetFavoriteCommand}" />
+                <ui:Button Content="取消常用"
+                           Margin="10,0,0,0"
+                           Icon="{ui:SymbolIcon StarOff24}"
+                           Command="{Binding UnsetFavoriteCommand}" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right">
+                <ui:Button Content="保存"
+                           Click="SaveButton_Click"
+                           Appearance="Primary" />
+                <ui:Button Content="应用选择模型"
+                           Click="ApplyButton_Click"
+                           Margin="10,0,0,0"
+                           Appearance="Caution"
+                           IsDefault="True" />
+                <ui:Button Content="取消"
+                           Click="CancelButton_Click"
+                           Margin="10,0,0,0" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </ui:FluentWindow>

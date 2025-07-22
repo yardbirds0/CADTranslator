@@ -68,6 +68,7 @@ namespace CADTranslator.Services.Translation
         public bool IsPromptSupported => true;
         public bool IsModelFetchingSupported => true;
         public bool IsBalanceCheckSupported => true;
+        public bool IsTokenCountSupported => false;
 
         #endregion
 
@@ -130,13 +131,13 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
-        public async Task<List<string>> GetModelsAsync()
+        public async Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {
             const string modelListUrl = "https://api.siliconflow.cn/v1/models";
             try
                 {
-                // 【核心修改】为 GetAsync 也传递一个 CancellationToken.None，保持一致性
-                var response = await _lazyHttpClient.Value.GetAsync(modelListUrl, CancellationToken.None);
+                // 【核心修改】将 cancellationToken 传递给 GetAsync
+                var response = await _lazyHttpClient.Value.GetAsync(modelListUrl, cancellationToken);
                 if (!response.IsSuccessStatusCode)
                     {
                     await HandleApiError(response);
@@ -157,6 +158,9 @@ namespace CADTranslator.Services.Translation
                 }
             catch (TaskCanceledException)
                 {
+                // 【核心修改】捕获取消异常，并检查是否是我们的令牌主动取消的
+                if (cancellationToken.IsCancellationRequested) throw; // 如果是，直接抛出，让ViewModel知道是超时
+                // 否则，认为是其他原因（比如HttpClient自己的超时）
                 throw new ApiException(ApiErrorType.NetworkError, ServiceType, "获取模型列表请求超时。");
                 }
             catch (HttpRequestException ex)
@@ -204,6 +208,11 @@ namespace CADTranslator.Services.Translation
                 {
                 throw new ApiException(ApiErrorType.NetworkError, ServiceType, $"查询余额时网络请求失败: {ex.Message}");
                 }
+            }
+
+        public Task<int> CountTokensAsync(string textToCount)
+            {
+            throw new NotSupportedException("硅基流动服务不支持计算Token。");
             }
 
         #endregion

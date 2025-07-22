@@ -373,10 +373,28 @@
 
                                     <Grid>
                                         <ComboBox ItemsSource="{Binding ModelList}"
-                                                  SelectedValue="{Binding CurrentProfile.LastSelectedModel}"
+                                                  SelectedItem="{Binding SelectedModel}"
                                                   Text="{Binding CurrentModelInput, UpdateSourceTrigger=PropertyChanged}"
                                                   IsEditable="True"
-                                                  IsEnabled="{Binding IsModelListEnabled}" />
+                                                  IsEnabled="{Binding IsModelListEnabled}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Name}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsFavorite}"
+                                                                                 Value="True">
+                                                                        <Setter Property="Background"
+                                                                                Value="#E8F5E9" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
 
                                         <TextBlock Text="当前API无需选择模型"
                                                    Foreground="LightGray"

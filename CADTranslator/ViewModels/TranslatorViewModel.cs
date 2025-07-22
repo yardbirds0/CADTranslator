@@ -37,6 +37,9 @@ namespace CADTranslator.ViewModels
         private bool _isLoading = false;
         private List<TextBlockViewModel> _failedItems = new List<TextBlockViewModel>();
         private bool _isProgressIndeterminate = true;
+        private int _totalTokens = 0;
+        private bool _isTokenCountAvailable = false;
+
 
         // 【新增】用于管理背景色的画刷
         private readonly Brush _translatingBrush = new SolidColorBrush(Color.FromArgb(128, 255, 236, 179)); // 淡黄色
@@ -143,9 +146,37 @@ namespace CADTranslator.ViewModels
         public List<ITranslator> ApiServiceOptions { get; } // 【修改】数据源变为ITranslator列表
 
         public ApiProfile CurrentProfile { get; set; } // 存储与CurrentProvider对应的配置信息
+        public ObservableCollection<ModelViewModel> ModelList { get; set; }
+        private ModelViewModel _selectedModel;
+        public ModelViewModel SelectedModel
+            {
+            get => _selectedModel;
+            set
+                {
+                // ▼▼▼ 【核心修正】使用全新的、更健壮的逻辑 ▼▼▼
+                if (SetField(ref _selectedModel, value))
+                    {
+                    // 无论 _selectedModel 是一个新对象还是 null，都执行以下逻辑
 
-        public ObservableCollection<string> ModelList { get; set; }
-        public string CurrentModelInput { get; set; }
+                    // 1. 获取新模型的名称，如果 _selectedModel 是 null，则 newModelName 也为 null
+                    var newModelName = _selectedModel?.Name;
+
+                    // 2. 更新输入框的文本
+                    CurrentModelInput = newModelName;
+                    OnPropertyChanged(nameof(CurrentModelInput));
+
+                    // 3. 更新用于持久化的配置 (可以安全地将 null 赋给 LastSelectedModel)
+                    if (CurrentProfile != null)
+                        {
+                        CurrentProfile.LastSelectedModel = newModelName;
+                        }
+
+                    // 4. 立即保存设置，确保状态被持久化
+                    SaveSettings();
+                    }
+                }
+            }
+        public string CurrentModelInput { get; set; } 
         public string SourceLanguage { get; set; } = "auto";
         public string TargetLanguage { get; set; } = "en";
         public string GlobalPrompt { get; set; }
@@ -332,7 +363,7 @@ namespace CADTranslator.ViewModels
 
             // 初始化UI集合
             TextBlockList = new ObservableCollection<TextBlockViewModel>();
-            ModelList = new ObservableCollection<string>();
+            ModelList = new ObservableCollection<ModelViewModel>();
             ApiProfiles = new ObservableCollection<ApiProfile>();
             LineSpacingOptions = new ObservableCollection<string>();
             BalanceHistory = new ObservableCollection<BalanceRecord>();
@@ -431,6 +462,7 @@ namespace CADTranslator.ViewModels
                 {
                 // ▼▼▼ 【核心修改】使用_windowService控制窗口 ▼▼▼
                 _windowService.ShowMainWindow();
+                await UpdateTokenCountAsync();
                 TranslateCommand.RaiseCanExecuteChanged();
                 IsProgressIndeterminate = false;
                 }
@@ -457,7 +489,38 @@ namespace CADTranslator.ViewModels
         private async Task ExecuteTranslation(List<TextBlockViewModel> itemsToTranslate)
             {
             if (CurrentProvider == null || CurrentProfile == null) { await _windowService.ShowInformationDialogAsync("操作无效", "请先选择一个API配置。"); return; }
-            if (IsModelRequired && !string.IsNullOrWhiteSpace(CurrentModelInput)) { CurrentProfile.LastSelectedModel = CurrentModelInput; if (!ModelList.Contains(CurrentModelInput)) { ModelList.Add(CurrentModelInput); CurrentProfile.Models.Add(CurrentModelInput); } }
+
+            // ▼▼▼ 【核心修改】处理ComboBox输入和选择的逻辑更新 ▼▼▼
+            if (IsModelRequired)
+                {
+                string modelNameToUse = null;
+                // 优先使用用户在可编辑框中输入的文本
+                if (!string.IsNullOrWhiteSpace(CurrentModelInput) && (SelectedModel == null || CurrentModelInput != SelectedModel.Name))
+                    {
+                    modelNameToUse = CurrentModelInput.Trim();
+                    }
+                // 否则，使用下拉框中选中的项
+                else if (SelectedModel != null)
+                    {
+                    modelNameToUse = SelectedModel.Name;
+                    }
+
+                if (string.IsNullOrWhiteSpace(modelNameToUse))
+                    {
+                    await _windowService.ShowInformationDialogAsync("操作无效", "必须指定一个模型才能进行翻译。");
+                    return;
+                    }
+
+                CurrentProfile.LastSelectedModel = modelNameToUse;
+                // 如果这个模型不在列表中，自动添加它
+                if (ModelList.All(m => m.Name != modelNameToUse))
+                    {
+                    var newModelVm = new ModelViewModel { Name = modelNameToUse, IsFavorite = false };
+                    ModelList.Insert(0, newModelVm); // 插入到最前面，让用户能立刻看到
+                    CurrentProfile.Models.Add(modelNameToUse);
+                    SelectedModel = newModelVm;
+                    }
+                }
 
             IsBusy = true;
             IsProgressIndeterminate = true;
@@ -705,18 +768,20 @@ namespace CADTranslator.ViewModels
             if (CurrentProvider == null) return;
             IsBusy = true;
             Log($"正在从 {CurrentProvider.DisplayName} 获取模型列表...");
+
+            // 【核心修改】创建带10秒超时的CancellationTokenSource
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
             try
                 {
                 var provider = _apiRegistry.CreateProviderForProfile(CurrentProfile);
-                var models = await provider.GetModelsAsync();
+                // 【核心修改】将Token传递给服务
+                var models = await provider.GetModelsAsync(cts.Token);
 
                 if (models != null && models.Any())
                     {
-                    ModelList.Clear();
-                    CurrentProfile.Models.Clear();
-                    models.ForEach(m => { ModelList.Add(m); CurrentProfile.Models.Add(m); });
-                    CurrentModelInput = ModelList.FirstOrDefault();
-                    OnPropertyChanged(nameof(CurrentModelInput));
+                    CurrentProfile.Models = new List<string>(models);
+                    RefreshModelList();
                     SaveSettings();
                     Log($"成功获取 {models.Count} 个模型！列表已更新。");
                     }
@@ -725,10 +790,14 @@ namespace CADTranslator.ViewModels
                     Log("未能获取到任何模型列表。");
                     }
                 }
-            // ◄◄◄ 【新增】捕获我们自定义的ApiException
+            // 【核心修改】专门捕获操作取消（包括超时）的异常
+            catch (OperationCanceledException)
+                {
+                Log("[错误] 获取模型列表超时（超过10秒），操作已取消。", isError: true);
+                await _windowService.ShowInformationDialogAsync("操作超时", "获取模型列表超时（超过10秒），请检查您的网络连接或稍后重试。");
+                }
             catch (ApiException apiEx)
                 {
-                // 这里不需要向某个UI项写入错误，所以第二个参数传null
                 HandleApiException(apiEx, null);
                 await _windowService.ShowInformationDialogAsync("操作失败", $"获取模型列表时发生错误:\n\n{apiEx.Message}");
                 }
@@ -740,6 +809,7 @@ namespace CADTranslator.ViewModels
             finally
                 {
                 IsBusy = false;
+                cts.Dispose(); // 【核心修改】释放资源
                 }
             }
 
@@ -791,29 +861,28 @@ namespace CADTranslator.ViewModels
                 await _windowService.ShowInformationDialogAsync("操作无效", "请先选择一个API配置。");
                 return;
                 }
-            var modelManagementVM = new ModelManagementViewModel(CurrentProfile.ProfileName, new List<string>(CurrentProfile.Models));
+            // 【核心修改】传入常用模型列表
+            var modelManagementVM = new ModelManagementViewModel(CurrentProfile.ProfileName, new List<string>(CurrentProfile.Models), new List<string>(CurrentProfile.FavoriteModels));
 
             var dialogResult = _windowService.ShowModelManagementDialog(modelManagementVM);
 
             if (dialogResult == true)
                 {
-                var finalModels = modelManagementVM.GetFinalModels();
-                CurrentProfile.Models.Clear();
-                finalModels.ForEach(m => CurrentProfile.Models.Add(m));
-                ModelList.Clear();
-                finalModels.ForEach(m => ModelList.Add(m));
+                // 【核心修改】接收包含常用模型的结果
+                var (finalModels, favoriteModels) = modelManagementVM.GetFinalModels();
+                CurrentProfile.Models = finalModels;
+                CurrentProfile.FavoriteModels = favoriteModels;
+
                 if (modelManagementVM.SelectedModel != null && !string.IsNullOrWhiteSpace(modelManagementVM.SelectedModel.Name))
                     {
-                    string selectedModelName = modelManagementVM.SelectedModel.Name.Trim();
-                    CurrentModelInput = selectedModelName;
-                    CurrentProfile.LastSelectedModel = selectedModelName;
+                    CurrentProfile.LastSelectedModel = modelManagementVM.SelectedModel.Name.Trim();
                     }
                 else
                     {
                     CurrentProfile.LastSelectedModel = finalModels.FirstOrDefault();
-                    CurrentModelInput = CurrentProfile.LastSelectedModel;
                     }
-                OnPropertyChanged(nameof(CurrentModelInput));
+
+                RefreshModelList(); // 调用新的刷新方法
                 SaveSettings();
                 Log("模型列表已更新。");
                 }
@@ -902,6 +971,12 @@ namespace CADTranslator.ViewModels
             if (_isLoading) return;
             if (_currentSettings == null) _currentSettings = new AppSettings();
 
+            // 【新增】确保保存的是下拉框中最终选定的模型名称
+            if (CurrentProfile != null && SelectedModel != null)
+                {
+                CurrentProfile.LastSelectedModel = SelectedModel.Name;
+                }
+
             _currentSettings.IsLiveLayoutEnabled = IsLiveLayoutEnabled;
             _currentSettings.LastSelectedLineSpacing = CurrentLineSpacingInput;
             _currentSettings.LineSpacingPresets = LineSpacingOptions.Distinct().ToList();
@@ -922,17 +997,38 @@ namespace CADTranslator.ViewModels
             {
             if (CurrentProfile == null) return;
 
+            // 重新订阅事件，确保在文本框里修改密钥等信息时，能被正确保存
             CurrentProfile.PropertyChanged -= OnCurrentProfilePropertyChanged;
             CurrentProfile.PropertyChanged += OnCurrentProfilePropertyChanged;
 
-            ModelList.Clear();
-            if (CurrentProfile.Models != null)
-                {
-                CurrentProfile.Models.ForEach(m => ModelList.Add(m));
-                }
-            CurrentModelInput = CurrentProfile.LastSelectedModel;
-            OnPropertyChanged(nameof(CurrentModelInput));
+            // 刷新模型列表的下拉框
+            RefreshModelList();
+
+            // 【这是被错误删除的关键代码】通知UI：整个Profile对象已经更换，请刷新所有相关绑定
             OnPropertyChanged(nameof(CurrentProfile));
+            }
+
+        private void RefreshModelList()
+            {
+            if (CurrentProfile == null) return;
+
+            ModelList.Clear();
+            var modelsWithState = CurrentProfile.Models
+                .Select(m => new ModelViewModel
+                    {
+                    Name = m,
+                    IsFavorite = CurrentProfile.FavoriteModels.Contains(m)
+                    })
+                .OrderByDescending(m => m.IsFavorite)
+                .ThenBy(m => m.Name);
+
+            foreach (var modelVm in modelsWithState)
+                {
+                ModelList.Add(modelVm);
+                }
+
+            SelectedModel = ModelList.FirstOrDefault(m => m.Name == CurrentProfile.LastSelectedModel) ?? ModelList.FirstOrDefault();
+            OnPropertyChanged(nameof(SelectedModel));
             }
 
         private void OnCurrentProfilePropertyChanged(object sender, PropertyChangedEventArgs e)
@@ -1009,7 +1105,10 @@ namespace CADTranslator.ViewModels
             if (clearPrevious)
                 _windowService.InvokeOnUIThread(() => StatusLog.Clear());
 
-            var formattedMessage = isListItem ? message : $"[{DateTime.Now:HH:mm:ss}] {message}";
+            // 核心修改：在这里追加Token信息
+            string tokenInfo = _isTokenCountAvailable ? $"，预计Tokens: {_totalTokens}" : "";
+            var formattedMessage = isListItem ? message : $"[{DateTime.Now:HH:mm:ss}] {message}{tokenInfo}";
+
             if (isError)
                 {
                 formattedMessage = $"[错误] {formattedMessage}";
@@ -1017,7 +1116,7 @@ namespace CADTranslator.ViewModels
 
             CadBridgeService.WriteToCommandLine(formattedMessage);
 
-            if (addNewLine) _windowService.InvokeOnUIThread(() => StatusLog.Add(formattedMessage));
+            if (addNewLine) _windowService.InvokeOnUIThread(() => StatusLog.Add(formattedMessage));    
             }
 
         private void UpdateLastLog(string message)
@@ -1039,7 +1138,10 @@ namespace CADTranslator.ViewModels
                 return;
                 }
             ProgressValue = (int)((double)completed / total * 100);
-            ProgressText = IsMultiThreadingEnabled ? $"({completed}/{total})" : $"({completed}/{total}) {ProgressValue}%";
+
+            // 核心修改：在这里追加Token信息
+            string tokenInfo = _isTokenCountAvailable ? $" (Tokens: {_totalTokens})" : "";
+            ProgressText = IsMultiThreadingEnabled ? $"({completed}/{total}){tokenInfo}" : $"({completed}/{total}) {ProgressValue}%{tokenInfo}";
             }
 
         private void HandleTranslationError(Exception ex, TextBlockViewModel item, System.Diagnostics.Stopwatch stopwatch, int completedItems)
@@ -1049,6 +1151,34 @@ namespace CADTranslator.ViewModels
             UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] [翻译失败] 第 {completedItems + 1} 项，原因: {errorMessage}");
             Log("任务因错误而中断。");
             item.TranslatedText = $"[翻译失败] {errorMessage}";
+            }
+
+        private async Task UpdateTokenCountAsync()
+            {
+            // 检查当前API是否支持此功能，以及列表是否有内容
+            if (CurrentProvider == null || !CurrentProvider.IsTokenCountSupported || !TextBlockList.Any())
+                {
+                _isTokenCountAvailable = false;
+                return;
+                }
+
+            try
+                {
+                // 创建一个临时的翻译器实例
+                var translator = _apiRegistry.CreateProviderForProfile(CurrentProfile);
+                // 合并所有原文
+                string combinedText = string.Join("\n", TextBlockList.Select(b => b.OriginalText));
+
+                // 异步计算Token
+                _totalTokens = await translator.CountTokensAsync(combinedText);
+                _isTokenCountAvailable = true;
+                }
+            catch (Exception ex)
+                {
+                // 如果计算失败，则标记为不可用，并在后台日志中记录错误
+                _isTokenCountAvailable = false;
+                Log($"[Token计算失败] {ex.Message}", isError: true, addNewLine: false);
+                }
             }
 
         private void HandleApiException(ApiException apiEx, TextBlockViewModel failedItem)
@@ -1136,7 +1266,7 @@ namespace CADTranslator.ViewModels
         #region --- 表格操作与属性变更 ---
         // (这部分方法也不需要改变)
         // ... OnMerge, OnDelete, OnSplit 等方法 ...
-        private void OnMerge(object selectedItems)
+        private async void OnMerge(object selectedItems)
             {
             var selectedViewModels = (selectedItems as IList<object>)?.Cast<TextBlockViewModel>().OrderBy(i => TextBlockList.IndexOf(i)).ToList();
             if (selectedViewModels == null || selectedViewModels.Count <= 1) return;
@@ -1153,6 +1283,7 @@ namespace CADTranslator.ViewModels
             foreach (var item in selectedViewModels.AsEnumerable().Reverse()) { TextBlockList.Remove(item); }
             TextBlockList.Insert(firstIndex, mergedItem);
             RenumberItems();
+            await UpdateTokenCountAsync(); // 现在这行代码是正确的
             }
 
         private async void OnDelete(object selectedItems)
@@ -1166,6 +1297,7 @@ namespace CADTranslator.ViewModels
                 {
                 foreach (var item in itemsToDelete) { TextBlockList.Remove(item); }
                 RenumberItems();
+                await UpdateTokenCountAsync(); // 现在这行代码是正确的
                 }
             }
 
@@ -1224,6 +1356,7 @@ namespace CADTranslator.ViewModels
             // 重新加载并应用所有显示逻辑
             var currentBlocksState = TextBlockList.ToList();
             LoadTextBlocks(currentBlocksState);
+            await UpdateTokenCountAsync(); // 现在这行代码是正确的
             }
 
         private async void OnEdit(object selectedItem)
@@ -1257,6 +1390,7 @@ namespace CADTranslator.ViewModels
                 UpdateProgress(0, 0);
                 IsProgressIndeterminate = false;
                 Log("界面已重置，请重新选择CAD文字。");
+                await UpdateTokenCountAsync();
                 }
             }
 

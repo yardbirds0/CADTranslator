@@ -54,6 +54,7 @@ namespace CADTranslator.Services.Translation
         public bool IsPromptSupported => false;
         public bool IsModelFetchingSupported => false;
         public bool IsBalanceCheckSupported => false;
+        public bool IsTokenCountSupported => false;
 
         #endregion
 
@@ -147,7 +148,7 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
-        public Task<List<string>> GetModelsAsync()
+        public Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {
             // 因为不支持，所以抛出异常
             throw new NotSupportedException("百度翻译服务不支持获取模型列表。");
@@ -157,6 +158,11 @@ namespace CADTranslator.Services.Translation
             {
             // 因为不支持，所以抛出异常
             throw new NotSupportedException("百度翻译服务不支持查询余额。");
+            }
+
+        public Task<int> CountTokensAsync(string textToCount)
+            {
+            throw new NotSupportedException("百度翻译服务不支持计算Token。");
             }
 
         #endregion

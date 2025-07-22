@@ -43,6 +43,7 @@ namespace CADTranslator.Services.Translation
         public bool IsPromptSupported => true;
         public bool IsModelFetchingSupported => true;
         public bool IsBalanceCheckSupported => false;
+        public bool IsTokenCountSupported => true;
         #endregion
 
         #region --- 核心与扩展功能 (ITranslator 实现) ---
@@ -110,17 +111,23 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
-        public async Task<List<string>> GetModelsAsync()
+        public async Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {
             try
                 {
                 var generativeModel = _lazyGoogleAI.Value.GenerativeModel();
-                var models = await generativeModel.ListModels();
+                // 【核心修改】将 cancellationToken 传递给 ListModels 方法
+                var models = await generativeModel.ListModels(cancellationToken: cancellationToken);
                 if (models == null || !models.Any()) return new List<string>();
                 return models
                        .Where(m => m.SupportedGenerationMethods.Contains("generateContent"))
                        .Select(m => m.Name.Replace("models/", ""))
                        .ToList();
+                }
+            catch (TaskCanceledException)
+                {
+                // 【核心修改】捕获并重新抛出取消异常
+                throw;
                 }
             catch (Exception ex)
                 {
@@ -134,6 +141,35 @@ namespace CADTranslator.Services.Translation
         public Task<List<KeyValuePair<string, string>>> CheckBalanceAsync()
             {
             throw new NotSupportedException("Gemini API 服务不支持在线查询余额。");
+            }
+
+        public async Task<int> CountTokensAsync(string textToCount)
+            {
+            if (string.IsNullOrWhiteSpace(_model))
+                throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
+
+            if (string.IsNullOrEmpty(textToCount))
+                return 0;
+
+            try
+                {
+                var generativeModel = _lazyGoogleAI.Value.GenerativeModel(model: _model);
+
+                // 根据 Mscc.GenerativeAI 的用法，调用 CountTokens 方法
+                var response = await generativeModel.CountTokens(textToCount);
+
+                // 从返回结果中获取 Token 总数
+                return response.TotalTokens;
+                }
+            catch (Exception ex)
+                {
+                // 将所有可能发生的异常，统一包装成我们自定义的 ApiException
+                if (ex.Message.Contains("Request timed out") || ex.Message.Contains("NameResolutionFailure"))
+                    {
+                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, $"计算Token时网络请求失败: {ex.Message}");
+                    }
+                throw new ApiException(ApiErrorType.ApiError, ServiceType, $"计算Token时发生错误: {ex.Message}");
+                }
             }
         #endregion
         }

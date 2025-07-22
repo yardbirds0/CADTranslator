@@ -26,6 +26,7 @@ namespace CADTranslator.Models.API
         private string _apiEndpoint;
         private List<string> _models = new List<string>();
         private string _lastSelectedModel;
+        private List<string> _favoriteModels = new List<string>();
 
         public Guid Id { get => _id; set => SetField(ref _id, value); }
         public string ProfileName { get => _profileName; set => SetField(ref _profileName, value); }
@@ -35,6 +36,7 @@ namespace CADTranslator.Models.API
         public string ApiEndpoint { get => _apiEndpoint; set => SetField(ref _apiEndpoint, value); }
         public List<string> Models { get => _models; set => SetField(ref _models, value); }
         public string LastSelectedModel { get => _lastSelectedModel; set => SetField(ref _lastSelectedModel, value); }
+        public List<string> FavoriteModels { get => _favoriteModels; set => SetField(ref _favoriteModels, value); }
 
 
         // ▼▼▼ 添加 INotifyPropertyChanged 的实现 ▼▼▼
@@ -53,6 +55,7 @@ namespace CADTranslator.Models.API
             // 关键：为Models列表也创建一个新的副本，而不是共享引用
             this.Models = new List<string>(other.Models ?? new List<string>());
             this.LastSelectedModel = other.LastSelectedModel;
+            this.FavoriteModels = new List<string>(other.FavoriteModels ?? new List<string>());
             }
 
 

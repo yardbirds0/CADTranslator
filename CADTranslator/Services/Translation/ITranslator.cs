@@ -72,6 +72,11 @@ namespace CADTranslator.Services.Translation
         /// </summary>
         bool IsBalanceCheckSupported { get; }
 
+        /// <summary>
+        /// 【新增】获取一个值，该值指示此服务是否支持计算Token用量。
+        /// </summary>
+        bool IsTokenCountSupported { get; }
+
         #endregion
 
         #region --- 3. 核心与扩展功能 ---
@@ -89,8 +94,9 @@ namespace CADTranslator.Services.Translation
         /// (扩展功能) 异步获取此服务可用的模型列表。
         /// 如果 IsModelFetchingSupported 为 false，调用此方法应抛出 NotSupportedException。
         /// </summary>
+        /// <param name="cancellationToken">用于取消操作的令牌。</param>
         /// <returns>一个包含模型名称字符串的列表。</returns>
-        Task<List<string>> GetModelsAsync();
+        Task<List<string>> GetModelsAsync(CancellationToken cancellationToken);
 
         /// <summary>
         /// (扩展功能) 异步查询账户余额或用量信息。
@@ -98,6 +104,14 @@ namespace CADTranslator.Services.Translation
         /// </summary>
         /// <returns>一个Key-Value对的列表，用于在历史记录中动态显示。</returns>
         Task<List<KeyValuePair<string, string>>> CheckBalanceAsync();
+
+        /// <summary>
+        /// 【新增】(扩展功能) 异步计算一段文本的Token数量。
+        /// 如果 IsTokenCountSupported 为 false，调用此方法应抛出 NotSupportedException。
+        /// </summary>
+        /// <param name="textToCount">需要计算的文本。</param>
+        /// <returns>一个包含Token数量的整数。</returns>
+        Task<int> CountTokensAsync(string textToCount);
 
         #endregion
         }

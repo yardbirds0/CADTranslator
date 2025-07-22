@@ -54,6 +54,7 @@ namespace CADTranslator.Services.Translation
         public bool IsPromptSupported => true;
         public bool IsModelFetchingSupported => false;
         public bool IsBalanceCheckSupported => false;
+        public bool IsTokenCountSupported => false;
 
         #endregion
 
@@ -119,7 +120,7 @@ namespace CADTranslator.Services.Translation
                 throw new ApiException(ApiErrorType.ApiError, ServiceType, ex.Message);
                 }
             }
-        public Task<List<string>> GetModelsAsync()
+        public Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {
             throw new NotSupportedException("当前OpenAI集成不支持在线获取模型列表。请在模型管理中手动添加。");
             }
@@ -129,6 +130,10 @@ namespace CADTranslator.Services.Translation
             throw new NotSupportedException("OpenAI API 服务不支持在线查询余额。");
             }
 
+        public Task<int> CountTokensAsync(string textToCount)
+            {
+            throw new NotSupportedException("当前OpenAI集成不支持计算Token。");
+            }
         #endregion
         }
     }
