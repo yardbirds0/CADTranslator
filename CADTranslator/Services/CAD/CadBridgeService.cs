@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.ApplicationServices;
 using CADTranslator.ViewModels;
 using System.Collections.ObjectModel;
 using System.Text.RegularExpressions;
+using CADTranslator.AutoCAD.Commands;
 
 namespace CADTranslator.Services.CAD
     {
@@ -22,6 +23,28 @@ namespace CADTranslator.Services.CAD
             if (doc == null) return;
 
             doc.SendStringToExecute(command, true, false, false);
+            }
+
+        /// <summary>
+        /// 【新的桥接方法】
+        /// 直接、安全地调用 MainCommands 中的核心布局逻辑。
+        /// 这使得调用堆栈可以被调试器跟踪。
+        /// </summary>
+        public static void InvokeApplyLayout()
+            {
+            // 检查当前活动的文档是否存在
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            // 使用 ExecuteInApplicationContext 来确保我们的代码在 AutoCAD 的主线程中安全执行
+            Application.DocumentManager.ExecuteInApplicationContext(
+                (state) =>
+                {
+                    // 在这里，我们直接调用 MainCommands 类中的静态方法
+                    MainCommands.ExecuteApplyLayoutLogic();
+                },
+                null // state 对象，这里我们不需要传递任何额外状态
+            );
             }
 
         public static ObservableCollection<TextBlockViewModel> TextBlocksToLayout { get; set; }

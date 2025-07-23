@@ -1,0 +1,85 @@
+﻿<Window x:Class="CADTranslator.Views.TestResultWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="[TEST] 智能布局计算结果预览"
+        Height="700"
+        Width="1200"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="10">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="1.2*"
+                              MinWidth="300" />
+            <ColumnDefinition Width="5" />
+            <ColumnDefinition Width="2*"
+                              MinWidth="400" />
+        </Grid.ColumnDefinitions>
+
+        <Grid Grid.Column="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Text="计算过程总结:"
+                       FontWeight="Bold"
+                       Margin="0,0,0,5" />
+            <Border Grid.Row="1"
+                    BorderBrush="CornflowerBlue"
+                    BorderThickness="1.5"
+                    CornerRadius="3"
+                    Padding="8"
+                    Margin="0,0,0,10">
+                <TextBlock x:Name="SummaryTextBlock"
+                           TextWrapping="Wrap"
+                           LineHeight="20" />
+            </Border>
+            <ListView Grid.Row="2"
+                      x:Name="ReportListView"
+                      SelectionChanged="ReportListView_SelectionChanged">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}"
+                                   FontFamily="Consolas"
+                                   TextWrapping="Wrap" />
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+
+        <GridSplitter Grid.Column="1"
+                      Width="5"
+                      HorizontalAlignment="Stretch" />
+
+        <Grid Grid.Column="2">
+            <TabControl>
+                <TabItem Header="可视化预览">
+                    <Border BorderBrush="Gray"
+                            BorderThickness="1"
+                            Background="#F0F0F0"
+                            Margin="2">
+                        <Canvas x:Name="PreviewCanvas"
+                                ClipToBounds="True" />
+                    </Border>
+                </TabItem>
+                <TabItem Header="障碍物报告 (边界框)">
+                    <TextBox x:Name="ObstaclesTextBox"
+                             IsReadOnly="True"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             Margin="2" />
+                </TabItem>
+
+                <TabItem Header="精确几何报告 (NTS)">
+                    <TextBox x:Name="PreciseObstaclesTextBox"
+                             IsReadOnly="True"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             Margin="2" />
+                </TabItem>
+            </TabControl>
+        </Grid>
+    </Grid>
+</Window>

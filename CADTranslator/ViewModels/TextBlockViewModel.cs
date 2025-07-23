@@ -73,6 +73,11 @@ namespace CADTranslator.ViewModels
         public Point3d OriginalAnchorPoint { get; set; }
         public bool IsTitle { get; set; } = false;
         public string GroupKey { get; set; } = null;
+        public double Rotation { get; set; }
+        public double Oblique { get; set; }
+        public double Height { get; set; }
+        public double WidthFactor { get; set; }
+        public ObjectId TextStyleId { get; set; }
 
         #endregion
 

@@ -374,6 +374,7 @@
                                     <Grid>
                                         <ComboBox ItemsSource="{Binding ModelList}"
                                                   SelectedItem="{Binding SelectedModel}"
+                                                  TextSearch.TextPath="Name"
                                                   Text="{Binding CurrentModelInput, UpdateSourceTrigger=PropertyChanged}"
                                                   IsEditable="True"
                                                   IsEnabled="{Binding IsModelListEnabled}">

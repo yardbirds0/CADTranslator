@@ -37,7 +37,6 @@ namespace CADTranslator.Services.CAD
             _editor = doc.Editor;
             }
 
-        // 文件路径: CADTranslator/Services/CAD/CadLayoutService.cs
 
         public bool ApplySmartLayoutToCad(ObservableCollection<TextBlockViewModel> textBlockList, List<ObjectId> idsToDelete, string lineSpacing)
             {
@@ -274,8 +273,13 @@ namespace CADTranslator.Services.CAD
                 }
             }
 
+
         public bool ApplyTranslationToCad(ObservableCollection<TextBlockViewModel> textBlockList, List<ObjectId> idsToDelete)
             {
+            // 注意：参数中的 idsToDelete 在这个新逻辑中不再被直接使用，
+            // 因为我们会在循环内部根据每个 item 的 SourceObjectIds 来删除。
+            // 但我们保留它以维持接口的一致性。
+
             try
                 {
                 using (_doc.LockDocument())
@@ -284,63 +288,70 @@ namespace CADTranslator.Services.CAD
                         {
                         BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
 
-                        // 【核心修正】使用从ViewModel传入的、精确的待删除列表
-                        foreach (var objectId in idsToDelete)
-                            {
-                            if (!objectId.IsNull && !objectId.IsErased)
-                                {
-                                var entityToErase = tr.GetObject(objectId, OpenMode.ForWrite) as Entity;
-                                entityToErase?.Erase();
-                                }
-                            }
-
+                        // 【核心逻辑修正】
+                        // 我们不再先统一删除，而是遍历每个翻译项，完成“创建”之后再“删除”
                         foreach (var item in textBlockList)
                             {
+                            // 跳过无效的翻译项
                             if (string.IsNullOrWhiteSpace(item.TranslatedText) || item.TranslatedText.StartsWith("[")) continue;
 
+                            // 获取该翻译项的一个源对象作为基础属性（图层、颜色等）的模板
                             var firstObjectId = item.SourceObjectIds.FirstOrDefault();
                             if (firstObjectId.IsNull || firstObjectId.IsErased) continue;
+
                             var baseEntity = tr.GetObject(firstObjectId, OpenMode.ForRead) as Entity;
                             if (baseEntity == null) continue;
 
                             string final_text = item.TranslatedText.Replace(LegendPlaceholder, new string(' ', item.OriginalSpaceCount));
                             string singleLineText = final_text.Replace('\n', ' ').Replace('\r', ' ');
 
+                            // 步骤 1: 创建新的翻译后文字
                             using (DBText newText = new DBText())
                                 {
                                 newText.TextString = singleLineText;
-                                newText.SetPropertiesFrom(baseEntity);
-                                if (baseEntity is DBText originalDbText)
+                                newText.SetPropertiesFrom(baseEntity); // 继承图层、颜色等基础属性
+
+                                // 【核心】所有几何和样式属性，现在都完整地从 ViewModel 中获取
+                                newText.Height = (item.Height <= 0) ? 2.5 : item.Height;
+                                newText.Rotation = item.Rotation;
+                                newText.Oblique = item.Oblique;
+                                newText.WidthFactor = item.WidthFactor;
+                                newText.TextStyleId = item.TextStyleId;
+                                newText.HorizontalMode = item.HorizontalMode;
+                                newText.VerticalMode = item.VerticalMode;
+
+                                // 根据对齐方式设置 Position 或 AlignmentPoint
+                                if (item.HorizontalMode == TextHorizontalMode.TextLeft && item.VerticalMode == TextVerticalMode.TextBase)
                                     {
-                                    newText.Position = originalDbText.Position;
-                                    newText.Height = originalDbText.Height;
-                                    newText.Rotation = originalDbText.Rotation;
-                                    newText.Oblique = originalDbText.Oblique;
-                                    newText.WidthFactor = originalDbText.WidthFactor;
-                                    newText.TextStyleId = originalDbText.TextStyleId;
-                                    newText.HorizontalMode = originalDbText.HorizontalMode;
-                                    newText.VerticalMode = originalDbText.VerticalMode;
-                                    if (newText.HorizontalMode != TextHorizontalMode.TextLeft || newText.VerticalMode != TextVerticalMode.TextBase)
-                                        {
-                                        newText.AlignmentPoint = originalDbText.AlignmentPoint;
-                                        }
+                                    newText.Position = item.Position;
                                     }
-                                else if (baseEntity is MText originalMText)
+                                else
                                     {
-                                    newText.Position = originalMText.Location;
-                                    newText.Height = originalMText.TextHeight;
-                                    newText.Rotation = originalMText.Rotation;
-                                    newText.TextStyleId = originalMText.TextStyleId;
-                                    newText.HorizontalMode = TextHorizontalMode.TextLeft;
-                                    newText.VerticalMode = TextVerticalMode.TextBase;
+                                    newText.AlignmentPoint = item.AlignmentPoint;
                                     }
 
-                                if (newText.Height <= 0) newText.Height = 2.5;
                                 modelSpace.AppendEntity(newText);
                                 tr.AddNewlyCreatedDBObject(newText, true);
+
+                                // 如果需要，调整对齐
+                                if (newText.HorizontalMode != TextHorizontalMode.TextLeft || newText.VerticalMode != TextVerticalMode.TextBase)
+                                    {
+                                    newText.AdjustAlignment(_db);
+                                    }
+                                }
+
+                            // 步骤 2: 在新文字创建成功后，再删除这个翻译项对应的所有源对象
+                            foreach (var idToErase in item.SourceObjectIds)
+                                {
+                                if (!idToErase.IsNull && !idToErase.IsErased)
+                                    {
+                                    var entityToErase = tr.GetObject(idToErase, OpenMode.ForWrite) as Entity;
+                                    entityToErase?.Erase();
+                                    }
                                 }
                             }
-                        tr.Commit();
+
+                        tr.Commit(); // 所有操作成功，提交事务
                         _editor.WriteMessage("\n所有翻译已成功应用到CAD图纸！");
                         return true;
                         }

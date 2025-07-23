@@ -7,6 +7,7 @@ using CADTranslator.Models.CAD;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.NetworkInformation;
 using System.Text.RegularExpressions;
 
 namespace CADTranslator.Services.CAD
@@ -68,22 +69,42 @@ namespace CADTranslator.Services.CAD
                         if (templateEntity is DBText dbText)
                             {
                             paraInfo.Height = dbText.Height;
-                            paraInfo.WidthFactor = dbText.WidthFactor;
                             paraInfo.TextStyleId = dbText.TextStyleId;
                             paraInfo.Position = dbText.Position;
                             paraInfo.AlignmentPoint = dbText.AlignmentPoint;
                             paraInfo.HorizontalMode = dbText.HorizontalMode;
                             paraInfo.VerticalMode = dbText.VerticalMode;
+                            paraInfo.Rotation = dbText.Rotation;
+                            paraInfo.Oblique = dbText.Oblique;
+
+                            // 步骤 2: 【核心修正】用更智能的方式获取 WidthFactor
+                            double widthFactor = dbText.WidthFactor;
+                            // 如果直接从对象读取到的宽度因子是无效的0，我们就去它的样式里找
+                            if (widthFactor == 0)
+                                {
+                                // 打开这个文字对象关联的文字样式表记录
+                                var textStyle = tr.GetObject(dbText.TextStyleId, OpenMode.ForRead) as TextStyleTableRecord;
+                                if (textStyle != null)
+                                    {
+                                    // 从样式中读取真实的宽度因子 (在样式里它叫 XScale)
+                                    widthFactor = textStyle.XScale;
+                                    }
+                                }
+                            // 如果经过努力还是0，给一个绝对安全的默认值1.0
+                            paraInfo.WidthFactor = (widthFactor == 0) ? 0.7 : widthFactor;
+
                             }
                         else if (templateEntity is MText mText)
                             {
                             paraInfo.Height = mText.TextHeight;
-                            paraInfo.WidthFactor = 1.0;
+                            paraInfo.WidthFactor = 1.0; // MText 没有 WidthFactor 属性，设为默认值
                             paraInfo.TextStyleId = mText.TextStyleId;
                             paraInfo.Position = mText.Location;
                             paraInfo.AlignmentPoint = mText.Location;
                             paraInfo.HorizontalMode = TextHorizontalMode.TextLeft;
                             paraInfo.VerticalMode = TextVerticalMode.TextTop;
+                            paraInfo.Rotation = mText.Rotation;
+                            paraInfo.Oblique = 0; // MText 没有 Oblique 属性，设为默认值
                             }
 
                         var match = Regex.Match(block.OriginalText, specialPattern);

@@ -23,5 +23,7 @@ namespace CADTranslator.Models.CAD
         public bool IsTitle { get; set; } = false;
         public string GroupKey { get; set; } = null;
         public bool ContainsSpecialPattern { get; set; } = false;
+        public double Rotation { get; set; }
+        public double Oblique { get; set; }
         }
 }

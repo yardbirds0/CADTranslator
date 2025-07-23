@@ -176,9 +176,34 @@ namespace CADTranslator.ViewModels
                     }
                 }
             }
-        public string CurrentModelInput { get; set; } 
-        public string SourceLanguage { get; set; } = "auto";
-        public string TargetLanguage { get; set; } = "en";
+        public string CurrentModelInput { get; set; }
+        public string SourceLanguage
+            {
+            get => _currentSettings?.SourceLanguage ?? "auto"; // 从设置中读取，如果设置为null则提供默认值
+            set
+                {
+                if (_currentSettings != null && _currentSettings.SourceLanguage != value)
+                    {
+                    _currentSettings.SourceLanguage = value;
+                    OnPropertyChanged(); // 通知UI更新
+                    if (!_isLoading) SaveSettings(); // 保存设置
+                    }
+                }
+            }
+
+        public string TargetLanguage
+            {
+            get => _currentSettings?.TargetLanguage ?? "en"; // 从设置中读取，如果设置为null则提供默认值
+            set
+                {
+                if (_currentSettings != null && _currentSettings.TargetLanguage != value)
+                    {
+                    _currentSettings.TargetLanguage = value;
+                    OnPropertyChanged(); // 通知UI更新
+                    if (!_isLoading) SaveSettings(); // 保存设置
+                    }
+                }
+            }
         public string GlobalPrompt { get; set; }
         public ObservableCollection<string> StatusLog { get; } = new ObservableCollection<string>();
         public int ProgressValue { get => _progressValue; set => SetField(ref _progressValue, value); }
@@ -446,7 +471,12 @@ namespace CADTranslator.ViewModels
                             Position = p.Position,
                             AlignmentPoint = p.AlignmentPoint,
                             HorizontalMode = p.HorizontalMode,
-                            VerticalMode = p.VerticalMode
+                            VerticalMode = p.VerticalMode,
+                            Rotation = p.Rotation,
+                            Oblique = p.Oblique,
+                            Height = p.Height,
+                            WidthFactor = p.WidthFactor,
+                            TextStyleId = p.TextStyleId
                             }).ToList();
                         LoadTextBlocks(textBlocks);
                         Log($"成功提取并分析了 {textBlocks.Count} 个段落。");
@@ -733,7 +763,6 @@ namespace CADTranslator.ViewModels
 
         private async void OnApplyToCad(object parameter)
             {
-            // 1. 检查是否有可应用的内容
             var validItems = TextBlockList.Where(item => !string.IsNullOrWhiteSpace(item.TranslatedText) && !item.TranslatedText.StartsWith("["))
                                           .ToList();
             if (!validItems.Any())
@@ -744,20 +773,15 @@ namespace CADTranslator.ViewModels
 
             Log("准备将翻译应用到CAD...");
 
-            // 2. 【核心修改】将数据存放到静态桥梁中
             CadBridgeService.TextBlocksToLayout = new ObservableCollection<TextBlockViewModel>(TextBlockList);
 
-            // 3. 【核心修改】隐藏WPF窗口，而不是最小化
             _windowService.MinimizeMainWindow();
 
-            // 4. 等待一小段时间，确保WPF窗口完成隐藏动画，让CAD窗口能平滑地获得焦点
             //await Task.Delay(200);
 
-            // 5. 【核心修改】通过桥梁服务，要求AutoCAD执行内部命令
-            CadBridgeService.SendCommandToAutoCAD("WZPB_APPLY\n"); // WZPB_APPLY 是我们的新内部命令
+            // CadBridgeService.SendCommandToAutoCAD("WZPB_APPLY\n"); // WZPB_APPLY 是我们的新内部命令
 
-            // 注意：这里不再有 try-catch 和 finally，也不再有重新激活窗口的逻辑。
-            // 因为从现在起，控制权已经完全交给AutoCAD了。
+            CadBridgeService.InvokeApplyLayout();
             }
         #endregion
 
@@ -961,8 +985,10 @@ namespace CADTranslator.ViewModels
             _currentSettings.ConcurrencyPresets.Distinct().ToList().ForEach(p => ConcurrencyLevelOptions.Add(p));
             CurrentConcurrencyLevelInput = _currentSettings.LastSelectedConcurrency;
 
-
+            OnPropertyChanged(nameof(SourceLanguage));
+            OnPropertyChanged(nameof(TargetLanguage));
             _isLoading = false;
+
 
             }
 
@@ -1457,18 +1483,28 @@ namespace CADTranslator.ViewModels
                 {
                 var newVm = new TextBlockViewModel
                     {
+                    // 基础信息
                     OriginalText = block.OriginalText,
                     TranslatedText = block.TranslatedText,
                     SourceObjectIds = block.SourceObjectIds,
+                    IsTitle = block.IsTitle,
+                    GroupKey = block.GroupKey,
+
+                    // 图例相关信息
                     AssociatedGraphicsBlockId = block.AssociatedGraphicsBlockId,
                     OriginalAnchorPoint = block.OriginalAnchorPoint,
                     OriginalSpaceCount = block.OriginalSpaceCount,
+
+                    // 【核心修正】补上所有缺失的几何和样式属性
                     Position = block.Position,
                     AlignmentPoint = block.AlignmentPoint,
                     HorizontalMode = block.HorizontalMode,
                     VerticalMode = block.VerticalMode,
-                    IsTitle = block.IsTitle,
-                    GroupKey = block.GroupKey
+                    Rotation = block.Rotation,
+                    Oblique = block.Oblique,
+                    Height = block.Height,
+                    WidthFactor = block.WidthFactor,
+                    TextStyleId = block.TextStyleId
                     };
                 TextBlockList.Add(newVm);
                 }

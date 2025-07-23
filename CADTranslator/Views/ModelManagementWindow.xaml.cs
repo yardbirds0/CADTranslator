@@ -22,20 +22,21 @@ namespace CADTranslator.Views
             DataContext = _viewModel;
             }
 
-        // ▼▼▼ 修改 "保存" 按钮的逻辑 ▼▼▼
         private async void SaveButton_Click(object sender, RoutedEventArgs e)
             {
-            _viewModel.MarkAsDirty(); // 这行代码其实可以移除，但为了安全起见保留
+            // 首先，弹出一个内容更明确的提示框，告诉用户保存后窗口会关闭
             var mb = new MessageBox
                 {
                 Title = "操作成功",
-                Content = "模型列表已保存！",
+                Content = "模型列表已成功保存！",
                 CloseButtonText = "好的"
                 };
-            mb.Resources = this.Resources;
+            mb.Resources = this.Resources; // 确保样式统一
             await mb.ShowDialogAsync();
 
-            _viewModel.MarkAsSaved(); // 【新增】在这里调用新方法，重置状态
+            // 在用户点击“好的”之后，将 DialogResult 设置为 true。
+            // 这是触发主窗口保存逻辑的关键步骤。
+            this.DialogResult = true;
             }
 
         // ▼▼▼ 修改 "应用选择模型" 按钮逻辑 ▼▼▼
