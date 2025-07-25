@@ -55,6 +55,7 @@ namespace CADTranslator.Views
         private double _currentSearchRangeFactor;
         private System.Windows.Point _lastMousePosition; // ◄◄◄ 明确使用 System.Windows.Point
         private Matrix _canvasMatrix;
+        private bool _isLoaded = false;
 
         public ObservableCollection<int> RoundOptions { get; set; }
         public ObservableCollection<double> SearchRangeOptions { get; set; }
@@ -66,7 +67,11 @@ namespace CADTranslator.Views
                 {
                 if (SetField(ref _numberOfRounds, value))
                     {
-                    SaveSettings();
+                    // 只有在窗口完全加载后，用户的修改才触发保存
+                    if (_isLoaded)
+                        {
+                        SaveSettings();
+                        }
                     }
                 }
             }
@@ -120,6 +125,10 @@ namespace CADTranslator.Views
 
             RoundOptions = new ObservableCollection<int> { 10, 50, 100, 200, 500, 1000 };
             NumberOfRounds = _settings.TestNumberOfRounds;
+            if (NumberOfRounds < RoundsSlider.Minimum)
+                {
+                NumberOfRounds = (int)RoundsSlider.Minimum;
+                }
 
             this.Loaded += (s, e) => TestResultWindow_Loaded(s, e, summary);
             this.SizeChanged += (s, e) => DrawLayout();
@@ -139,19 +148,20 @@ namespace CADTranslator.Views
             RoundsComboBox.LostFocus += RoundsComboBox_LostFocus;
             SearchRangeComboBox.LostFocus += SearchRangeComboBox_LostFocus;
             UpdateSummary(summary);
+            RoundsComboBox.Text = this.NumberOfRounds.ToString();
 
-            // ▼▼▼ 请用下面这段代码，替换掉旧的 ObstaclesTextBox.Text 和 PreciseObstaclesTextBox.Text 赋值语句 ▼▼▼
             var obstaclesReport = new StringBuilder();
             obstaclesReport.AppendLine($"共分析 {_obstaclesForReport.Count} 个初始障碍物 (基于边界框)：");
             obstaclesReport.AppendLine("========================================");
             _obstaclesForReport.ForEach(obs => obstaclesReport.AppendLine($"--- [类型: {obs.Item2}] Min: {obs.Item1.MinPoint}, Max: {obs.Item1.MaxPoint}"));
             ObstaclesTextBox.Text = obstaclesReport.ToString();
             PreciseObstaclesTextBox.Text = _preciseReport;
-            // ▲▲▲ 替换结束 ▲▲▲
 
             ReportListView.ItemsSource = _originalTargets;
-
-            // ▼▼▼ 【新增】在首次绘制前，预先计算所有文字的精确尺寸 ▼▼▼
+            RoundsSlider.Value = this.NumberOfRounds;
+            RoundsComboBox.Text = this.NumberOfRounds.ToString();
+            // 【核心修复】在所有初始化完成后，才允许保存操作
+            _isLoaded = true;
             PreCacheAllTextSizes();
 
             DrawLayout();
@@ -431,11 +441,20 @@ namespace CADTranslator.Views
                 }
             }
 
-       
+
 
         private Path FindPathByGeometry(NtsGeometry geometry)
             {
-            return PreviewCanvas.Children.OfType<Path>().FirstOrDefault(p => p.DataContext == geometry);
+            return PreviewCanvas.Children.OfType<Path>().FirstOrDefault(p =>
+            {
+                // 先检查DataContext是不是一个几何体
+                if (p.DataContext is NtsGeometry pathGeometry)
+                    {
+                    // 使用.Equals()进行值比较
+                    return pathGeometry.Equals(geometry);
+                    }
+                return false;
+            });
             }
 
         private FrameworkElement FindUIElementByTask(LayoutTask task, bool isThumb)
@@ -486,24 +505,7 @@ namespace CADTranslator.Views
                 {
                 DataContext = task,
                 Cursor = Cursors.SizeAll
-                };
-
-            // ▼▼▼ 请在这里，即 new Thumb {...} 的下方，添加下面这段代码 ▼▼▼
-            // 【BUG修复】通过手动捕捉鼠标并停止事件冒泡，解决画布跳动问题
-            thumb.PreviewMouseLeftButtonDown += (s, e) => {
-                if (e.Source is Thumb) // 确保是Thumb自身（而非其内容）触发的
-                    {
-                    (s as UIElement).CaptureMouse(); // 让Thumb独占鼠标
-                    e.Handled = true;               // 告诉系统，事件到此为止，不要再传递给画布
-                    }
-            };
-            thumb.PreviewMouseLeftButtonUp += (s, e) => {
-                if (e.Source is Thumb)
-                    {
-                    (s as UIElement).ReleaseMouseCapture(); // 释放鼠标独占
-                    }
-            };
-
+                };      
             var template = new ControlTemplate(typeof(Thumb));
             var border = new FrameworkElementFactory(typeof(Border), "ThumbBorder");
             border.SetValue(Border.CornerRadiusProperty, new CornerRadius(2));
@@ -633,6 +635,7 @@ namespace CADTranslator.Views
 
         private void PreviewCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
             {
+            if (e.Source != sender) return; // 如果事件不是由画布自己发起的，就直接忽略
             if (e.ButtonState == MouseButtonState.Pressed)
                 {
                 _lastMousePosition = e.GetPosition(sender as IInputElement);
@@ -647,7 +650,10 @@ namespace CADTranslator.Views
 
         private void PreviewCanvas_MouseMove(object sender, MouseEventArgs e)
             {
-            if (e.LeftButton == MouseButtonState.Pressed)
+           
+            // ▼▼▼ 请在这里新增一行 if 判断语句 ▼▼▼
+            if (e.LeftButton == MouseButtonState.Pressed && (sender as UIElement).IsMouseCaptured)
+            // ▲▲▲ 修改结束 ▲▲▲
                 {
                 var currentMousePosition = e.GetPosition(sender as IInputElement);
                 var delta = Point.Subtract(currentMousePosition, _lastMousePosition);
@@ -749,15 +755,21 @@ namespace CADTranslator.Views
                 {
                 if (int.TryParse(comboBox.Text, out int value))
                     {
+                    // 确保输入值在有效范围内
                     int clampedValue = (int)Math.Max(RoundsSlider.Minimum, Math.Min(RoundsSlider.Maximum, value));
 
+                    // 只有当修正后的值与当前值不同时，才进行更新并保存
                     if (this.NumberOfRounds != clampedValue)
                         {
                         this.NumberOfRounds = clampedValue;
                         }
+
+                    // 【核心修正】无论值是否变化，都强制UI显示与后台数据一致
+                    comboBox.Text = this.NumberOfRounds.ToString();
                     }
                 else
                     {
+                    // 如果输入了无效内容（如字母），则将文本重置为当前有效值
                     comboBox.Text = this.NumberOfRounds.ToString();
                     }
                 }
