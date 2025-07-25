@@ -21,6 +21,19 @@ namespace CADTranslator.Models.CAD
         public TextHorizontalMode HorizontalMode { get; }
         public TextVerticalMode VerticalMode { get; }
         public string SemanticType { get; set; } = "独立文本";
+        public Line AssociatedLeader { get; set; }
+        /// <summary>
+        /// 算法计算出的原始最佳位置
+        /// </summary>
+        public Point3d? AlgorithmPosition { get; set; }
+        /// <summary>
+        /// 用户当前放置的位置（可被拖动修改）
+        /// </summary>
+        public Point3d? CurrentUserPosition { get; set; }
+        /// <summary>
+        /// 标记此任务是否被用户手动移动过
+        /// </summary>
+        public bool IsManuallyMoved { get; set; } = false;
         public Point3d? BestPosition { get; set; }
         public string FailureReason { get; set; }
         public Dictionary<Point3d, ObjectId> CollisionDetails { get; set; } = new Dictionary<Point3d, ObjectId>();
@@ -104,6 +117,10 @@ namespace CADTranslator.Models.CAD
             HorizontalMode = other.HorizontalMode;
             VerticalMode = other.VerticalMode;
             SemanticType = other.SemanticType;
+
+            BestPosition = other.BestPosition;
+            FailureReason = other.FailureReason;
+            CollisionDetails = new Dictionary<Point3d, ObjectId>(other.CollisionDetails);
             }
 
         public override string ToString()

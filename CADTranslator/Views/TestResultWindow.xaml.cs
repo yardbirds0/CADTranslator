@@ -1,12 +1,19 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using CADTranslator.Models.CAD;
+using CADTranslator.Services.CAD;
+using CADTranslator.Services.Settings; // 【新增】引入设置服务
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading.Tasks; // 【新增】引入Task
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives; // 【新增】引入Primitives以使用Thumb
 using System.Windows.Media;
 using System.Windows.Shapes;
 using NtsGeometry = NetTopologySuite.Geometries.Geometry;
@@ -14,58 +21,142 @@ using TextBlock = System.Windows.Controls.TextBlock;
 
 namespace CADTranslator.Views
     {
-    public partial class TestResultWindow : Window
+    public partial class TestResultWindow : Window, INotifyPropertyChanged
         {
-        private readonly List<LayoutTask> _targets;
+        #region --- 字段与属性 ---
+
+        // 用于存储原始数据
+        private readonly List<LayoutTask> _originalTargets;
+        private readonly List<Entity> _rawObstacles;
         private readonly List<Tuple<Extents3d, string>> _obstaclesForReport;
         private readonly List<NtsGeometry> _preciseObstacles;
         private readonly string _preciseReport;
         private readonly Dictionary<ObjectId, NtsGeometry> _obstacleIdMap;
 
-        private Matrix _transformMatrix;
-        private TextBox _obstaclesTextBox;
-        private TextBox _preciseObstaclesTextBox;
-        private bool _isDrawing = false;
+        // 【新增】用于设置持久化
+        private readonly SettingsService _settingsService = new SettingsService();
+        private AppSettings _settings;
 
-        public TestResultWindow(List<LayoutTask> targets, List<Tuple<Extents3d, string>> obstaclesForReport, List<NtsGeometry> preciseObstacles, string preciseReport, Dictionary<ObjectId, NtsGeometry> obstacleIdMap, (int rounds, double bestScore, double worstScore) summary)
+        // 用于UI绑定和状态控制
+        private Matrix _transformMatrix;
+        private bool _isDrawing = false;
+        private bool _isRecalculating = false;
+        private int _numberOfRounds;
+
+        public ObservableCollection<int> RoundOptions { get; set; }
+
+        public int NumberOfRounds
+            {
+            get => _numberOfRounds;
+            set
+                {
+                // 只更新值，不在此处触发重算，以避免滑动时卡顿
+                if (SetField(ref _numberOfRounds, value))
+                    {
+                    // 值变化后，保存设置
+                    SaveSettings();
+                    }
+                }
+            }
+
+        #endregion
+
+        #region --- 构造函数与加载事件 ---
+
+        public TestResultWindow(List<LayoutTask> targets, List<Entity> rawObstacles, List<Tuple<Extents3d, string>> obstaclesForReport, List<NtsGeometry> preciseObstacles, string preciseReport, Dictionary<ObjectId, NtsGeometry> obstacleIdMap, (int rounds, double bestScore, double worstScore) summary)
             {
             InitializeComponent();
-            _targets = targets;
+            DataContext = this;
+
+            // 初始化数据
+            _originalTargets = targets.Select(t => new LayoutTask(t)).ToList();
+            _rawObstacles = rawObstacles;
             _obstaclesForReport = obstaclesForReport;
             _preciseObstacles = preciseObstacles;
             _preciseReport = preciseReport;
             _obstacleIdMap = obstacleIdMap;
+            _settings = _settingsService.LoadSettings();
 
-            this.Loaded += (s, e) => TestResultWindow_Loaded(s, e, summary); // 将summary传递给Loaded事件
+            // 初始化UI选项
+            RoundOptions = new ObservableCollection<int> { 10, 50, 100, 200, 500, 1000 };
+            NumberOfRounds = _settings.TestNumberOfRounds; // 从设置加载轮次
+
+            this.Loaded += (s, e) => TestResultWindow_Loaded(s, e, summary);
             this.SizeChanged += (s, e) => DrawLayout();
             }
 
         private void TestResultWindow_Loaded(object sender, RoutedEventArgs e, (int rounds, double bestScore, double worstScore) summary)
             {
-            // 填充“战报陈列室”
-            var summaryText = new StringBuilder();
-            summaryText.AppendLine($"总推演轮次: {summary.rounds} 轮");
-            summaryText.AppendLine($"最佳布局评分: {summary.bestScore:F2}");
-            summaryText.AppendLine($"最差布局评分: {summary.worstScore:F2}");
-            SummaryTextBlock.Text = summaryText.ToString();
+            // 【核心修改】为滑块添加拖动完成事件
+            RoundsSlider.AddHandler(Thumb.DragCompletedEvent, new DragCompletedEventHandler(Slider_DragCompleted));
 
-            // ... (后续的查找控件和填充其他报告的逻辑，与上次的最终修正版完全相同)
-            if (this.FindName("ObstaclesTextBox") is TextBox foundObstaclesTextBox) { _obstaclesTextBox = foundObstaclesTextBox; }
-            if (this.FindName("PreciseObstaclesTextBox") is TextBox foundPreciseTextBox) { _preciseObstaclesTextBox = foundPreciseTextBox; }
-            ReportListView.ItemsSource = _targets;
+            UpdateSummary(summary);
+
             var obstaclesReport = new StringBuilder();
             obstaclesReport.AppendLine($"共分析 {_obstaclesForReport.Count} 个初始障碍物 (基于边界框)：");
             obstaclesReport.AppendLine("========================================");
             _obstaclesForReport.ForEach(obs => obstaclesReport.AppendLine($"--- [类型: {obs.Item2}] Min: {obs.Item1.MinPoint}, Max: {obs.Item1.MaxPoint}"));
-            if (_obstaclesTextBox != null) { _obstaclesTextBox.Text = obstaclesReport.ToString(); }
-            if (_preciseObstaclesTextBox != null) { _preciseObstaclesTextBox.Text = _preciseReport; }
+            ObstaclesTextBox.Text = obstaclesReport.ToString();
+            PreciseObstaclesTextBox.Text = _preciseReport;
+
+            ReportListView.ItemsSource = _originalTargets;
 
             DrawLayout();
             if (ReportListView.Items.Count > 0) { ReportListView.SelectedIndex = 0; }
             }
 
+        #endregion
+
+        #region --- 核心重算与重绘逻辑 ---
+
+        private async void RecalculateAndRedraw()
+            {
+            if (!this.IsLoaded || _isRecalculating) return;
+
+            _isRecalculating = true;
+            SummaryTextBlock.Text = $"正在使用 {NumberOfRounds} 轮次进行新一轮推演，请稍候...";
+
+            // 使用 Task.Run 在后台线程执行计算，避免UI卡死
+            var newSummary = await Task.Run(() =>
+            {
+                foreach (var task in _originalTargets)
+                    {
+                    task.BestPosition = null;
+                    task.FailureReason = null;
+                    task.CollisionDetails.Clear();
+                    }
+
+                var calculator = new LayoutCalculator();
+                return calculator.CalculateLayouts(_originalTargets, _rawObstacles, NumberOfRounds);
+            });
+
+            // 回到UI线程更新界面
+            UpdateSummary(newSummary);
+            ReportListView.ItemsSource = null;
+            ReportListView.ItemsSource = _originalTargets;
+            DrawLayout();
+
+            _isRecalculating = false;
+            }
+
+        // 【新增】滑块拖动完成的事件处理器
+        private void Slider_DragCompleted(object sender, DragCompletedEventArgs e)
+            {
+            RecalculateAndRedraw();
+            }
+
+        private void UpdateSummary((int rounds, double bestScore, double worstScore) summary)
+            {
+            var summaryText = new StringBuilder();
+            summaryText.AppendLine($"总推演轮次: {summary.rounds} 轮");
+            summaryText.AppendLine($"最佳布局评分: {summary.bestScore:F2}");
+            summaryText.AppendLine($"最差布局评分: {summary.worstScore:F2}");
+            SummaryTextBlock.Text = summaryText.ToString();
+            }
+
         private void DrawLayout()
             {
+            // ... (此方法内容与您之前的最终版本完全相同，无需修改)
             if (_isDrawing) return;
             _isDrawing = true;
 
@@ -75,7 +166,7 @@ namespace CADTranslator.Views
 
                 var worldEnvelope = new NetTopologySuite.Geometries.Envelope();
                 _preciseObstacles.ForEach(g => worldEnvelope.ExpandToInclude(g.EnvelopeInternal));
-                _targets.ForEach(t => {
+                _originalTargets.ForEach(t => {
                     var b = t.Bounds;
                     if (b.MinPoint.X <= b.MaxPoint.X && b.MinPoint.Y <= b.MaxPoint.Y)
                         {
@@ -87,37 +178,29 @@ namespace CADTranslator.Views
                 CalculateTransform(worldEnvelope);
                 PreviewCanvas.Children.Clear();
 
-                // 绘制基础障碍物 (不变)
                 foreach (var geometry in _preciseObstacles)
                     {
                     var path = CreateWpfPath(geometry, new SolidColorBrush(Color.FromArgb(50, 128, 128, 128)), Brushes.DarkGray, 0.5);
                     PreviewCanvas.Children.Add(path);
                     }
 
-                // ▼▼▼ 【核心升级】在这里，我们整合原文和标签的显示 ▼▼▼
-                foreach (var task in _targets)
+                foreach (var task in _originalTargets)
                     {
-                    // 1. 准备要显示的最终文本
                     string displayText = task.OriginalText;
                     if (task.SemanticType != "独立文本")
                         {
                         displayText += $" ({task.SemanticType})";
                         }
-
-                    // 2. 调用简化的“画笔”，将整合后的文本绘制出来
                     var textBlock = CreateTextBlock(displayText, task.Bounds, Brushes.Blue, 12);
                     PreviewCanvas.Children.Add(textBlock);
                     }
-                // ▲▲▲ 【修改结束】 ▲▲▲
 
-                // 绘制计算出的最佳位置 (不变)
-                foreach (var task in _targets.Where(t => t.BestPosition.HasValue))
+                foreach (var task in _originalTargets.Where(t => t.BestPosition.HasValue))
                     {
                     var newBounds = task.GetTranslatedBounds();
                     var rect = CreateRectangle(newBounds, new SolidColorBrush(Color.FromArgb(100, 144, 238, 144)), Brushes.Green, 1.5);
                     PreviewCanvas.Children.Add(rect);
                     }
-                // 最后绘制高亮和诊断信息 (不变)
                 DrawDiagnosticsAndHighlight();
                 }
             finally
@@ -126,6 +209,10 @@ namespace CADTranslator.Views
                 }
             }
 
+        #endregion
+
+        #region --- 绘图与辅助方法 (无需修改) ---
+        // ... (从这里开始的所有绘图辅助方法，都与您之前的最终版本完全相同，无需修改)
         private void ReportListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
             {
             if (this.IsLoaded)
@@ -138,9 +225,21 @@ namespace CADTranslator.Views
             {
             if (ReportListView.SelectedItem is LayoutTask selectedTask)
                 {
-                // ... (绘制搜索区域和碰撞元凶的逻辑保持不变)
-                double searchMargin = selectedTask.Height * 2;
-                var searchBounds = new Extents3d(new Point3d(selectedTask.Bounds.MinPoint.X - searchMargin - (selectedTask.Bounds.MaxPoint.X - selectedTask.Bounds.MinPoint.X), selectedTask.Bounds.MinPoint.Y - searchMargin - (selectedTask.Bounds.MaxPoint.Y - selectedTask.Bounds.MinPoint.Y), 0), new Point3d(selectedTask.Bounds.MaxPoint.X + searchMargin, selectedTask.Bounds.MaxPoint.Y + searchMargin, 0));
+                // 【核心修正】使用与计算核心完全一致的逻辑来定义搜索框范围
+                var originalBounds = selectedTask.Bounds;
+                var width = originalBounds.MaxPoint.X - originalBounds.MinPoint.X;
+                var height = originalBounds.MaxPoint.Y - originalBounds.MinPoint.Y;
+                var center = originalBounds.GetCenter();
+
+                double searchHalfWidth = (width / 2.0) * 5;
+                double searchHalfHeight = (height / 2.0) * 8;
+
+                var searchAreaMin = new Point3d(center.X - searchHalfWidth, center.Y - searchHalfHeight, 0);
+                var searchAreaMax = new Point3d(center.X + searchHalfWidth, center.Y + searchHalfHeight, 0);
+
+                var searchBounds = new Extents3d(searchAreaMin, searchAreaMax);
+                // --- 修正结束 ---
+
                 var searchRect = CreateRectangle(searchBounds, new SolidColorBrush(Color.FromArgb(20, 100, 100, 100)), Brushes.Transparent, 0);
                 Panel.SetZIndex(searchRect, -10);
                 PreviewCanvas.Children.Add(searchRect);
@@ -158,8 +257,7 @@ namespace CADTranslator.Views
                         }
                     }
 
-                // --- 绘制高亮信息 ---
-                // ▼▼▼ 【核心升级 2/3】高亮时，我们用一个更醒目的背景框来代替高亮文字 ▼▼▼
+                // --- 绘制高亮信息 (这部分不变) ---
                 var originalRect = CreateRectangle(selectedTask.Bounds, new SolidColorBrush(Color.FromArgb(100, 30, 144, 255)), Brushes.DodgerBlue, 2.5);
                 Panel.SetZIndex(originalRect, 30);
                 PreviewCanvas.Children.Add(originalRect);
@@ -181,25 +279,18 @@ namespace CADTranslator.Views
                 Foreground = color,
                 FontSize = fontSize,
                 FontWeight = FontWeights.Bold
-                // 【核心修正】我们移除了 TextTrimming = TextTrimming.CharacterEllipsis 这一行
                 };
-
-            // 应用坐标转换
             var p1 = _transformMatrix.Transform(new System.Windows.Point(bounds.MinPoint.X, bounds.MinPoint.Y));
             var p2 = _transformMatrix.Transform(new System.Windows.Point(bounds.MaxPoint.X, bounds.MaxPoint.Y));
-
-            // 将TextBlock放置在边界框的中心
             double left = Math.Min(p1.X, p2.X);
             double top = Math.Min(p1.Y, p2.Y);
             double height = Math.Abs(p2.Y - p1.Y);
-
-            // 【核心修正】我们移除了 textBlock.MaxWidth = width 这一行
             Canvas.SetLeft(textBlock, left);
-            Canvas.SetTop(textBlock, top + (height - fontSize) / 2); // 垂直居中
-
-            Panel.SetZIndex(textBlock, 50); // 确保文字总在最顶层
+            Canvas.SetTop(textBlock, top + (height - fontSize) / 2);
+            Panel.SetZIndex(textBlock, 50);
             return textBlock;
             }
+
         private Path CreateWpfPath(NtsGeometry geometry, Brush fill, Brush stroke, double strokeThickness)
             {
             var path = new Path { Stroke = stroke, StrokeThickness = strokeThickness };
@@ -222,10 +313,12 @@ namespace CADTranslator.Views
                 }
             return path;
             }
+
         private System.Windows.Point ConvertPoint(NetTopologySuite.Geometries.Coordinate coord)
             {
             return _transformMatrix.Transform(new System.Windows.Point(coord.X, coord.Y));
             }
+
         private void CalculateTransform(NetTopologySuite.Geometries.Envelope worldEnvelope)
             {
             if (worldEnvelope.IsNull || worldEnvelope.Width < 1e-6 || worldEnvelope.Height < 1e-6)
@@ -238,6 +331,7 @@ namespace CADTranslator.Views
             _transformMatrix.Scale(scale, -scale);
             _transformMatrix.Translate(PreviewCanvas.ActualWidth / 2, PreviewCanvas.ActualHeight / 2);
             }
+
         private Rectangle CreateRectangle(Extents3d bounds, Brush fill, Brush stroke, double strokeThickness)
             {
             var p1 = _transformMatrix.Transform(new System.Windows.Point(bounds.MinPoint.X, bounds.MinPoint.Y));
@@ -247,5 +341,30 @@ namespace CADTranslator.Views
             Canvas.SetTop(rect, Math.Min(p1.Y, p2.Y));
             return rect;
             }
+
+        #endregion
+
+        #region --- INotifyPropertyChanged & Settings ---
+
+        public event PropertyChangedEventHandler PropertyChanged;
+        protected bool SetField<T>(ref T field, T value, [CallerMemberName] string propertyName = null)
+            {
+            if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+            field = value;
+            OnPropertyChanged(propertyName);
+            return true;
+            }
+        protected void OnPropertyChanged([CallerMemberName] string propertyName = null)
+            {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            }
+
+        private void SaveSettings()
+            {
+            _settings.TestNumberOfRounds = this.NumberOfRounds;
+            _settingsService.SaveSettings(_settings);
+            }
+
+        #endregion
         }
     }

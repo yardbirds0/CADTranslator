@@ -612,13 +612,17 @@ namespace CADTranslator.AutoCAD.Commands
             var db = doc.Database;
             var editor = doc.Editor;
 
+            // 【新增】加载设置
+            var settingsService = new SettingsService();
+            var settings = settingsService.LoadSettings();
+
             editor.WriteMessage("\n[TEST] 请选择需要分析的对象...");
             var selRes = editor.GetSelection();
             if (selRes.Status != PromptStatus.OK) return;
 
             var selectedIds = selRes.Value.GetObjectIds();
 
-            // --- 第1阶段：数据采集 (这部分逻辑不变) ---
+            // --- 第1阶段：数据采集 (逻辑不变) ---
             var targets = new List<LayoutTask>();
             var rawObstacles = new List<Entity>();
             var obstacleReportData = new List<Tuple<Extents3d, string>>();
@@ -629,6 +633,7 @@ namespace CADTranslator.AutoCAD.Commands
                 {
                 using (var tr = db.TransactionManager.StartTransaction())
                     {
+                    // ▼▼▼ 请用下面的循环体替换原有的 for/foreach 循环 ▼▼▼
                     foreach (ObjectId id in selectedIds)
                         {
                         if (id.IsNull || id.IsErased) continue;
@@ -654,8 +659,10 @@ namespace CADTranslator.AutoCAD.Commands
                             rawObstacles.Add(ent);
                             obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
                             }
+                        // 【核心修改】在这里增加了对 Hatch 颜色的判断
                         else if (ent is Hatch hatch)
                             {
+                            // 只有当颜色不是 251, 252, 253 时，才视为障碍物
                             if (hatch.ColorIndex != 251 && hatch.ColorIndex != 252 && hatch.ColorIndex != 253)
                                 {
                                 rawObstacles.Add(ent);
@@ -683,21 +690,21 @@ namespace CADTranslator.AutoCAD.Commands
                 return;
                 }
 
-            // ▼▼▼ 【核心新增】第二阶段：语义分析与规则匹配 ▼▼▼
+            // --- 第2阶段：语义分析 (逻辑不变) ---
             editor.WriteMessage("\n数据采集完成，正在启动语义分析引擎...");
             var analyzer = new SemanticAnalyzer(targets, rawObstacles);
-            var analyzedTargets = analyzer.AnalyzeAndGroup(); // analyzer会返回一个重组后的新任务列表
+            var analyzedTargets = analyzer.AnalyzeAndGroup();
             editor.WriteMessage($"\n语义分析完成！识别出 {analyzedTargets.Count} 个独立的布局任务。");
 
-
-            // --- 第三阶段：核心计算 ---
+            // --- 第3阶段：核心计算 ---
             editor.WriteMessage("\n正在启动核心计算引擎...");
             var calculator = new LayoutCalculator();
-            // 【核心修改】计算引擎现在处理的是经过语义分析后的任务列表
-            var summary = calculator.CalculateLayouts(analyzedTargets, rawObstacles);
+            // 【核心修改】使用从设置中读取的轮次进行计算
+            var summary = calculator.CalculateLayouts(analyzedTargets, rawObstacles, settings.TestNumberOfRounds);
             editor.WriteMessage("\n计算完成！正在准备可视化报告...");
 
-            // --- 第四阶段：生成报告与显示 (这部分不变) ---
+            // --- 第4阶段：生成报告与显示 ---
+            // ... (报告生成逻辑不变) ...
             var targetsReport = new StringBuilder();
             targetsReport.AppendLine($"成功筛选和分析 {analyzedTargets.Count} 个待处理的中文文字目标：");
             targetsReport.AppendLine("========================================");
@@ -714,10 +721,12 @@ namespace CADTranslator.AutoCAD.Commands
             int preciseCount = 1;
             foreach (var geom in preciseObstacles) { preciseReport.AppendLine($"--- 精确几何 #{preciseCount++} [类型: {geom.GeometryType}] ---"); }
 
+
             Application.DocumentManager.ExecuteInApplicationContext(
                 (state) =>
                 {
-                    var resultWindow = new TestResultWindow(analyzedTargets, obstacleReportData, preciseObstacles, preciseReport.ToString(), obstacleIdMap, summary);
+                    // 【核心修改】将 rawObstacles 传递给窗口
+                    var resultWindow = new TestResultWindow(analyzedTargets, rawObstacles, obstacleReportData, preciseObstacles, preciseReport.ToString(), obstacleIdMap, summary);
                     new System.Windows.Interop.WindowInteropHelper(resultWindow).Owner = Autodesk.AutoCAD.ApplicationServices.Application.MainWindow.Handle;
                     resultWindow.Show();
                 },

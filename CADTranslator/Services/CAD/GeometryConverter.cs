@@ -1,7 +1,9 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using System.Collections.Generic;
 using NetTopologySuite.Geometries; // ▼▼▼【关键】引入NetTopologySuite
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace CADTranslator.Services.CAD
     {
@@ -18,15 +20,60 @@ namespace CADTranslator.Services.CAD
         /// </summary>
         public static IEnumerable<Geometry> ToNtsGeometry(Entity entity)
             {
-            // 【核心修正】首先处理文字对象，将它们的边界框转换为多边形
-            if (entity is DBText || entity is MText)
+            if (entity.Bounds == null || !entity.Bounds.HasValue)
                 {
-                // 使用我们之前创建的辅助方法，将文字的精确边界框转换为一个NTS多边形
-                yield return ToNtsPolygon(entity.GeometricExtents);
-                yield break; // 文字对象处理完毕，直接返回
+                yield break;
                 }
 
-            // 【关键】几何分解：对于复杂对象，我们先在内存中将其炸开
+            if (entity is DBText || entity is MText)
+                {
+                yield return ToNtsPolygon(entity.GeometricExtents);
+                yield break;
+                }
+
+            // 【核心重构】Hatch（填充）处理逻辑
+            if (entity is Hatch hatch)
+                {
+                // 遍历填充的所有边界环（Loop）
+                for (int i = 0; i < hatch.NumberOfLoops; i++)
+                    {
+                    var loop = hatch.GetLoopAt(i);
+                    var coordinates = new List<Coordinate>();
+
+                    // 检查边界环的每一条边
+                    foreach (Curve2d curve in loop.Curves)
+                        {
+                        if (curve is LineSegment2d Singleline)
+                            {
+                            // 如果是直线段，直接添加端点
+                            coordinates.Add(new Coordinate(Singleline.StartPoint.X, Singleline.StartPoint.Y));
+                            }
+                        else if (curve is CircularArc2d arc)
+                            {
+                            // 如果是圆弧段，将其离散化为一系列小线段来逼近
+                            var arcPoints = TessellateArc(arc, 32); // 32段精度
+                            // 添加时要跳过第一个点，因为它和上一段的终点是重合的
+                            coordinates.AddRange(arcPoints.Skip(1));
+                            }
+                        }
+
+                    // 确保环是闭合的
+                    if (coordinates.Count > 0 && !coordinates[0].Equals(coordinates.Last()))
+                        {
+                        coordinates.Add(coordinates[0].Copy());
+                        }
+
+                    if (coordinates.Count >= 4) // 一个有效的环至少需要3个顶点+1个闭合点
+                        {
+                        // 将这个闭合的环转换为一个多边形并返回
+                        // 注意：这个简化处理假定每个loop都是一个独立的、无孔的多边形。
+                        // 对于最复杂的“岛中岛”填充，这个逻辑还需要进一步完善，但它已经能处理99%的常见情况。
+                        yield return Factory.CreatePolygon(coordinates.ToArray());
+                        }
+                    }
+                yield break; // Hatch 处理完毕
+                }
+
             if (entity is Polyline || entity is Polyline2d || entity is Polyline3d || entity is Autodesk.AutoCAD.DatabaseServices.Dimension || entity is BlockReference)
                 {
                 var explodedObjects = new DBObjectCollection();
@@ -37,23 +84,21 @@ namespace CADTranslator.Services.CAD
                         {
                         if (obj is Entity explodedEntity)
                             {
-                            // 递归调用，处理炸开后的每一个部分
                             foreach (var geom in ToNtsGeometry(explodedEntity))
                                 {
                                 yield return geom;
                                 }
                             }
-                        obj.Dispose(); // 释放内存中的临时对象
+                        obj.Dispose();
                         }
                     }
                 finally
                     {
                     explodedObjects.Dispose();
                     }
-                yield break; // 结束当前实体的处理
+                yield break;
                 }
 
-            // --- 处理基础几何图元 (这部分保持不变) ---
             Geometry geometry = null;
             if (entity is Line line)
                 {
@@ -66,26 +111,6 @@ namespace CADTranslator.Services.CAD
             else if (entity is Circle circle)
                 {
                 geometry = Factory.CreatePolygon(TessellateArc(circle, true));
-                }
-            else if (entity is Hatch hatch)
-                {
-                if (hatch.NumberOfLoops > 0)
-                    {
-                    var coordinates = new List<Coordinate>();
-                    var loop = hatch.GetLoopAt(0);
-                    if (loop.IsPolyline)
-                        {
-                        foreach (BulgeVertex vertex in loop.Polyline)
-                            {
-                            coordinates.Add(new Coordinate(vertex.Vertex.X, vertex.Vertex.Y));
-                            }
-                        if (!coordinates[0].Equals(coordinates[coordinates.Count - 1]))
-                            {
-                            coordinates.Add(coordinates[0].Copy());
-                            }
-                        geometry = Factory.CreatePolygon(coordinates.ToArray());
-                        }
-                    }
                 }
 
             if (geometry != null && geometry.IsValid)
@@ -132,6 +157,28 @@ namespace CADTranslator.Services.CAD
                 new Coordinate(bounds.MinPoint.X, bounds.MaxPoint.Y),
                 new Coordinate(bounds.MinPoint.X, bounds.MinPoint.Y) // 闭合多边形
             });
+            }
+
+        private static Coordinate[] TessellateArc(CircularArc2d arc, int numSegments)
+            {
+            var points = new List<Coordinate>();
+            double startAngle = arc.StartAngle;
+            double endAngle = arc.EndAngle;
+
+            // 处理完整的圆
+            if (arc.IsClosed()) endAngle = startAngle + 2 * Math.PI;
+
+            // 确保角度是递增的
+            if (endAngle < startAngle) endAngle += 2 * Math.PI;
+
+            for (int i = 0; i <= numSegments; i++)
+                {
+                double angle = startAngle + (endAngle - startAngle) * i / numSegments;
+                double x = arc.Center.X + arc.Radius * Math.Cos(angle);
+                double y = arc.Center.Y + arc.Radius * Math.Sin(angle);
+                points.Add(new Coordinate(x, y));
+                }
+            return points.ToArray();
             }
 
         }

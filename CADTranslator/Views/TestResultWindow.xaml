@@ -52,7 +52,41 @@
                       HorizontalAlignment="Stretch" />
 
         <Grid Grid.Column="2">
-            <TabControl>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0"
+                  Margin="2,5,2,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           Text="推演轮次:"
+                           VerticalAlignment="Center"
+                           Margin="0,0,10,0"
+                           FontWeight="Bold" />
+                <Slider Grid.Column="1"
+                        x:Name="RoundsSlider"
+                        Minimum="10"
+                        Maximum="1000"
+                        Value="{Binding NumberOfRounds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                        VerticalAlignment="Center"
+                        TickFrequency="10"
+                        IsSnapToTickEnabled="True" />
+                <ComboBox Grid.Column="2"
+                          ItemsSource="{Binding RoundOptions}"
+                          Text="{Binding NumberOfRounds, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                          IsEditable="True"
+                          Width="70"
+                          Margin="10,0,0,0"
+                          VerticalContentAlignment="Center" />
+            </Grid>
+
+            <TabControl Grid.Row="1">
                 <TabItem Header="可视化预览">
                     <Border BorderBrush="Gray"
                             BorderThickness="1"

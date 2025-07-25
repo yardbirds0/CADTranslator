@@ -54,14 +54,27 @@ namespace CADTranslator.Services.CAD
                 var startPointType = AnalyzeEndpoint(leaderCandidate.StartPoint, leaderCandidate.ObjectId);
                 var endPointType = AnalyzeEndpoint(leaderCandidate.EndPoint, leaderCandidate.ObjectId);
                 bool isIndexLine = (startPointType == EndpointType.Free && endPointType == EndpointType.DiagonalConnection) || (startPointType == EndpointType.DiagonalConnection && endPointType == EndpointType.Free);
+
                 if (isIndexLine)
                     {
                     var leaderBounds = leaderCandidate.GeometricExtents;
                     double searchHeight = _originalTargets.FirstOrDefault()?.Height * 3 ?? 7.5;
                     var textsAbove = FindTextsInZone(leaderBounds, searchHeight, isAbove: true, tasksToSearch: remainingTasks).Where(t => IsAssociatedText(t, leaderBounds)).ToList();
                     var textsBelow = FindTextsInZone(leaderBounds, searchHeight, isAbove: false, tasksToSearch: remainingTasks).Where(t => IsAssociatedText(t, leaderBounds)).ToList();
-                    if (textsAbove.Any()) { finalTasks.Add(MergeTasks(textsAbove, "索引(上)")); textsAbove.ForEach(t => remainingTasks.Remove(t)); }
-                    if (textsBelow.Any()) { finalTasks.Add(MergeTasks(textsBelow, "索引(下)")); textsBelow.ForEach(t => remainingTasks.Remove(t)); }
+
+                    // 【核心修改】在合并任务时，将 leaderCandidate 传入
+                    if (textsAbove.Any())
+                        {
+                        var mergedTask = MergeTasks(textsAbove, "索引(上)", leaderCandidate);
+                        finalTasks.Add(mergedTask);
+                        textsAbove.ForEach(t => remainingTasks.Remove(t));
+                        }
+                    if (textsBelow.Any())
+                        {
+                        var mergedTask = MergeTasks(textsBelow, "索引(下)", leaderCandidate);
+                        finalTasks.Add(mergedTask);
+                        textsBelow.ForEach(t => remainingTasks.Remove(t));
+                        }
                     }
                 }
             }
@@ -196,7 +209,7 @@ namespace CADTranslator.Services.CAD
             }).ToList();
             }
 
-        private LayoutTask MergeTasks(List<LayoutTask> tasks, string groupType)
+        private LayoutTask MergeTasks(List<LayoutTask> tasks, string groupType, Line leaderLine = null)
             {
             if (tasks == null || !tasks.Any()) return null;
             var sortedTasks = tasks.OrderByDescending(t => _targetBounds[t].MinPoint.Y).ThenBy(t => _targetBounds[t].MinPoint.X).ToList();
@@ -207,6 +220,8 @@ namespace CADTranslator.Services.CAD
             var templateTask = sortedTasks.First();
             var mergedTask = new LayoutTask(templateTask, mergedText.ToString().Trim(), mergedBounds);
             mergedTask.SemanticType = groupType;
+            // 【核心修改】保存关联的索引线
+            mergedTask.AssociatedLeader = leaderLine;
             return mergedTask;
             }
         }
