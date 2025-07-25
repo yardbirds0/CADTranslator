@@ -25,9 +25,6 @@ namespace CADTranslator.Services.CAD
                 }
             }
 
-        // 【修改】此类已不再需要，因为我们不再预选候选点
-        // private class CandidateSolution { ... }
-
         #endregion
 
         #region --- 1. 主入口与单轮推演 ---
@@ -72,7 +69,6 @@ namespace CADTranslator.Services.CAD
                     {
                     if (bestLayoutMap.TryGetValue(originalTask.ObjectId, out var bestResultTask))
                         {
-                        // 【核心修正】将计算结果同时赋给三个位置属性
                         originalTask.BestPosition = bestResultTask.BestPosition;
                         originalTask.AlgorithmPosition = bestResultTask.BestPosition; // 算法原始位置
                         originalTask.CurrentUserPosition = bestResultTask.BestPosition; // 用户当前位置（初始值）
@@ -92,7 +88,6 @@ namespace CADTranslator.Services.CAD
 
             foreach (var task in layoutResult)
                 {
-                // 【核心修改】将 random 对象传递给 FindBestPositionFor
                 var bestPosition = FindBestPositionFor(task, staticObstacleIndex, dynamicObstacles, layoutResult, random);
                 task.BestPosition = bestPosition;
 
@@ -111,12 +106,8 @@ namespace CADTranslator.Services.CAD
 
         #region --- 2. 评分系统 & 候选点决策 ---
 
-        /// <summary>
-        /// 【核心重构】为单个文字的单个候选位置进行预评分
-        /// </summary>
         private double CalculateSingleTaskScore(LayoutTask task, Point3d candidatePosition, List<LayoutTask> currentLayout, STRtree<ProcessedObstacle> staticObstacleIndex, (double up, double down, double left, double right) isolationFactors)
             {
-            // 创建一个临时的任务对象来评估
             var tempTask = new LayoutTask(task) { BestPosition = candidatePosition };
 
             double distanceCost = tempTask.BestPosition.Value.DistanceTo(tempTask.Bounds.MinPoint);
@@ -129,7 +120,6 @@ namespace CADTranslator.Services.CAD
             double alignmentScore = 0;
             if (!tempTask.SemanticType.StartsWith("索引") && !tempTask.SemanticType.StartsWith("图名"))
                 {
-                // 【核心修改】直接使用传入的 isolationFactors
                 var scores = CalculateAvoidanceAndAlignmentScores(tempTask, isolationFactors);
                 avoidanceScore = scores.avoidance;
                 alignmentScore = scores.alignment;
@@ -137,13 +127,9 @@ namespace CADTranslator.Services.CAD
 
             const double weightDistance = 500.0;
 
-            // 返回总成本
             return (distanceCost * weightDistance) - semanticScore - avoidanceScore - alignmentScore;
             }
 
-        /// <summary>
-        /// 【核心重构】现在的总评分只是简单地累加所有任务的最终成本
-        /// </summary>
         private double ScoreFullLayout(List<LayoutTask> layout, STRtree<ProcessedObstacle> staticObstacleIndex)
             {
             if (!layout.Any()) return double.MaxValue;
@@ -162,17 +148,13 @@ namespace CADTranslator.Services.CAD
                     successfulPlacements++;
                     allPlacedBounds.Add(task.GetTranslatedBounds());
 
-                    // 【核心修正】在调用评分函数前，为当前任务计算其孤立因子
                     var isolationFactors = GetIsolationFactors(task, staticObstacleIndex, placedObstacles);
-
-                    // 【核心修正】将计算好的孤立因子作为参数传入
                     totalScore += CalculateSingleTaskScore(task, task.BestPosition.Value, layout, staticObstacleIndex, isolationFactors);
                     }
                 }
 
             if (successfulPlacements == 0) return double.MaxValue;
 
-            // --- 全局性成本与惩罚 ---
             double failurePenalty = (layout.Count - successfulPlacements) * 100000;
 
             var overallEnvelope = new Extents3d();
@@ -180,27 +162,21 @@ namespace CADTranslator.Services.CAD
             double dispersionCost = (overallEnvelope.MaxPoint.X - overallEnvelope.MaxPoint.X) * (overallEnvelope.MaxPoint.Y - overallEnvelope.MinPoint.Y);
             const double weightDispersion = 0.1;
 
-            // 最终总分 = 所有任务的最低成本之和 + 全局成本
             return totalScore + failurePenalty + (dispersionCost * weightDispersion);
             }
 
-        /// <summary>
-        /// 【核心重构】FindBestPositionFor 现在会使用预评分来选择最佳点
-        /// </summary>
         private Point3d? FindBestPositionFor(LayoutTask task, STRtree<ProcessedObstacle> staticIndex, List<ProcessedObstacle> dynamicObstacles, List<LayoutTask> currentLayout, Random random)
             {
             const int eliteCount = 5;
 
-            // --- 1. “智能播种”与“预剪枝” ---
             var safeCandidatePoints = new List<Point3d>();
             var originalBounds = task.Bounds;
             var center = originalBounds.GetCenter();
             var width = originalBounds.Width();
             var height = originalBounds.Height();
 
-            // 定义搜索区域
-            double searchHalfWidth = (width / 2.0) * 5;
-            double searchHalfHeight = (height / 2.0) * 8;
+            double searchHalfWidth = (width / 2.0) * 5; // 水平搜索范围保持5倍宽度
+            double searchHalfHeight = (height / 2.0) * task.SearchRangeFactor; // 使用从任务传入的高度倍数
             var searchAreaMin = new Point3d(center.X - searchHalfWidth, center.Y - searchHalfHeight, 0);
             var searchAreaMax = new Point3d(center.X + searchHalfWidth, center.Y + searchHalfHeight, 0);
             double step = task.Height * 0.5;
@@ -213,32 +189,27 @@ namespace CADTranslator.Services.CAD
                         {
                         var candidatePoint = new Point3d(x, y, 0);
 
-                        // 跳过原文区域
                         if (candidatePoint.X >= originalBounds.MinPoint.X && candidatePoint.X <= originalBounds.MaxPoint.X &&
                             candidatePoint.Y >= originalBounds.MinPoint.Y && candidatePoint.Y <= originalBounds.MaxPoint.Y)
                             {
                             continue;
                             }
 
-                        // 【核心优化：预剪枝】在生成点后，立刻检查碰撞
                         var textPolygon = GeometryConverter.ToNtsPolygon(task.GetBoundsAt(candidatePoint));
                         var collidingObstacle = CheckForGeometricCollision(textPolygon, staticIndex, dynamicObstacles);
 
                         if (collidingObstacle == null)
                             {
-                            // 只有不碰撞的“安全点”，才有资格加入列表
                             safeCandidatePoints.Add(candidatePoint);
                             }
                         else
                             {
-                            // （可选）如果需要，可以在这里记录碰撞信息
                             task.CollisionDetails[candidatePoint] = collidingObstacle.SourceId;
                             }
                         }
                     }
                 }
 
-            // --- 2. 对“安全点”进行并行评分与决策 ---
             if (!safeCandidatePoints.Any())
                 {
                 task.FailureReason = "在定义的搜索区域内未能找到任何有效的候选位置。";
@@ -265,18 +236,16 @@ namespace CADTranslator.Services.CAD
                 return eliteCandidates[randomIndex].Position;
                 }
 
-            return null; // 理论上不会执行到这里
+            return null;
             }
 
         #endregion
 
-        #region --- 3. 梯度评分计算 (无需修改) ---
+        #region --- 3. 梯度评分计算 ---
 
-        // ... CalculateSemanticScore, CalculateAvoidanceAndAlignmentScores, GetIsolationFactors 等方法保持不变 ...
         private double CalculateSemanticScore(LayoutTask task, List<LayoutTask> allIndexTasks)
             {
             double score = 0;
-            // 规则 1.1: 索引奖惩
             if (task.SemanticType.StartsWith("索引") && task.AssociatedLeader != null)
                 {
                 var leaderY = task.AssociatedLeader.StartPoint.Y;
@@ -288,26 +257,23 @@ namespace CADTranslator.Services.CAD
                 if (hasPartner)
                     {
                     if ((isOriginallyAbove && isNowBelow) || (!isOriginallyAbove && !isNowBelow))
-                        score -= 15000; // 惩罚分，所以是减
+                        score -= 15000;
                     }
                 else
                     {
                     if ((isOriginallyAbove && isNowBelow) || (!isOriginallyAbove && !isNowBelow))
-                        score += 10000; // 奖励分
+                        score += 10000;
                     }
                 }
-            // 规则 1.2: 图名奖惩
             if (task.SemanticType.StartsWith("图名"))
                 {
                 if (task.BestPosition.Value.Y >= task.Bounds.MinPoint.Y)
-                    score += 8000; // 避让奖励
+                    score += 8000;
 
-                // 居中对齐额外奖励
                 double xOffset = Math.Abs(task.GetTranslatedBounds().GetCenter().X - task.Bounds.GetCenter().X);
                 double width = task.Bounds.Width();
                 if (width > 1e-6)
                     {
-                    // 偏移越小，奖励越高 (线性衰减)
                     score += 7000 * (1.0 - Math.Min(xOffset / (width * 0.5), 1.0));
                     }
                 }
@@ -322,43 +288,38 @@ namespace CADTranslator.Services.CAD
             var newCenter = newBounds.GetCenter();
             var oldCenter = task.Bounds.GetCenter();
 
-            // --- 避让分 ---
             bool placedUp = newCenter.Y > oldCenter.Y;
             bool placedRight = newCenter.X > oldCenter.X;
 
-            // 规则 2: 垂直避让
             if (placedUp && factors.up > factors.down) avoidanceScore += 8000;
             if (!placedUp && factors.down > factors.up) avoidanceScore += 8000;
 
-            // 规则 3: 水平避让
             if (placedRight && factors.right > factors.left) avoidanceScore += 5000;
             if (!placedRight && factors.left > factors.right) avoidanceScore += 5000;
 
-            // 规则 4 & 5: 复合方向(1.5梯度)奖励
             bool isRightDominant = factors.right > factors.left;
             bool isUpDominant = factors.up > factors.down;
             bool isYAligned = Math.Abs(newCenter.Y - oldCenter.Y) < task.Height * 0.2;
 
-            if (isUpDominant && isRightDominant && placedUp && placedRight) // 右上空旷，且放在右上
+            if (isUpDominant && isRightDominant && placedUp && placedRight)
                 {
-                if (isYAligned && placedRight) avoidanceScore += 12000; // 正右方，1.5梯度
-                else if (isYAligned && !placedRight) avoidanceScore += 5000; // 正左方，3梯度
+                if (isYAligned && placedRight) avoidanceScore += 12000;
+                else if (isYAligned && !placedRight) avoidanceScore += 5000;
                 }
-            else if (!isUpDominant && !isRightDominant && !placedUp && !placedRight) // 左下空旷
+            else if (!isUpDominant && !isRightDominant && !placedUp && !placedRight)
                 {
                 if (isYAligned && !placedRight) avoidanceScore += 12000;
                 else if (isYAligned && placedRight) avoidanceScore += 5000;
                 }
 
-            // --- 对齐分 (规则 3 细则) ---
-            if (isRightDominant) // 右侧空旷，左对齐优先
+            if (isRightDominant)
                 {
-                double xOffset = newBounds.MinPoint.X - task.Bounds.MinPoint.X; // 左对齐时为0
+                double xOffset = newBounds.MinPoint.X - task.Bounds.MinPoint.X;
                 alignmentScore += 5000 * (1.0 - Math.Min(Math.Abs(xOffset) / task.Bounds.Width(), 1.0));
                 }
-            else // 左侧空旷，右对齐优先
+            else
                 {
-                double xOffset = newBounds.MaxPoint.X - task.Bounds.MaxPoint.X; // 右对齐时为0
+                double xOffset = newBounds.MaxPoint.X - task.Bounds.MaxPoint.X;
                 alignmentScore += 5000 * (1.0 - Math.Min(Math.Abs(xOffset) / task.Bounds.Width(), 1.0));
                 }
 
@@ -367,7 +328,7 @@ namespace CADTranslator.Services.CAD
 
         #endregion
 
-        #region --- 4. 空间分析辅助方法 (无需修改) ---
+        #region --- 4. 空间分析辅助方法 ---
 
         private (double up, double down, double left, double right) GetIsolationFactors(LayoutTask task, STRtree<ProcessedObstacle> staticIndex, List<ProcessedObstacle> dynamicObstacles)
             {
@@ -409,24 +370,29 @@ namespace CADTranslator.Services.CAD
 
         #endregion
 
-        #region --- 5. 碰撞检测与候选点生成 (无需修改) ---
+        #region --- 5. 碰撞检测与候选点生成 ---
 
-        // ... CheckForGeometricCollision 和 GenerateDenseGridPoints 方法保持不变 ...
         private ProcessedObstacle CheckForGeometricCollision(Geometry geometryToCheck, STRtree<ProcessedObstacle> staticIndex, List<ProcessedObstacle> dynamicObstacles)
             {
             var candidateObstacles = staticIndex.Query(geometryToCheck.EnvelopeInternal);
-            foreach (var obstacle in candidateObstacles) { if (geometryToCheck.Intersects(obstacle.Geometry)) return obstacle; }
-            foreach (var obstacle in dynamicObstacles) { if (geometryToCheck.EnvelopeInternal.Intersects(obstacle.Geometry.EnvelopeInternal)) { if (geometryToCheck.Intersects(obstacle.Geometry)) return obstacle; } }
+            foreach (var obstacle in candidateObstacles)
+                {
+                if (geometryToCheck.Intersects(obstacle.Geometry)) return obstacle;
+                }
+            foreach (var obstacle in dynamicObstacles)
+                {
+                if (geometryToCheck.EnvelopeInternal.Intersects(obstacle.Geometry.EnvelopeInternal))
+                    {
+                    if (geometryToCheck.Intersects(obstacle.Geometry)) return obstacle;
+                    }
+                }
             return null;
             }
-
-       
         #endregion
         }
 
-    #region --- 扩展方法 (无需修改) ---
+    #region --- 扩展方法 ---
 
-    // ... 扩展方法保持不变 ...
     public static class LayoutCalculatorExtensions
         {
         public static Point3d GetCenter(this Extents3d extents)

@@ -42,6 +42,7 @@ namespace CADTranslator.Services.Settings
         public string SourceLanguage { get; set; } = "auto"; // 默认源语言为自动检测
         public string TargetLanguage { get; set; } = "en";   // 默认目标语言为英语
         public int TestNumberOfRounds { get; set; } = 100;
+        public double TestSearchRangeFactor { get; set; } = 8.0;
 
         // API相关的设置
         public ApiServiceType LastSelectedApiService { get; set; } = ApiServiceType.Baidu;

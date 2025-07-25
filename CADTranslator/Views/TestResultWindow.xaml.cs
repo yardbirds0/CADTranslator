@@ -1,8 +1,10 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using CADTranslator.Models.CAD;
 using CADTranslator.Services.CAD;
-using CADTranslator.Services.Settings; // 【新增】引入设置服务
+using CADTranslator.Services.Settings;
+using NetTopologySuite.Index.Strtree;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -10,14 +12,16 @@ using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Threading.Tasks; // 【新增】引入Task
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives; // 【新增】引入Primitives以使用Thumb
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using NtsGeometry = NetTopologySuite.Geometries.Geometry;
 using TextBlock = System.Windows.Controls.TextBlock;
+using WinPoint = System.Windows.Point;
 
 namespace CADTranslator.Views
     {
@@ -25,40 +29,63 @@ namespace CADTranslator.Views
         {
         #region --- 字段与属性 ---
 
-        // 用于存储原始数据
+        // 原始数据
+        private readonly Document _doc;
         private readonly List<LayoutTask> _originalTargets;
         private readonly List<Entity> _rawObstacles;
         private readonly List<Tuple<Extents3d, string>> _obstaclesForReport;
         private readonly List<NtsGeometry> _preciseObstacles;
         private readonly string _preciseReport;
         private readonly Dictionary<ObjectId, NtsGeometry> _obstacleIdMap;
+        private readonly STRtree<NtsGeometry> _obstacleIndex = new STRtree<NtsGeometry>();
+        private readonly Dictionary<ObjectId, Size> _textSizeCache = new Dictionary<ObjectId, Size>();
+        private readonly Dictionary<ObjectId, Size> _translatedSizeCache = new Dictionary<ObjectId, Size>();
 
-        // 【新增】用于设置持久化
+        // 设置服务
         private readonly SettingsService _settingsService = new SettingsService();
         private AppSettings _settings;
 
-        // 用于UI绑定和状态控制
+        // UI绑定与状态控制
         private Matrix _transformMatrix;
         private bool _isDrawing = false;
         private bool _isRecalculating = false;
+        private LayoutTask _draggedTask = null;
+        private Path _highlightedObstaclePath = null;
         private int _numberOfRounds;
+        private double _currentSearchRangeFactor;
+        private System.Windows.Point _lastMousePosition; // ◄◄◄ 明确使用 System.Windows.Point
+        private Matrix _canvasMatrix;
 
         public ObservableCollection<int> RoundOptions { get; set; }
+        public ObservableCollection<double> SearchRangeOptions { get; set; }
 
         public int NumberOfRounds
             {
             get => _numberOfRounds;
             set
                 {
-                // 只更新值，不在此处触发重算，以避免滑动时卡顿
                 if (SetField(ref _numberOfRounds, value))
                     {
-                    // 值变化后，保存设置
                     SaveSettings();
                     }
                 }
             }
-
+        public double CurrentSearchRangeFactor
+            {
+            get => _currentSearchRangeFactor;
+            set
+                {
+                if (SetField(ref _currentSearchRangeFactor, value))
+                    {
+                    SaveSettings();
+                    // 值变化后，立刻更新所有任务的因子，为下一次重算做准备
+                    foreach (var task in _originalTargets)
+                        {
+                        task.SearchRangeFactor = _currentSearchRangeFactor;
+                        }
+                    }
+                }
+            }
         #endregion
 
         #region --- 构造函数与加载事件 ---
@@ -67,47 +94,72 @@ namespace CADTranslator.Views
             {
             InitializeComponent();
             DataContext = this;
-
+            _doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             // 初始化数据
             _originalTargets = targets.Select(t => new LayoutTask(t)).ToList();
             _rawObstacles = rawObstacles;
-            _obstaclesForReport = obstaclesForReport;
-            _preciseObstacles = preciseObstacles;
+            _obstaclesForReport = obstaclesForReport; // ◄◄◄ 【新增】
             _preciseReport = preciseReport;
+            _preciseObstacles = preciseObstacles;
             _obstacleIdMap = obstacleIdMap;
             _settings = _settingsService.LoadSettings();
+            SearchRangeOptions = new ObservableCollection<double> { 5.0, 8.0, 10.0, 15.0, 20.0 };
+            CurrentSearchRangeFactor = _settings.TestSearchRangeFactor;
+            if (!SearchRangeOptions.Contains(CurrentSearchRangeFactor))
+                {
+                SearchRangeOptions.Add(CurrentSearchRangeFactor);
+                }
+            foreach (var task in _originalTargets)
+                {
+                task.SearchRangeFactor = CurrentSearchRangeFactor;
+                }
+            foreach (var obstacle in _preciseObstacles)
+                {
+                _obstacleIndex.Insert(obstacle.EnvelopeInternal, obstacle);
+                }
 
-            // 初始化UI选项
             RoundOptions = new ObservableCollection<int> { 10, 50, 100, 200, 500, 1000 };
-            NumberOfRounds = _settings.TestNumberOfRounds; // 从设置加载轮次
+            NumberOfRounds = _settings.TestNumberOfRounds;
 
             this.Loaded += (s, e) => TestResultWindow_Loaded(s, e, summary);
             this.SizeChanged += (s, e) => DrawLayout();
+            PreviewCanvas.MouseLeftButtonDown += (s, e) =>
+            {
+                if (ReportListView.SelectedItem != null)
+                    {
+                    ReportListView.SelectedItem = null;
+                    }
+            };
             }
 
         private void TestResultWindow_Loaded(object sender, RoutedEventArgs e, (int rounds, double bestScore, double worstScore) summary)
             {
-            // 【核心修改】为滑块添加拖动完成事件
+            _canvasMatrix = CanvasTransform.Matrix;
             RoundsSlider.AddHandler(Thumb.DragCompletedEvent, new DragCompletedEventHandler(Slider_DragCompleted));
-
+            RoundsComboBox.LostFocus += RoundsComboBox_LostFocus;
+            SearchRangeComboBox.LostFocus += SearchRangeComboBox_LostFocus;
             UpdateSummary(summary);
 
+            // ▼▼▼ 请用下面这段代码，替换掉旧的 ObstaclesTextBox.Text 和 PreciseObstaclesTextBox.Text 赋值语句 ▼▼▼
             var obstaclesReport = new StringBuilder();
             obstaclesReport.AppendLine($"共分析 {_obstaclesForReport.Count} 个初始障碍物 (基于边界框)：");
             obstaclesReport.AppendLine("========================================");
             _obstaclesForReport.ForEach(obs => obstaclesReport.AppendLine($"--- [类型: {obs.Item2}] Min: {obs.Item1.MinPoint}, Max: {obs.Item1.MaxPoint}"));
             ObstaclesTextBox.Text = obstaclesReport.ToString();
             PreciseObstaclesTextBox.Text = _preciseReport;
+            // ▲▲▲ 替换结束 ▲▲▲
 
             ReportListView.ItemsSource = _originalTargets;
+
+            // ▼▼▼ 【新增】在首次绘制前，预先计算所有文字的精确尺寸 ▼▼▼
+            PreCacheAllTextSizes();
 
             DrawLayout();
             if (ReportListView.Items.Count > 0) { ReportListView.SelectedIndex = 0; }
             }
-
         #endregion
 
-        #region --- 核心重算与重绘逻辑 ---
+        #region --- 核心重算逻辑 ---
 
         private async void RecalculateAndRedraw()
             {
@@ -116,12 +168,14 @@ namespace CADTranslator.Views
             _isRecalculating = true;
             SummaryTextBlock.Text = $"正在使用 {NumberOfRounds} 轮次进行新一轮推演，请稍候...";
 
-            // 使用 Task.Run 在后台线程执行计算，避免UI卡死
             var newSummary = await Task.Run(() =>
             {
                 foreach (var task in _originalTargets)
                     {
                     task.BestPosition = null;
+                    task.AlgorithmPosition = null;
+                    task.CurrentUserPosition = null;
+                    task.IsManuallyMoved = false;
                     task.FailureReason = null;
                     task.CollisionDetails.Clear();
                     }
@@ -130,7 +184,6 @@ namespace CADTranslator.Views
                 return calculator.CalculateLayouts(_originalTargets, _rawObstacles, NumberOfRounds);
             });
 
-            // 回到UI线程更新界面
             UpdateSummary(newSummary);
             ReportListView.ItemsSource = null;
             ReportListView.ItemsSource = _originalTargets;
@@ -139,7 +192,6 @@ namespace CADTranslator.Views
             _isRecalculating = false;
             }
 
-        // 【新增】滑块拖动完成的事件处理器
         private void Slider_DragCompleted(object sender, DragCompletedEventArgs e)
             {
             RecalculateAndRedraw();
@@ -150,29 +202,29 @@ namespace CADTranslator.Views
             var summaryText = new StringBuilder();
             summaryText.AppendLine($"总推演轮次: {summary.rounds} 轮");
             summaryText.AppendLine($"最佳布局评分: {summary.bestScore:F2}");
+            // 【恢复】显示最差得分
             summaryText.AppendLine($"最差布局评分: {summary.worstScore:F2}");
             SummaryTextBlock.Text = summaryText.ToString();
             }
 
+        #endregion
+
+        #region --- 核心绘图逻辑 ---
+
         private void DrawLayout()
             {
-            // ... (此方法内容与您之前的最终版本完全相同，无需修改)
-            if (_isDrawing) return;
+            if (_isDrawing || PreviewCanvas.ActualWidth == 0) return;
             _isDrawing = true;
 
             try
                 {
-                if (PreviewCanvas.ActualWidth == 0 || PreviewCanvas.ActualHeight == 0) return;
-
                 var worldEnvelope = new NetTopologySuite.Geometries.Envelope();
                 _preciseObstacles.ForEach(g => worldEnvelope.ExpandToInclude(g.EnvelopeInternal));
-                _originalTargets.ForEach(t => {
+                _originalTargets.ForEach(t =>
+                {
                     var b = t.Bounds;
-                    if (b.MinPoint.X <= b.MaxPoint.X && b.MinPoint.Y <= b.MaxPoint.Y)
-                        {
-                        worldEnvelope.ExpandToInclude(new NetTopologySuite.Geometries.Coordinate(b.MinPoint.X, b.MinPoint.Y));
-                        worldEnvelope.ExpandToInclude(new NetTopologySuite.Geometries.Coordinate(b.MaxPoint.X, b.MaxPoint.Y));
-                        }
+                    worldEnvelope.ExpandToInclude(new NetTopologySuite.Geometries.Coordinate(b.MinPoint.X, b.MinPoint.Y));
+                    worldEnvelope.ExpandToInclude(new NetTopologySuite.Geometries.Coordinate(b.MaxPoint.X, b.MaxPoint.Y));
                 });
 
                 CalculateTransform(worldEnvelope);
@@ -180,39 +232,140 @@ namespace CADTranslator.Views
 
                 foreach (var geometry in _preciseObstacles)
                     {
-                    var path = CreateWpfPath(geometry, new SolidColorBrush(Color.FromArgb(50, 128, 128, 128)), Brushes.DarkGray, 0.5);
+                    var path = CreateWpfPath(geometry, Brushes.LightGray, Brushes.DarkGray, 0.5);
+                    path.Opacity = 0.5;
                     PreviewCanvas.Children.Add(path);
                     }
 
+                // 【恢复】绘制原文内容
                 foreach (var task in _originalTargets)
                     {
-                    string displayText = task.OriginalText;
-                    if (task.SemanticType != "独立文本")
-                        {
-                        displayText += $" ({task.SemanticType})";
-                        }
-                    var textBlock = CreateTextBlock(displayText, task.Bounds, Brushes.Blue, 12);
-                    PreviewCanvas.Children.Add(textBlock);
+                    var textBlockWrapper = CreateTextBlockWrapper(task, isTranslated: false);
+                    PreviewCanvas.Children.Add(textBlockWrapper);
                     }
 
-                foreach (var task in _originalTargets.Where(t => t.BestPosition.HasValue))
+                foreach (var task in _originalTargets.Where(t => t.CurrentUserPosition.HasValue))
                     {
-                    var newBounds = task.GetTranslatedBounds();
-                    var rect = CreateRectangle(newBounds, new SolidColorBrush(Color.FromArgb(100, 144, 238, 144)), Brushes.Green, 1.5);
-                    PreviewCanvas.Children.Add(rect);
+                    var thumb = CreateDraggableThumb(task);
+                    PreviewCanvas.Children.Add(thumb);
                     }
-                DrawDiagnosticsAndHighlight();
+
+                DrawSelectionHighlight();
                 }
             finally
                 {
                 _isDrawing = false;
                 }
             }
+        #endregion
+
+        #region --- 拖动事件处理 ---
+
+        private void Thumb_DragStarted(object sender, DragStartedEventArgs e)
+            {
+            if (sender is Thumb thumb && thumb.DataContext is LayoutTask task)
+                {
+                _draggedTask = task;
+                // 【关键】手动捕捉鼠标，并将事件标记为已处理，这会阻止画布响应拖动事件
+                thumb.CaptureMouse();
+                e.Handled = true;
+                Panel.SetZIndex(thumb, 100);
+                }
+            }
+
+        private void Thumb_DragDelta(object sender, DragDeltaEventArgs e)
+            {
+            if (_draggedTask == null || sender is not Thumb thumb) return;
+
+            // 【关键】现在拖动逻辑是绝对的，不会与画布平移冲突
+            var newLeft = Canvas.GetLeft(thumb) + e.HorizontalChange;
+            var newTop = Canvas.GetTop(thumb) + e.VerticalChange;
+            Canvas.SetLeft(thumb, newLeft);
+            Canvas.SetTop(thumb, newTop);
+
+            var inverseTransform = _transformMatrix;
+            inverseTransform.Invert();
+            var newWorldTopLeft = inverseTransform.Transform(new Point(newLeft, newTop));
+
+            if (!_translatedSizeCache.TryGetValue(_draggedTask.ObjectId, out var size))
+                {
+                size = new Size(_draggedTask.Bounds.Width(), _draggedTask.Bounds.Height());
+                }
+
+            // Y轴反转，从WPF的左上角坐标计算回CAD的左下角坐标
+            _draggedTask.CurrentUserPosition = new Point3d(newWorldTopLeft.X, newWorldTopLeft.Y - size.Height, 0);
+            _draggedTask.IsManuallyMoved = true;
+
+            var currentBounds = _draggedTask.GetTranslatedBounds(useUserPosition: true, accurateSize: size);
+            var ntsPolygon = Services.CAD.GeometryConverter.ToNtsPolygon(currentBounds);
+
+            // 1. 先检查与静态障碍物的碰撞
+            var candidates = _obstacleIndex.Query(ntsPolygon.EnvelopeInternal);
+            NtsGeometry collidingObstacle = candidates.FirstOrDefault(obs => obs.Intersects(ntsPolygon));
+
+            // 2. 如果没有撞上静态障碍，再检查是否撞上了其他译文框
+            if (collidingObstacle == null)
+                {
+                foreach (var otherTask in _originalTargets)
+                    {
+                    // 跳过自己和没有位置的框
+                    if (otherTask == _draggedTask || !otherTask.CurrentUserPosition.HasValue) continue;
+
+                    var otherBounds = otherTask.GetTranslatedBounds(useUserPosition: true); // 确保使用用户位置
+                    var otherPolygon = Services.CAD.GeometryConverter.ToNtsPolygon(otherBounds);
+
+                    if (ntsPolygon.Intersects(otherPolygon))
+                        {
+                        // 如果撞上了，就找到代表那个障碍物的几何体（这里用它的原文位置几何体来高亮）
+                        _obstacleIdMap.TryGetValue(otherTask.ObjectId, out collidingObstacle);
+                        break;
+                        }
+                    }
+                }
+
+            if (_highlightedObstaclePath != null)
+                {
+                _highlightedObstaclePath.Fill = Brushes.LightGray;
+                _highlightedObstaclePath.Stroke = Brushes.DarkGray;
+                _highlightedObstaclePath.Opacity = 0.5;
+                _highlightedObstaclePath = null;
+                }
+
+            var border = (thumb.Template.FindName("ThumbBorder", thumb) as Border);
+            if (collidingObstacle != null)
+                {
+                border.Background = new SolidColorBrush(Color.FromArgb(180, 255, 99, 71));
+                border.BorderBrush = Brushes.Red;
+
+                var collidingPath = FindPathByGeometry(collidingObstacle);
+                if (collidingPath != null)
+                    {
+                    collidingPath.Fill = new SolidColorBrush(Color.FromArgb(180, 255, 99, 71));
+                    collidingPath.Stroke = Brushes.Red;
+                    collidingPath.Opacity = 1.0;
+                    _highlightedObstaclePath = collidingPath;
+                    }
+                }
+            else
+                {
+                border.Background = new SolidColorBrush(Color.FromArgb(180, 147, 112, 219));
+                border.BorderBrush = Brushes.DarkViolet;
+                }
+            }
+
+        private void Thumb_DragCompleted(object sender, DragCompletedEventArgs e)
+            {
+            if (sender is Thumb thumb)
+                {
+                Panel.SetZIndex(thumb, 50);
+                }
+            _draggedTask = null;
+            }
 
         #endregion
 
-        #region --- 绘图与辅助方法 (无需修改) ---
-        // ... (从这里开始的所有绘图辅助方法，都与您之前的最终版本完全相同，无需修改)
+        #region --- UI交互与辅助方法 ---
+
         private void ReportListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
             {
             if (this.IsLoaded)
@@ -221,79 +374,197 @@ namespace CADTranslator.Views
                 }
             }
 
-        private void DrawDiagnosticsAndHighlight()
+        private void ResetButton_Click(object sender, RoutedEventArgs e)
             {
-            if (ReportListView.SelectedItem is LayoutTask selectedTask)
+            if (ReportListView.SelectedItem is LayoutTask selectedTask && selectedTask.IsManuallyMoved)
                 {
-                // 【核心修正】使用与计算核心完全一致的逻辑来定义搜索框范围
-                var originalBounds = selectedTask.Bounds;
-                var width = originalBounds.MaxPoint.X - originalBounds.MinPoint.X;
-                var height = originalBounds.MaxPoint.Y - originalBounds.MinPoint.Y;
-                var center = originalBounds.GetCenter();
-
-                double searchHalfWidth = (width / 2.0) * 5;
-                double searchHalfHeight = (height / 2.0) * 8;
-
-                var searchAreaMin = new Point3d(center.X - searchHalfWidth, center.Y - searchHalfHeight, 0);
-                var searchAreaMax = new Point3d(center.X + searchHalfWidth, center.Y + searchHalfHeight, 0);
-
-                var searchBounds = new Extents3d(searchAreaMin, searchAreaMax);
-                // --- 修正结束 ---
-
-                var searchRect = CreateRectangle(searchBounds, new SolidColorBrush(Color.FromArgb(20, 100, 100, 100)), Brushes.Transparent, 0);
-                Panel.SetZIndex(searchRect, -10);
-                PreviewCanvas.Children.Add(searchRect);
-                if (selectedTask.CollisionDetails.Any())
-                    {
-                    var culpritIds = new HashSet<ObjectId>(selectedTask.CollisionDetails.Values);
-                    foreach (var culpritId in culpritIds)
-                        {
-                        if (_obstacleIdMap.TryGetValue(culpritId, out var culpritGeom))
-                            {
-                            var culpritPath = CreateWpfPath(culpritGeom, new SolidColorBrush(Color.FromArgb(100, 255, 0, 0)), Brushes.Red, 1);
-                            Panel.SetZIndex(culpritPath, 20);
-                            PreviewCanvas.Children.Add(culpritPath);
-                            }
-                        }
-                    }
-
-                // --- 绘制高亮信息 (这部分不变) ---
-                var originalRect = CreateRectangle(selectedTask.Bounds, new SolidColorBrush(Color.FromArgb(100, 30, 144, 255)), Brushes.DodgerBlue, 2.5);
-                Panel.SetZIndex(originalRect, 30);
-                PreviewCanvas.Children.Add(originalRect);
-
-                if (selectedTask.BestPosition.HasValue)
-                    {
-                    var translatedRect = CreateRectangle(selectedTask.GetTranslatedBounds(), new SolidColorBrush(Color.FromArgb(150, 60, 179, 113)), Brushes.SeaGreen, 2.5);
-                    Panel.SetZIndex(translatedRect, 30);
-                    PreviewCanvas.Children.Add(translatedRect);
-                    }
+                selectedTask.CurrentUserPosition = selectedTask.AlgorithmPosition;
+                selectedTask.IsManuallyMoved = false;
+                DrawLayout();
                 }
             }
 
-        private TextBlock CreateTextBlock(string text, Extents3d bounds, Brush color, double fontSize)
+        private void DrawSelectionHighlight()
+            {
+            if (ReportListView.SelectedItem is not LayoutTask selectedTask) return;
+
+            // 【恢复】绘制搜索框和碰撞物
+            var originalBounds = selectedTask.Bounds;
+            var center = originalBounds.GetCenter();
+            double searchHalfWidth = (originalBounds.Width() / 2.0) * 5;
+            double searchHalfHeight = (originalBounds.Height() / 2.0) * selectedTask.SearchRangeFactor;
+            var searchBounds = new Extents3d(
+                new Point3d(center.X - searchHalfWidth, center.Y - searchHalfHeight, 0),
+                new Point3d(center.X + searchHalfWidth, center.Y + searchHalfHeight, 0)
+            );
+            var searchRect = CreateRectangle(searchBounds, new SolidColorBrush(Color.FromArgb(20, 100, 100, 100)), Brushes.Gray, 1);
+            searchRect.StrokeDashArray = new System.Windows.Media.DoubleCollection { 4, 4 };
+            Panel.SetZIndex(searchRect, -10);
+            PreviewCanvas.Children.Add(searchRect);
+
+            var culpritIds = new HashSet<ObjectId>(selectedTask.CollisionDetails.Values);
+            foreach (var culpritId in culpritIds)
+                {
+                if (_obstacleIdMap.TryGetValue(culpritId, out var culpritGeom))
+                    {
+                    var culpritPath = FindPathByGeometry(culpritGeom);
+                    if (culpritPath != null)
+                        {
+                        culpritPath.Fill = new SolidColorBrush(Color.FromArgb(100, 255, 0, 0));
+                        culpritPath.Stroke = Brushes.Red;
+                        culpritPath.Opacity = 1.0;
+                        Panel.SetZIndex(culpritPath, 20);
+                        }
+                    }
+                }
+
+            var originalTextBlockWrapper = FindUIElementByTask(selectedTask, isThumb: false);
+            if (originalTextBlockWrapper != null)
+                {
+                originalTextBlockWrapper.Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.DodgerBlue, BlurRadius = 10, ShadowDepth = 0, Opacity = 1 };
+                }
+
+            var thumb = FindUIElementByTask(selectedTask, isThumb: true);
+            if (thumb is Thumb t && t.Template.FindName("ThumbBorder", t) is Border border)
+                {
+                border.Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Gold, BlurRadius = 15, ShadowDepth = 0, Opacity = 1 };
+                }
+            }
+
+       
+
+        private Path FindPathByGeometry(NtsGeometry geometry)
+            {
+            return PreviewCanvas.Children.OfType<Path>().FirstOrDefault(p => p.DataContext == geometry);
+            }
+
+        private FrameworkElement FindUIElementByTask(LayoutTask task, bool isThumb)
+            {
+            return PreviewCanvas.Children.OfType<FrameworkElement>()
+                .FirstOrDefault(fe => fe.DataContext == task && (fe is Thumb) == isThumb);
+            }
+
+        private FrameworkElement CreateTextBlockWrapper(LayoutTask task, bool isTranslated)
             {
             var textBlock = new TextBlock
                 {
-                Text = text,
-                Foreground = color,
-                FontSize = fontSize,
-                FontWeight = FontWeights.Bold
+                Text = isTranslated ? $"[译] {task.OriginalText}" : task.OriginalText,
+                Foreground = Brushes.DimGray,
+                Opacity = 0.8
                 };
-            var p1 = _transformMatrix.Transform(new System.Windows.Point(bounds.MinPoint.X, bounds.MinPoint.Y));
-            var p2 = _transformMatrix.Transform(new System.Windows.Point(bounds.MaxPoint.X, bounds.MaxPoint.Y));
-            double left = Math.Min(p1.X, p2.X);
-            double top = Math.Min(p1.Y, p2.Y);
-            double height = Math.Abs(p2.Y - p1.Y);
-            Canvas.SetLeft(textBlock, left);
-            Canvas.SetTop(textBlock, top + (height - fontSize) / 2);
-            Panel.SetZIndex(textBlock, 50);
-            return textBlock;
+
+            var viewbox = new Viewbox { Child = textBlock, DataContext = task, IsHitTestVisible = false };
+
+            if (!_textSizeCache.TryGetValue(task.ObjectId, out var size))
+                {
+                size = new Size(task.Bounds.Width(), task.Bounds.Height());
+                }
+
+            var worldBottomLeft = new WinPoint(task.Bounds.MinPoint.X, task.Bounds.MinPoint.Y);
+            var worldTopRight = new WinPoint(task.Bounds.MinPoint.X + size.Width, task.Bounds.MinPoint.Y + size.Height);
+
+            var screenP1 = _transformMatrix.Transform(worldBottomLeft);
+            var screenP2 = _transformMatrix.Transform(worldTopRight);
+
+            viewbox.Width = Math.Abs(screenP2.X - screenP1.X);
+            viewbox.Height = Math.Abs(screenP2.Y - screenP1.Y);
+
+            Canvas.SetLeft(viewbox, Math.Min(screenP1.X, screenP2.X));
+            Canvas.SetTop(viewbox, Math.Min(screenP1.Y, screenP2.Y));
+            Panel.SetZIndex(viewbox, 20);
+
+            return viewbox;
+            }
+
+        #endregion
+
+        #region --- 绘图元素创建 ---
+
+        private Thumb CreateDraggableThumb(LayoutTask task)
+            {
+            var thumb = new Thumb
+                {
+                DataContext = task,
+                Cursor = Cursors.SizeAll
+                };
+
+            // ▼▼▼ 请在这里，即 new Thumb {...} 的下方，添加下面这段代码 ▼▼▼
+            // 【BUG修复】通过手动捕捉鼠标并停止事件冒泡，解决画布跳动问题
+            thumb.PreviewMouseLeftButtonDown += (s, e) => {
+                if (e.Source is Thumb) // 确保是Thumb自身（而非其内容）触发的
+                    {
+                    (s as UIElement).CaptureMouse(); // 让Thumb独占鼠标
+                    e.Handled = true;               // 告诉系统，事件到此为止，不要再传递给画布
+                    }
+            };
+            thumb.PreviewMouseLeftButtonUp += (s, e) => {
+                if (e.Source is Thumb)
+                    {
+                    (s as UIElement).ReleaseMouseCapture(); // 释放鼠标独占
+                    }
+            };
+
+            var template = new ControlTemplate(typeof(Thumb));
+            var border = new FrameworkElementFactory(typeof(Border), "ThumbBorder");
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(2));
+            border.SetValue(Border.BorderThicknessProperty, new Thickness(1.5));
+
+            if (task.IsManuallyMoved)
+                {
+                border.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(180, 147, 112, 219)));
+                border.SetValue(Border.BorderBrushProperty, Brushes.DarkViolet);
+                }
+            else
+                {
+                border.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(180, 144, 238, 144)));
+                border.SetValue(Border.BorderBrushProperty, Brushes.Green);
+                }
+
+            var viewbox = new FrameworkElementFactory(typeof(Viewbox));
+            var textBlock = new FrameworkElementFactory(typeof(TextBlock));
+            string semanticInfo = task.SemanticType != "独立文本" ? $" ({task.SemanticType})" : "";
+            textBlock.SetValue(TextBlock.TextProperty, $"[译] {task.OriginalText}{semanticInfo}");
+            textBlock.SetValue(TextBlock.ForegroundProperty, Brushes.Black);
+            textBlock.SetValue(TextBlock.MarginProperty, new Thickness(2));
+
+            viewbox.AppendChild(textBlock);
+            border.AppendChild(viewbox);
+            template.VisualTree = border;
+            thumb.Template = template;
+
+            thumb.DragStarted += Thumb_DragStarted;
+            thumb.DragDelta += Thumb_DragDelta;
+            thumb.DragCompleted += Thumb_DragCompleted;
+
+            // 【尺寸升级】使用译文的精确尺寸
+            if (!_translatedSizeCache.TryGetValue(task.ObjectId, out var size))
+                {
+                size = new Size(task.Bounds.Width(), task.Bounds.Height());
+                }
+
+            var bounds = task.GetTranslatedBounds(useUserPosition: true, accurateSize: size);
+            var p1 = _transformMatrix.Transform(new WinPoint(bounds.MinPoint.X, bounds.MinPoint.Y));
+            var p2 = _transformMatrix.Transform(new WinPoint(bounds.MaxPoint.X, bounds.MaxPoint.Y));
+            thumb.Width = Math.Abs(p2.X - p1.X);
+            thumb.Height = Math.Abs(p2.Y - p1.Y);
+
+            var positionInCanvas = _transformMatrix.Transform(new WinPoint(bounds.MinPoint.X, bounds.MaxPoint.Y)); // Y轴反转，取左上角
+            Canvas.SetLeft(thumb, positionInCanvas.X);
+            Canvas.SetTop(thumb, positionInCanvas.Y);
+            Panel.SetZIndex(thumb, 50);
+
+            return thumb;
             }
 
         private Path CreateWpfPath(NtsGeometry geometry, Brush fill, Brush stroke, double strokeThickness)
             {
-            var path = new Path { Stroke = stroke, StrokeThickness = strokeThickness };
+            var path = new Path
+                {
+                Stroke = stroke,
+                StrokeThickness = strokeThickness,
+                Fill = fill,
+                DataContext = geometry
+                };
             if (geometry.IsSimple && geometry.IsValid)
                 {
                 if (geometry is NetTopologySuite.Geometries.Polygon polygon)
@@ -314,9 +585,19 @@ namespace CADTranslator.Views
             return path;
             }
 
-        private System.Windows.Point ConvertPoint(NetTopologySuite.Geometries.Coordinate coord)
+        private Rectangle CreateRectangle(Extents3d bounds, Brush fill, Brush stroke, double strokeThickness)
             {
-            return _transformMatrix.Transform(new System.Windows.Point(coord.X, coord.Y));
+            var p1 = _transformMatrix.Transform(new Point(bounds.MinPoint.X, bounds.MinPoint.Y));
+            var p2 = _transformMatrix.Transform(new Point(bounds.MaxPoint.X, bounds.MaxPoint.Y));
+            var rect = new Rectangle { Width = Math.Abs(p2.X - p1.X), Height = Math.Abs(p2.Y - p1.Y), Fill = fill, Stroke = stroke, StrokeThickness = strokeThickness };
+            Canvas.SetLeft(rect, Math.Min(p1.X, p2.X));
+            Canvas.SetTop(rect, Math.Min(p1.Y, p2.Y));
+            return rect;
+            }
+
+        private Point ConvertPoint(NetTopologySuite.Geometries.Coordinate coord)
+            {
+            return _transformMatrix.Transform(new Point(coord.X, coord.Y));
             }
 
         private void CalculateTransform(NetTopologySuite.Geometries.Envelope worldEnvelope)
@@ -326,22 +607,118 @@ namespace CADTranslator.Views
             double canvasWidth = PreviewCanvas.ActualWidth * 0.9;
             double canvasHeight = PreviewCanvas.ActualHeight * 0.9;
             var scale = Math.Min(canvasWidth / worldEnvelope.Width, canvasHeight / worldEnvelope.Height);
-            _transformMatrix = Matrix.Identity;
-            _transformMatrix.Translate(-worldEnvelope.Centre.X, -worldEnvelope.Centre.Y);
-            _transformMatrix.Scale(scale, -scale);
-            _transformMatrix.Translate(PreviewCanvas.ActualWidth / 2, PreviewCanvas.ActualHeight / 2);
-            }
 
-        private Rectangle CreateRectangle(Extents3d bounds, Brush fill, Brush stroke, double strokeThickness)
+            var baseTransform = Matrix.Identity;
+            baseTransform.Translate(-worldEnvelope.Centre.X, -worldEnvelope.Centre.Y);
+            baseTransform.Scale(scale, -scale);
+            baseTransform.Translate(PreviewCanvas.ActualWidth / 2, PreviewCanvas.ActualHeight / 2);
+
+            _transformMatrix = baseTransform;
+            _transformMatrix.Append(_canvasMatrix);
+            }
+        #endregion
+
+        #region --- 画布平移与缩放事件 ---
+
+        private void PreviewCanvas_MouseWheel(object sender, MouseWheelEventArgs e)
             {
-            var p1 = _transformMatrix.Transform(new System.Windows.Point(bounds.MinPoint.X, bounds.MinPoint.Y));
-            var p2 = _transformMatrix.Transform(new System.Windows.Point(bounds.MaxPoint.X, bounds.MaxPoint.Y));
-            var rect = new Rectangle { Width = Math.Abs(p2.X - p1.X), Height = Math.Abs(p2.Y - p1.Y), Fill = fill, Stroke = stroke, StrokeThickness = strokeThickness };
-            Canvas.SetLeft(rect, Math.Min(p1.X, p2.X));
-            Canvas.SetTop(rect, Math.Min(p1.Y, p2.Y));
-            return rect;
+            var scaleFactor = e.Delta > 0 ? 1.1 : 1 / 1.1;
+            var mousePosition = e.GetPosition(sender as IInputElement);
+
+            _canvasMatrix.ScaleAt(scaleFactor, scaleFactor, mousePosition.X, mousePosition.Y);
+            CanvasTransform.Matrix = _canvasMatrix;
+
+            DrawLayout();
             }
 
+        private void PreviewCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+            {
+            if (e.ButtonState == MouseButtonState.Pressed)
+                {
+                _lastMousePosition = e.GetPosition(sender as IInputElement);
+                (sender as UIElement)?.CaptureMouse();
+                }
+            }
+
+        private void PreviewCanvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+            {
+            (sender as UIElement)?.ReleaseMouseCapture();
+            }
+
+        private void PreviewCanvas_MouseMove(object sender, MouseEventArgs e)
+            {
+            if (e.LeftButton == MouseButtonState.Pressed)
+                {
+                var currentMousePosition = e.GetPosition(sender as IInputElement);
+                var delta = Point.Subtract(currentMousePosition, _lastMousePosition);
+
+                _canvasMatrix.Translate(delta.X, delta.Y);
+                CanvasTransform.Matrix = _canvasMatrix;
+
+                _lastMousePosition = currentMousePosition;
+
+                DrawLayout();
+                }
+            }
+
+        #endregion
+
+        #region --- "内存CAD渲染" 核心技术 ---
+        private void PreCacheAllTextSizes()
+            {
+            _textSizeCache.Clear();
+            _translatedSizeCache.Clear();
+            using (var tr = _doc.TransactionManager.StartTransaction())
+                {
+                foreach (var task in _originalTargets)
+                    {
+                    _textSizeCache[task.ObjectId] = GetAccurateTextSize(task.OriginalText, task, tr);
+
+                    // ▼▼▼ 请修改下面这一行，移除 "[译] " 前缀 ▼▼▼
+                    string translatedTextForSizing = task.OriginalText; // 使用原文作为译文尺寸的精确代理
+                                                                        // ▲▲▲ 修改结束 ▲▲▲
+
+                    _translatedSizeCache[task.ObjectId] = GetAccurateTextSize(translatedTextForSizing, task, tr);
+                    }
+                tr.Commit();
+                }
+            }
+
+        private Size GetAccurateTextSize(string text, LayoutTask templateTask, Transaction tr)
+            {
+            if (string.IsNullOrEmpty(text))
+                {
+                return new Size(0, 0);
+                }
+
+            try
+                {
+                using (var tempText = new DBText())
+                    {
+                    tempText.TextString = text;
+                    tempText.Height = templateTask.Height;
+                    tempText.WidthFactor = templateTask.WidthFactor;
+                    tempText.TextStyleId = templateTask.TextStyleId;
+                    tempText.Oblique = templateTask.Oblique;
+
+                    tempText.HorizontalMode = TextHorizontalMode.TextLeft;
+                    tempText.VerticalMode = TextVerticalMode.TextBase;
+                    tempText.Position = Point3d.Origin;
+
+                    var extents = tempText.GeometricExtents;
+                    if (extents != null)
+                        {
+                        return new Size(extents.MaxPoint.X - extents.MinPoint.X, extents.MaxPoint.Y - extents.MinPoint.Y);
+                        }
+                    }
+                }
+            catch (Exception)
+                {
+                return new Size(templateTask.Bounds.Width(), templateTask.Bounds.Height());
+                }
+
+            return new Size(templateTask.Bounds.Width(), templateTask.Bounds.Height());
+            }
         #endregion
 
         #region --- INotifyPropertyChanged & Settings ---
@@ -362,9 +739,62 @@ namespace CADTranslator.Views
         private void SaveSettings()
             {
             _settings.TestNumberOfRounds = this.NumberOfRounds;
+            _settings.TestSearchRangeFactor = this.CurrentSearchRangeFactor; // ◄◄◄ 【新增】保存搜索范围
             _settingsService.SaveSettings(_settings);
             }
 
+        private void RoundsComboBox_LostFocus(object sender, RoutedEventArgs e)
+            {
+            if (sender is ComboBox comboBox)
+                {
+                if (int.TryParse(comboBox.Text, out int value))
+                    {
+                    int clampedValue = (int)Math.Max(RoundsSlider.Minimum, Math.Min(RoundsSlider.Maximum, value));
+
+                    if (this.NumberOfRounds != clampedValue)
+                        {
+                        this.NumberOfRounds = clampedValue;
+                        }
+                    }
+                else
+                    {
+                    comboBox.Text = this.NumberOfRounds.ToString();
+                    }
+                }
+            }
+        private void SearchRangeComboBox_LostFocus(object sender, RoutedEventArgs e)
+            {
+            if (sender is ComboBox comboBox)
+                {
+                if (double.TryParse(comboBox.Text, out double value) && value > 0)
+                    {
+                    if (this.CurrentSearchRangeFactor != value)
+                        {
+                        this.CurrentSearchRangeFactor = value;
+                        }
+                    }
+                comboBox.Text = this.CurrentSearchRangeFactor.ToString("F1");
+                }
+            }
         #endregion
+        }
+
+    public static class LayoutTaskExtensionsForView
+        {
+        public static Extents3d GetTranslatedBounds(this LayoutTask task, bool useUserPosition = false, Size? accurateSize = null)
+            {
+            Point3d? positionToUse = useUserPosition ? task.CurrentUserPosition : task.AlgorithmPosition;
+
+            if (!positionToUse.HasValue) return task.Bounds;
+
+            double width = accurateSize?.Width ?? task.Bounds.Width();
+            double height = accurateSize?.Height ?? task.Bounds.Height();
+
+            // 【修正】Y轴反转，从左下角坐标计算右上角
+            return new Extents3d(
+                positionToUse.Value,
+                new Point3d(positionToUse.Value.X + width, positionToUse.Value.Y + height, 0)
+            );
+            }
         }
     }

@@ -19,6 +19,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <TextBlock Text="计算过程总结:"
@@ -39,12 +40,52 @@
                       SelectionChanged="ReportListView_SelectionChanged">
                 <ListView.ItemTemplate>
                     <DataTemplate>
-                        <TextBlock Text="{Binding}"
-                                   FontFamily="Consolas"
-                                   TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding}"
+                                       FontFamily="Consolas"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Text=" [手动调整]"
+                                       FontWeight="Bold"
+                                       Foreground="DarkViolet">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility"
+                                                Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsManuallyMoved}"
+                                                         Value="True">
+                                                <Setter Property="Visibility"
+                                                        Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
                     </DataTemplate>
                 </ListView.ItemTemplate>
             </ListView>
+
+            <Button Grid.Row="3"
+                    Name="ResetButton"
+                    Content="将选中项重置到算法位置"
+                    Margin="0,10,0,0"
+                    Click="ResetButton_Click">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="IsEnabled"
+                                Value="False" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ElementName=ReportListView, Path=SelectedItem.IsManuallyMoved}"
+                                         Value="True">
+                                <Setter Property="IsEnabled"
+                                        Value="True" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+
         </Grid>
 
         <GridSplitter Grid.Column="1"
@@ -63,6 +104,8 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0"
                            Text="推演轮次:"
@@ -73,17 +116,32 @@
                         x:Name="RoundsSlider"
                         Minimum="10"
                         Maximum="1000"
-                        Value="{Binding NumberOfRounds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                        Value="{Binding Path=NumberOfRounds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                         VerticalAlignment="Center"
                         TickFrequency="10"
                         IsSnapToTickEnabled="True" />
                 <ComboBox Grid.Column="2"
+                          Name="RoundsComboBox"
                           ItemsSource="{Binding RoundOptions}"
-                          Text="{Binding NumberOfRounds, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                          Text="{Binding Path=NumberOfRounds, Mode=OneWay}"
                           IsEditable="True"
                           Width="70"
                           Margin="10,0,0,0"
-                          VerticalContentAlignment="Center" />
+                          VerticalContentAlignment="Center"
+                          LostFocus="RoundsComboBox_LostFocus" />
+                <TextBlock Grid.Column="3"
+                           Text="搜索范围:"
+                           VerticalAlignment="Center"
+                           Margin="15,0,5,0"
+                           FontWeight="Bold" />
+                <ComboBox Grid.Column="4"
+                          Name="SearchRangeComboBox"
+                          ItemsSource="{Binding SearchRangeOptions}"
+                          Text="{Binding Path=CurrentSearchRangeFactor, Mode=OneWay}"
+                          IsEditable="True"
+                          Width="70"
+                          VerticalContentAlignment="Center"
+                          LostFocus="SearchRangeComboBox_LostFocus" />
             </Grid>
 
             <TabControl Grid.Row="1">
@@ -91,9 +149,18 @@
                     <Border BorderBrush="Gray"
                             BorderThickness="1"
                             Background="#F0F0F0"
-                            Margin="2">
-                        <Canvas x:Name="PreviewCanvas"
-                                ClipToBounds="True" />
+                            Margin="2"
+                            ClipToBounds="True"
+                            MouseWheel="PreviewCanvas_MouseWheel"
+                            MouseMove="PreviewCanvas_MouseMove"
+                            MouseLeftButtonDown="PreviewCanvas_MouseLeftButtonDown"
+                            MouseLeftButtonUp="PreviewCanvas_MouseLeftButtonUp">
+                        <Canvas x:Name="PreviewCanvas">
+                            <Canvas.RenderTransform>
+                                <MatrixTransform x:Name="CanvasTransform"
+                                                 Matrix="1,0,0,1,0,0" />
+                            </Canvas.RenderTransform>
+                        </Canvas>
                     </Border>
                 </TabItem>
                 <TabItem Header="障碍物报告 (边界框)">

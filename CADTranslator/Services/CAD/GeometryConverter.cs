@@ -1,23 +1,16 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using NetTopologySuite.Geometries; // ▼▼▼【关键】引入NetTopologySuite
+using NetTopologySuite.Geometries;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 
 namespace CADTranslator.Services.CAD
     {
-    /// <summary>
-    /// 一个辅助类，负责将AutoCAD的几何对象转换为NetTopologySuite的几何对象。
-    /// </summary>
     public static class GeometryConverter
         {
-        // 创建一个全局的 GeometryFactory，用于生成所有NetTopologySuite对象
         private static readonly GeometryFactory Factory = new GeometryFactory();
 
-        /// <summary>
-        /// 主转换方法：接收一个CAD实体，返回一个或多个NetTopologySuite几何对象。
-        /// </summary>
         public static IEnumerable<Geometry> ToNtsGeometry(Entity entity)
             {
             if (entity.Bounds == null || !entity.Bounds.HasValue)
@@ -31,47 +24,39 @@ namespace CADTranslator.Services.CAD
                 yield break;
                 }
 
-            // 【核心重构】Hatch（填充）处理逻辑
             if (entity is Hatch hatch)
                 {
-                // 遍历填充的所有边界环（Loop）
                 for (int i = 0; i < hatch.NumberOfLoops; i++)
                     {
                     var loop = hatch.GetLoopAt(i);
                     var coordinates = new List<Coordinate>();
 
-                    // 检查边界环的每一条边
+                    if (loop.Curves == null) continue;
+
                     foreach (Curve2d curve in loop.Curves)
                         {
                         if (curve is LineSegment2d Singleline)
                             {
-                            // 如果是直线段，直接添加端点
                             coordinates.Add(new Coordinate(Singleline.StartPoint.X, Singleline.StartPoint.Y));
                             }
                         else if (curve is CircularArc2d arc)
                             {
-                            // 如果是圆弧段，将其离散化为一系列小线段来逼近
-                            var arcPoints = TessellateArc(arc, 32); // 32段精度
-                            // 添加时要跳过第一个点，因为它和上一段的终点是重合的
+                            var arcPoints = TessellateArc(arc, 32);
                             coordinates.AddRange(arcPoints.Skip(1));
                             }
                         }
 
-                    // 确保环是闭合的
                     if (coordinates.Count > 0 && !coordinates[0].Equals(coordinates.Last()))
                         {
                         coordinates.Add(coordinates[0].Copy());
                         }
 
-                    if (coordinates.Count >= 4) // 一个有效的环至少需要3个顶点+1个闭合点
+                    if (coordinates.Count >= 4)
                         {
-                        // 将这个闭合的环转换为一个多边形并返回
-                        // 注意：这个简化处理假定每个loop都是一个独立的、无孔的多边形。
-                        // 对于最复杂的“岛中岛”填充，这个逻辑还需要进一步完善，但它已经能处理99%的常见情况。
                         yield return Factory.CreatePolygon(coordinates.ToArray());
                         }
                     }
-                yield break; // Hatch 处理完毕
+                yield break;
                 }
 
             if (entity is Polyline || entity is Polyline2d || entity is Polyline3d || entity is Autodesk.AutoCAD.DatabaseServices.Dimension || entity is BlockReference)
@@ -119,7 +104,6 @@ namespace CADTranslator.Services.CAD
                 }
             }
 
-        // --- 辅助方法 ---
         private static Coordinate ToCoordinate(Point3d point)
             {
             return new Coordinate(point.X, point.Y);
@@ -127,7 +111,7 @@ namespace CADTranslator.Services.CAD
 
         private static Coordinate[] TessellateArc(Curve curve, bool close = false)
             {
-            int numSegments = 32; // 将圆或圆弧分割成32段
+            int numSegments = 32;
             var points = new List<Coordinate>();
             double startParam = curve.StartParam;
             double endParam = curve.EndParam;
@@ -145,9 +129,6 @@ namespace CADTranslator.Services.CAD
             return points.ToArray();
             }
 
-        /// <summary>
-        /// 【新增】一个辅助方法，将AutoCAD的边界框直接转换为一个NTS多边形。
-        /// </summary>
         public static NetTopologySuite.Geometries.Polygon ToNtsPolygon(Extents3d bounds)
             {
             return Factory.CreatePolygon(new[] {
@@ -155,7 +136,7 @@ namespace CADTranslator.Services.CAD
                 new Coordinate(bounds.MaxPoint.X, bounds.MinPoint.Y),
                 new Coordinate(bounds.MaxPoint.X, bounds.MaxPoint.Y),
                 new Coordinate(bounds.MinPoint.X, bounds.MaxPoint.Y),
-                new Coordinate(bounds.MinPoint.X, bounds.MinPoint.Y) // 闭合多边形
+                new Coordinate(bounds.MinPoint.X, bounds.MinPoint.Y)
             });
             }
 
@@ -165,10 +146,8 @@ namespace CADTranslator.Services.CAD
             double startAngle = arc.StartAngle;
             double endAngle = arc.EndAngle;
 
-            // 处理完整的圆
             if (arc.IsClosed()) endAngle = startAngle + 2 * Math.PI;
 
-            // 确保角度是递增的
             if (endAngle < startAngle) endAngle += 2 * Math.PI;
 
             for (int i = 0; i <= numSegments; i++)
