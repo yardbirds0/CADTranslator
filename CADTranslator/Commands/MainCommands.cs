@@ -10,6 +10,7 @@ using System.Windows.Interop;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 using CADTranslator.Models.CAD;
 using CADTranslator.Services.CAD;
@@ -774,7 +775,6 @@ namespace CADTranslator.AutoCAD.Commands
                 return;
                 }
 
-
             try
                 {
                 using (doc.LockDocument())
@@ -785,38 +785,53 @@ namespace CADTranslator.AutoCAD.Commands
 
                         foreach (var task in tasksToApply)
                             {
-                            if (!task.CurrentUserPosition.HasValue) continue;
-
-                            // 增加一个判断，如果翻译失败则不生成该文本
-                            if (string.IsNullOrEmpty(task.TranslatedText) || task.TranslatedText.StartsWith("[翻译失败]")) continue;
-
-                            using (var newText = new DBText())
+                            // 如果任务没有有效位置，或者翻译失败，则跳过
+                            if (!task.CurrentUserPosition.HasValue || string.IsNullOrEmpty(task.TranslatedText) || task.TranslatedText.StartsWith("[翻译失败]"))
                                 {
-                                newText.TextString = task.TranslatedText;
-                                newText.Height = task.Height;
-                                newText.Rotation = task.Rotation;
-                                newText.Oblique = task.Oblique;
-                                newText.WidthFactor = task.WidthFactor;
-                                newText.TextStyleId = task.TextStyleId;
-                                newText.Position = task.CurrentUserPosition.Value;
+                                continue;
+                                }
 
-                                var templateEntity = tr.GetObject(task.ObjectId, OpenMode.ForRead) as Entity;
-                                if (templateEntity != null)
+                            // 【核心修正】将预览文本按换行符分割成多行
+                            var lines = task.TranslatedText.Split('\n');
+                            var currentPosition = task.CurrentUserPosition.Value;
+
+                            // 获取用于样式继承的模板实体
+                            var templateEntity = tr.GetObject(task.ObjectId, OpenMode.ForRead) as Entity;
+                            if (templateEntity == null) continue;
+
+                            // 【核心修正】遍历每一行，为每一行都创建一个独立的DBText
+                            for (int i = 0; i < lines.Length; i++)
+                                {
+                                string lineText = lines[i].Trim(); // 去除可能的前后空格
+                                if (string.IsNullOrEmpty(lineText)) continue;
+
+                                using (var newText = new DBText())
                                     {
-                                    newText.SetPropertiesFrom(templateEntity);
-                                    }
+                                    newText.TextString = lineText;
+                                    newText.Height = task.Height;
+                                    newText.Rotation = task.Rotation;
+                                    newText.Oblique = task.Oblique;
+                                    newText.WidthFactor = task.WidthFactor;
+                                    newText.TextStyleId = task.TextStyleId;
 
-                                modelSpace.AppendEntity(newText);
-                                tr.AddNewlyCreatedDBObject(newText, true);
+                                    // 【重要】设置新一行的位置
+                                    // 第一行的位置就是任务的当前位置
+                                    // 后续行在此基础上，Y坐标向下偏移 (行高 * 1.5)
+                                    newText.Position = new Point3d(currentPosition.X, currentPosition.Y - (i * task.Height * 1.5), currentPosition.Z);
+
+                                    // 继承图层、颜色等属性
+                                    newText.SetPropertiesFrom(templateEntity);
+
+                                    modelSpace.AppendEntity(newText);
+                                    tr.AddNewlyCreatedDBObject(newText, true);
+                                    }
                                 }
                             }
-
 
                         tr.Commit();
                         }
                     }
 
-                // 更新成功提示信息
                 int successCount = tasksToApply.Count(t => t.CurrentUserPosition.HasValue && !string.IsNullOrEmpty(t.TranslatedText) && !t.TranslatedText.StartsWith("[翻译失败]"));
                 editor.WriteMessage($"\n成功应用 {successCount} 个翻译布局到图纸！原始文本已保留。");
                 }
@@ -827,8 +842,8 @@ namespace CADTranslator.AutoCAD.Commands
             finally
                 {
                 CadBridgeService.LayoutTasksToApply = null;
+                Application.MainWindow.Focus();
                 }
-            Autodesk.AutoCAD.ApplicationServices.Application.MainWindow.Focus();
             }
         #endregion
         }

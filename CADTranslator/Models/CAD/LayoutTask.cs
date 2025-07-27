@@ -9,19 +9,43 @@ namespace CADTranslator.Models.CAD
     {
     public class LayoutTask
         {
+        #region --- 核心属性 ---
+
         public ObjectId ObjectId { get; }
         public string OriginalText { get; }
+
+        /// <summary>
+        /// 【新增】存储从翻译API返回的、最原始的、未经任何换行处理的译文。
+        /// 这是我们所有“智能定型”操作的唯一数据源。
+        /// </summary>
+        public string PristineTranslatedText { get; set; }
+
+        /// <summary>
+        /// 【职责变更】现在这个属性存储的是经过“智能定型”（换行、宽度因子调整等）后，最终用于显示和写入CAD的文本。
+        /// 它可能包含换行符 \n。
+        /// </summary>
         public string TranslatedText { get; set; }
+
+        #endregion
+
+        #region --- CAD几何与样式属性 ---
+
         public Extents3d Bounds { get; private set; }
         public Point3d Position { get; }
         public Point3d AlignmentPoint { get; }
         public double Rotation { get; }
         public double Oblique { get; }
         public double Height { get; }
-        public double WidthFactor { get; }
+        public double WidthFactor { get; set; } // 【修改】允许在“智能定型”中修改它
         public ObjectId TextStyleId { get; }
         public TextHorizontalMode HorizontalMode { get; }
         public TextVerticalMode VerticalMode { get; }
+        public List<ObjectId> SourceObjectIds { get; private set; } = new List<ObjectId>();
+
+        #endregion
+
+        #region --- 布局与状态属性 ---
+
         public string SemanticType { get; set; } = "独立文本";
         public double SearchRangeFactor { get; set; } = 8.0;
         public Line AssociatedLeader { get; set; }
@@ -32,20 +56,21 @@ namespace CADTranslator.Models.CAD
         public string FailureReason { get; set; }
         public Dictionary<Point3d, ObjectId> CollisionDetails { get; set; } = new Dictionary<Point3d, ObjectId>();
 
-        // ◄◄◄ 【核心修正】恢复被遗漏的 SourceObjectIds 属性
-        public List<ObjectId> SourceObjectIds { get; private set; } = new List<ObjectId>();
+        #endregion
 
+        #region --- 构造函数 ---
 
         private LayoutTask(Entity entity, Transaction tr)
             {
             this.ObjectId = entity.ObjectId;
             this.Bounds = entity.GeometricExtents;
-            this.SourceObjectIds.Add(entity.ObjectId); // ◄◄◄ 【核心修正】确保在创建时就记录下原始ID
+            this.SourceObjectIds.Add(entity.ObjectId);
 
             if (entity is DBText dbText)
                 {
                 OriginalText = dbText.TextString;
-                TranslatedText = dbText.TextString;
+                PristineTranslatedText = dbText.TextString; // 初始时，原始译文等于原文
+                TranslatedText = dbText.TextString;         // 初始时，显示文本等于原文
                 Position = dbText.Position;
                 AlignmentPoint = dbText.AlignmentPoint;
                 Rotation = dbText.Rotation;
@@ -66,6 +91,7 @@ namespace CADTranslator.Models.CAD
             else if (entity is MText mText)
                 {
                 OriginalText = mText.Text;
+                PristineTranslatedText = mText.Text;
                 TranslatedText = mText.Text;
                 Position = mText.Location;
                 AlignmentPoint = mText.Location;
@@ -94,20 +120,20 @@ namespace CADTranslator.Models.CAD
             TextStyleId = template.TextStyleId;
             HorizontalMode = template.HorizontalMode;
             VerticalMode = template.VerticalMode;
+
             OriginalText = mergedText;
+            PristineTranslatedText = mergedText;
             TranslatedText = mergedText;
             Bounds = mergedBounds;
-
-            // ◄◄◄ 【核心修正】确保合并后的任务也能继承原始ID
-            // 注意：这里的逻辑是基于您现有的 SemanticAnalyzer 中的合并方式，我们只继承模板任务的ID
-            // 如果未来要支持合并多个任务的ID，需要改造 SemanticAnalyzer
             SourceObjectIds = new List<ObjectId>(template.SourceObjectIds);
             }
 
+        // 拷贝构造函数，确保所有新属性都被正确复制
         public LayoutTask(LayoutTask other)
             {
             ObjectId = other.ObjectId;
             OriginalText = other.OriginalText;
+            PristineTranslatedText = other.PristineTranslatedText; // 复制新属性
             TranslatedText = other.TranslatedText;
             Bounds = other.Bounds;
             Position = other.Position;
@@ -115,7 +141,7 @@ namespace CADTranslator.Models.CAD
             Rotation = other.Rotation;
             Oblique = other.Oblique;
             Height = other.Height;
-            WidthFactor = other.WidthFactor;
+            WidthFactor = other.WidthFactor; // 复制新属性
             TextStyleId = other.TextStyleId;
             HorizontalMode = other.HorizontalMode;
             VerticalMode = other.VerticalMode;
@@ -127,11 +153,12 @@ namespace CADTranslator.Models.CAD
             BestPosition = other.BestPosition;
             FailureReason = other.FailureReason;
             CollisionDetails = new Dictionary<Point3d, ObjectId>(other.CollisionDetails);
-
-            // ◄◄◄ 【核心修正】确保在复制任务时，也完整复制ID列表
             SourceObjectIds = new List<ObjectId>(other.SourceObjectIds);
             }
 
+        #endregion
+
+        #region --- 重写 ToString ---
         public override string ToString()
             {
             var sb = new StringBuilder();
@@ -157,47 +184,47 @@ namespace CADTranslator.Models.CAD
                 }
             return sb.ToString();
             }
+        #endregion
         }
     }
 
 public static class LayoutTaskExtensions
+    {
+    public static Extents3d GetTranslatedBounds(this LayoutTask task)
         {
-        public static Extents3d GetTranslatedBounds(this LayoutTask task)
-            {
-            if (!task.BestPosition.HasValue) return task.Bounds;
-            var width = task.Bounds.MaxPoint.X - task.Bounds.MinPoint.X;
-            var height = task.Bounds.MaxPoint.Y - task.Bounds.MinPoint.Y;
-            return new Extents3d(
-                task.BestPosition.Value,
-                new Point3d(task.BestPosition.Value.X + width, task.BestPosition.Value.Y + height, 0)
-            );
-            }
+        if (!task.BestPosition.HasValue) return task.Bounds;
+        var width = task.Bounds.MaxPoint.X - task.Bounds.MinPoint.X;
+        var height = task.Bounds.MaxPoint.Y - task.Bounds.MinPoint.Y;
+        return new Extents3d(
+            task.BestPosition.Value,
+            new Point3d(task.BestPosition.Value.X + width, task.BestPosition.Value.Y + height, 0)
+        );
+        }
 
-        public static Extents3d GetBoundsAt(this LayoutTask task, Point3d newPosition)
-            {
-            var width = task.Bounds.MaxPoint.X - task.Bounds.MinPoint.X;
-            var height = task.Bounds.MaxPoint.Y - task.Bounds.MinPoint.Y;
-            return new Extents3d(
-                newPosition,
-                new Point3d(newPosition.X + width, newPosition.Y + height, 0)
-            );
-            }
+    public static Extents3d GetBoundsAt(this LayoutTask task, Point3d newPosition)
+        {
+        var width = task.Bounds.MaxPoint.X - task.Bounds.MinPoint.X;
+        var height = task.Bounds.MaxPoint.Y - task.Bounds.MinPoint.Y;
+        return new Extents3d(
+            newPosition,
+            new Point3d(newPosition.X + width, newPosition.Y + height, 0)
+        );
+        }
 
-        public static double GetLength(this Curve curve)
+    public static double GetLength(this Curve curve)
+        {
+        if (curve == null) return 0.0;
+        try
             {
-            if (curve == null) return 0.0;
-            try
+            return curve.GetDistanceAtParameter(curve.EndParam) - curve.GetDistanceAtParameter(curve.StartParam);
+            }
+        catch
+            {
+            if (curve.Bounds.HasValue)
                 {
-                return curve.GetDistanceAtParameter(curve.EndParam) - curve.GetDistanceAtParameter(curve.StartParam);
+                return curve.Bounds.Value.MaxPoint.DistanceTo(curve.Bounds.Value.MinPoint);
                 }
-            catch
-                {
-                if (curve.Bounds.HasValue)
-                    {
-                    return curve.Bounds.Value.MaxPoint.DistanceTo(curve.Bounds.Value.MinPoint);
-                    }
-                return 0.0;
-                }
+            return 0.0;
             }
         }
-    
+    }
