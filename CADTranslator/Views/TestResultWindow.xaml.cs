@@ -56,6 +56,7 @@ namespace CADTranslator.Views
         private System.Windows.Point _lastMousePosition; // ◄◄◄ 明确使用 System.Windows.Point
         private Matrix _canvasMatrix;
         private bool _isLoaded = false;
+        private bool _canvasInitialized = false;
 
         public ObservableCollection<int> RoundOptions { get; set; }
         public ObservableCollection<double> SearchRangeOptions { get; set; }
@@ -100,21 +101,29 @@ namespace CADTranslator.Views
             InitializeComponent();
             DataContext = this;
             _doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            // 初始化数据
+
+            // 步骤 1: 立刻从构造函数参数中初始化 _originalTargets 列表，确保它不再为NULL
             _originalTargets = targets.Select(t => new LayoutTask(t)).ToList();
+
+            // 步骤 2: 现在加载设置，并为WPF属性(NumberOfRounds)赋上正确的值
+            _settings = _settingsService.LoadSettings();
+            NumberOfRounds = _settings.TestNumberOfRounds;
+            CurrentSearchRangeFactor = _settings.TestSearchRangeFactor;
+
+            // 步骤 3: 初始化其余的数据字段
             _rawObstacles = rawObstacles;
-            _obstaclesForReport = obstaclesForReport; // ◄◄◄ 【新增】
+            _obstaclesForReport = obstaclesForReport;
             _preciseReport = preciseReport;
             _preciseObstacles = preciseObstacles;
             _obstacleIdMap = obstacleIdMap;
-            _settings = _settingsService.LoadSettings();
+
+            // 步骤 4: 现在可以安全地对 _originalTargets 进行操作了
             SearchRangeOptions = new ObservableCollection<double> { 5.0, 8.0, 10.0, 15.0, 20.0 };
-            CurrentSearchRangeFactor = _settings.TestSearchRangeFactor;
             if (!SearchRangeOptions.Contains(CurrentSearchRangeFactor))
                 {
                 SearchRangeOptions.Add(CurrentSearchRangeFactor);
                 }
-            foreach (var task in _originalTargets)
+            foreach (var task in _originalTargets) // 这个循环现在是安全的
                 {
                 task.SearchRangeFactor = CurrentSearchRangeFactor;
                 }
@@ -123,8 +132,8 @@ namespace CADTranslator.Views
                 _obstacleIndex.Insert(obstacle.EnvelopeInternal, obstacle);
                 }
 
+            // 步骤 5: 剩余的UI初始化
             RoundOptions = new ObservableCollection<int> { 10, 50, 100, 200, 500, 1000 };
-            NumberOfRounds = _settings.TestNumberOfRounds;
             if (NumberOfRounds < RoundsSlider.Minimum)
                 {
                 NumberOfRounds = (int)RoundsSlider.Minimum;
@@ -132,13 +141,6 @@ namespace CADTranslator.Views
 
             this.Loaded += (s, e) => TestResultWindow_Loaded(s, e, summary);
             this.SizeChanged += (s, e) => DrawLayout();
-            PreviewCanvas.MouseLeftButtonDown += (s, e) =>
-            {
-                if (ReportListView.SelectedItem != null)
-                    {
-                    ReportListView.SelectedItem = null;
-                    }
-            };
             }
 
         private void TestResultWindow_Loaded(object sender, RoutedEventArgs e, (int rounds, double bestScore, double worstScore) summary)
@@ -163,9 +165,9 @@ namespace CADTranslator.Views
             // 【核心修复】在所有初始化完成后，才允许保存操作
             _isLoaded = true;
             PreCacheAllTextSizes();
-
+            _canvasInitialized = false; // 强制重绘
             DrawLayout();
-            if (ReportListView.Items.Count > 0) { ReportListView.SelectedIndex = 0; }
+            //if (ReportListView.Items.Count > 0) { ReportListView.SelectedIndex = 0; }
             }
         #endregion
 
@@ -175,7 +177,9 @@ namespace CADTranslator.Views
             {
             if (!this.IsLoaded || _isRecalculating) return;
 
-            _isRecalculating = true;
+            _canvasInitialized = false; // 强制重绘
+            DrawLayout();
+            _isRecalculating = false;
             SummaryTextBlock.Text = $"正在使用 {NumberOfRounds} 轮次进行新一轮推演，请稍候...";
 
             var newSummary = await Task.Run(() =>
@@ -228,39 +232,47 @@ namespace CADTranslator.Views
 
             try
                 {
-                var worldEnvelope = new NetTopologySuite.Geometries.Envelope();
-                _preciseObstacles.ForEach(g => worldEnvelope.ExpandToInclude(g.EnvelopeInternal));
-                _originalTargets.ForEach(t =>
-                {
-                    var b = t.Bounds;
-                    worldEnvelope.ExpandToInclude(new NetTopologySuite.Geometries.Coordinate(b.MinPoint.X, b.MinPoint.Y));
-                    worldEnvelope.ExpandToInclude(new NetTopologySuite.Geometries.Coordinate(b.MaxPoint.X, b.MaxPoint.Y));
-                });
-
-                CalculateTransform(worldEnvelope);
-                PreviewCanvas.Children.Clear();
-
-                foreach (var geometry in _preciseObstacles)
+                // 只有在画布未初始化时，才执行代价高昂的UI元素创建过程
+                if (!_canvasInitialized)
                     {
-                    var path = CreateWpfPath(geometry, Brushes.LightGray, Brushes.DarkGray, 0.5);
-                    path.Opacity = 0.5;
-                    PreviewCanvas.Children.Add(path);
+                    var worldEnvelope = new NetTopologySuite.Geometries.Envelope();
+                    _preciseObstacles.ForEach(g => worldEnvelope.ExpandToInclude(g.EnvelopeInternal));
+                    _originalTargets.ForEach(t =>
+                    {
+                        var b = t.Bounds;
+                        worldEnvelope.ExpandToInclude(new NetTopologySuite.Geometries.Coordinate(b.MinPoint.X, b.MinPoint.Y));
+                        worldEnvelope.ExpandToInclude(new NetTopologySuite.Geometries.Coordinate(b.MaxPoint.X, b.MaxPoint.Y));
+                    });
+
+                    CalculateTransform(worldEnvelope);
+                    PreviewCanvas.Children.Clear();
+
+                    // 创建所有静态的几何障碍物
+                    foreach (var geometry in _preciseObstacles)
+                        {
+                        var path = CreateWpfPath(geometry, Brushes.LightGray, Brushes.DarkGray, 0.5);
+                        path.Opacity = 0.5;
+                        PreviewCanvas.Children.Add(path);
+                        }
+
+                    // 创建所有原文框
+                    foreach (var task in _originalTargets)
+                        {
+                        var textBlockWrapper = CreateTextBlockWrapper(task, isTranslated: false);
+                        PreviewCanvas.Children.Add(textBlockWrapper);
+                        }
+
+                    // 创建所有译文框
+                    foreach (var task in _originalTargets.Where(t => t.CurrentUserPosition.HasValue))
+                        {
+                        var thumb = CreateDraggableThumb(task);
+                        PreviewCanvas.Children.Add(thumb);
+                        }
+                    _canvasInitialized = true;
                     }
 
-                // 【恢复】绘制原文内容
-                foreach (var task in _originalTargets)
-                    {
-                    var textBlockWrapper = CreateTextBlockWrapper(task, isTranslated: false);
-                    PreviewCanvas.Children.Add(textBlockWrapper);
-                    }
-
-                foreach (var task in _originalTargets.Where(t => t.CurrentUserPosition.HasValue))
-                    {
-                    var thumb = CreateDraggableThumb(task);
-                    PreviewCanvas.Children.Add(thumb);
-                    }
-
-                DrawSelectionHighlight();
+                // 无论是首次创建还是后续更新，都调用样式方法
+                UpdateVisualStyles();
                 }
             finally
                 {
@@ -276,7 +288,7 @@ namespace CADTranslator.Views
             if (sender is Thumb thumb && thumb.DataContext is LayoutTask task)
                 {
                 _draggedTask = task;
-                // 【关键】手动捕捉鼠标，并将事件标记为已处理，这会阻止画布响应拖动事件
+                ReportListView.SelectedItem = task;
                 thumb.CaptureMouse();
                 e.Handled = true;
                 Panel.SetZIndex(thumb, 100);
@@ -380,7 +392,7 @@ namespace CADTranslator.Views
             {
             if (this.IsLoaded)
                 {
-                DrawLayout();
+                UpdateVisualStyles();
                 }
             }
 
@@ -429,15 +441,16 @@ namespace CADTranslator.Views
                 }
 
             var originalTextBlockWrapper = FindUIElementByTask(selectedTask, isThumb: false);
-            if (originalTextBlockWrapper != null)
+            if (originalTextBlockWrapper is Viewbox viewbox && viewbox.Child is Border border)
                 {
-                originalTextBlockWrapper.Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.DodgerBlue, BlurRadius = 10, ShadowDepth = 0, Opacity = 1 };
+                // 将原文的背景填充为半透明黄色
+                border.Background = new SolidColorBrush(Color.FromArgb(128, 255, 255, 0));
                 }
 
             var thumb = FindUIElementByTask(selectedTask, isThumb: true);
-            if (thumb is Thumb t && t.Template.FindName("ThumbBorder", t) is Border border)
+            if (thumb is Thumb t && t.Template.FindName("ThumbBorder", t) is Border thumbBorder)
                 {
-                border.Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Gold, BlurRadius = 15, ShadowDepth = 0, Opacity = 1 };
+                thumbBorder.Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Gold, BlurRadius = 15, ShadowDepth = 0, Opacity = 1 };
                 }
             }
 
@@ -467,12 +480,15 @@ namespace CADTranslator.Views
             {
             var textBlock = new TextBlock
                 {
-                Text = isTranslated ? $"[译] {task.OriginalText}" : task.OriginalText,
+                Text = isTranslated ? task.TranslatedText : task.OriginalText,
                 Foreground = Brushes.DimGray,
                 Opacity = 0.8
                 };
 
-            var viewbox = new Viewbox { Child = textBlock, DataContext = task, IsHitTestVisible = false };
+            // 【新增】用一个Border包裹TextBlock，以便我们可以改变背景色
+            var border = new Border { Child = textBlock, Background = Brushes.Transparent };
+
+            var viewbox = new Viewbox { Child = border, DataContext = task, IsHitTestVisible = false };
 
             if (!_textSizeCache.TryGetValue(task.ObjectId, out var size))
                 {
@@ -505,32 +521,64 @@ namespace CADTranslator.Views
                 {
                 DataContext = task,
                 Cursor = Cursors.SizeAll
-                };      
+                };
             var template = new ControlTemplate(typeof(Thumb));
             var border = new FrameworkElementFactory(typeof(Border), "ThumbBorder");
             border.SetValue(Border.CornerRadiusProperty, new CornerRadius(2));
             border.SetValue(Border.BorderThicknessProperty, new Thickness(1.5));
 
-            if (task.IsManuallyMoved)
+            // --- ▼▼▼ 核心修改：升级动态高亮逻辑 ▼▼▼ ---
+
+            var selectedTask = ReportListView.SelectedItem as LayoutTask;
+
+            // 1. 定义所有颜色状态
+            var defaultFill = new SolidColorBrush(Color.FromArgb(180, 144, 238, 144));
+            var defaultStroke = Brushes.Green;
+
+            var fadedFill = new SolidColorBrush(Color.FromArgb(50, 200, 200, 200));
+            var fadedStroke = Brushes.LightGray;
+
+            var movedFill = new SolidColorBrush(Color.FromArgb(180, 147, 112, 219));
+            var movedStroke = Brushes.DarkViolet;
+
+            // 【新增】定义“褪色”的紫色
+            var fadedMovedFill = new SolidColorBrush(Color.FromArgb(80, 147, 112, 219));
+            var fadedMovedStroke = new SolidColorBrush(Color.FromArgb(255, 190, 170, 220));
+
+
+            // 2. 根据更复杂的逻辑设置颜色
+            if (selectedTask != null) // 如果列表有选中项
                 {
-                border.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(180, 147, 112, 219)));
-                border.SetValue(Border.BorderBrushProperty, Brushes.DarkViolet);
+                if (task == selectedTask) // 如果当前任务就是被选中的任务
+                    {
+                    // 无论它是否被移动过，都高亮显示
+                    border.SetValue(Border.BackgroundProperty, task.IsManuallyMoved ? movedFill : defaultFill);
+                    border.SetValue(Border.BorderBrushProperty, task.IsManuallyMoved ? movedStroke : defaultStroke);
+                    }
+                else // 如果当前任务不是被选中的任务
+                    {
+                    // 让它“褪色”
+                    border.SetValue(Border.BackgroundProperty, task.IsManuallyMoved ? fadedMovedFill : fadedFill);
+                    border.SetValue(Border.BorderBrushProperty, task.IsManuallyMoved ? fadedMovedStroke : fadedStroke);
+                    }
                 }
-            else
+            else // 如果列表没有任何选中项
                 {
-                border.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(180, 144, 238, 144)));
-                border.SetValue(Border.BorderBrushProperty, Brushes.Green);
+                // 所有任务都恢复到其本身的默认颜色（绿色或紫色）
+                border.SetValue(Border.BackgroundProperty, task.IsManuallyMoved ? movedFill : defaultFill);
+                border.SetValue(Border.BorderBrushProperty, task.IsManuallyMoved ? movedStroke : defaultStroke);
                 }
+
+            // --- ▲▲▲ 核心修改结束 ▲▲▲ ---
 
             var viewbox = new FrameworkElementFactory(typeof(Viewbox));
             var textBlock = new FrameworkElementFactory(typeof(TextBlock));
-            string semanticInfo = task.SemanticType != "独立文本" ? $" ({task.SemanticType})" : "";
-            textBlock.SetValue(TextBlock.TextProperty, $"[译] {task.OriginalText}{semanticInfo}");
+            textBlock.SetValue(TextBlock.TextProperty, task.TranslatedText);
             textBlock.SetValue(TextBlock.ForegroundProperty, Brushes.Black);
             textBlock.SetValue(TextBlock.MarginProperty, new Thickness(2));
-
             viewbox.AppendChild(textBlock);
             border.AppendChild(viewbox);
+
             template.VisualTree = border;
             thumb.Template = template;
 
@@ -538,7 +586,6 @@ namespace CADTranslator.Views
             thumb.DragDelta += Thumb_DragDelta;
             thumb.DragCompleted += Thumb_DragCompleted;
 
-            // 【尺寸升级】使用译文的精确尺寸
             if (!_translatedSizeCache.TryGetValue(task.ObjectId, out var size))
                 {
                 size = new Size(task.Bounds.Width(), task.Bounds.Height());
@@ -550,7 +597,7 @@ namespace CADTranslator.Views
             thumb.Width = Math.Abs(p2.X - p1.X);
             thumb.Height = Math.Abs(p2.Y - p1.Y);
 
-            var positionInCanvas = _transformMatrix.Transform(new WinPoint(bounds.MinPoint.X, bounds.MaxPoint.Y)); // Y轴反转，取左上角
+            var positionInCanvas = _transformMatrix.Transform(new WinPoint(bounds.MinPoint.X, bounds.MaxPoint.Y));
             Canvas.SetLeft(thumb, positionInCanvas.X);
             Canvas.SetTop(thumb, positionInCanvas.Y);
             Panel.SetZIndex(thumb, 50);
@@ -633,27 +680,41 @@ namespace CADTranslator.Views
             DrawLayout();
             }
 
-        private void PreviewCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private void CanvasBorder_MouseDown(object sender, MouseButtonEventArgs e)
             {
-            if (e.Source != sender) return; // 如果事件不是由画布自己发起的，就直接忽略
-            if (e.ButtonState == MouseButtonState.Pressed)
+            // 判断是哪个鼠标按键触发了事件
+            if (e.ChangedButton == MouseButton.Middle && e.ButtonState == MouseButtonState.Pressed)
                 {
+                // 如果是中键按下，执行画布平移的准备工作
                 _lastMousePosition = e.GetPosition(sender as IInputElement);
                 (sender as UIElement)?.CaptureMouse();
+                PreviewCanvas.Cursor = Cursors.ScrollAll;
+                }
+            else if (e.ChangedButton == MouseButton.Left && e.ButtonState == MouseButtonState.Pressed)
+                {
+                // 如果是左键按下，执行取消选择的逻辑
+                if (ReportListView.SelectedItem != null)
+                    {
+                    ReportListView.SelectedItem = null;
+                    }
                 }
             }
 
-        private void PreviewCanvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        private void CanvasBorder_MouseUp(object sender, MouseButtonEventArgs e)
             {
-            (sender as UIElement)?.ReleaseMouseCapture();
+            // 判断是哪个鼠标按键被松开
+            if (e.ChangedButton == MouseButton.Middle)
+                {
+                // 如果是中键松开，则停止平移
+                (sender as UIElement)?.ReleaseMouseCapture();
+                PreviewCanvas.Cursor = Cursors.Arrow;
+                }
             }
 
         private void PreviewCanvas_MouseMove(object sender, MouseEventArgs e)
             {
-           
-            // ▼▼▼ 请在这里新增一行 if 判断语句 ▼▼▼
-            if (e.LeftButton == MouseButtonState.Pressed && (sender as UIElement).IsMouseCaptured)
-            // ▲▲▲ 修改结束 ▲▲▲
+            // 检查中键是否处于按住状态
+            if (e.MiddleButton == MouseButtonState.Pressed && (sender as UIElement).IsMouseCaptured)
                 {
                 var currentMousePosition = e.GetPosition(sender as IInputElement);
                 var delta = Point.Subtract(currentMousePosition, _lastMousePosition);
@@ -665,6 +726,22 @@ namespace CADTranslator.Views
 
                 DrawLayout();
                 }
+            }
+
+        private void PreviewCanvas_MouseMiddleButtonDown(object sender, MouseButtonEventArgs e)
+            {
+            if (e.ButtonState == MouseButtonState.Pressed)
+                {
+                _lastMousePosition = e.GetPosition(sender as IInputElement);
+                (sender as UIElement)?.CaptureMouse();
+                PreviewCanvas.Cursor = Cursors.ScrollAll;
+                }
+            }
+
+        private void PreviewCanvas_MouseMiddleButtonUp(object sender, MouseButtonEventArgs e)
+            {
+            (sender as UIElement)?.ReleaseMouseCapture();
+            PreviewCanvas.Cursor = Cursors.Arrow;
             }
 
         #endregion
@@ -788,7 +865,80 @@ namespace CADTranslator.Views
                 comboBox.Text = this.CurrentSearchRangeFactor.ToString("F1");
                 }
             }
+        private void UpdateVisualStyles()
+            {
+            var selectedTask = ReportListView.SelectedItem as LayoutTask;
+
+            // 遍历画布上的所有子元素
+            foreach (var element in PreviewCanvas.Children.OfType<FrameworkElement>())
+                {
+                var task = element.DataContext as LayoutTask;
+                if (task == null) continue;
+
+                if (element is Viewbox viewbox && viewbox.Child is Border originalTextBorder) // 处理原文框
+                    {
+                    // 如果当前任务是选中任务，则背景变黄，否则变透明
+                    originalTextBorder.Background = (task == selectedTask)
+                        ? new SolidColorBrush(Color.FromArgb(128, 255, 255, 0))
+                        : Brushes.Transparent;
+                    }
+                else if (element is Thumb thumb && thumb.Template.FindName("ThumbBorder", thumb) is Border thumbBorder) // 处理译文框
+                    {
+                    // --- 这里是您之前版本中已经非常完善的颜色逻辑 ---
+                    var defaultFill = new SolidColorBrush(Color.FromArgb(180, 144, 238, 144));
+                    var defaultStroke = Brushes.Green;
+                    var fadedFill = new SolidColorBrush(Color.FromArgb(50, 200, 200, 200));
+                    var fadedStroke = Brushes.LightGray;
+                    var movedFill = new SolidColorBrush(Color.FromArgb(180, 147, 112, 219));
+                    var movedStroke = Brushes.DarkViolet;
+                    var fadedMovedFill = new SolidColorBrush(Color.FromArgb(80, 147, 112, 219));
+                    var fadedMovedStroke = new SolidColorBrush(Color.FromArgb(255, 190, 170, 220));
+
+                    if (selectedTask != null)
+                        {
+                        if (task == selectedTask)
+                            {
+                            thumbBorder.Background = task.IsManuallyMoved ? movedFill : defaultFill;
+                            thumbBorder.BorderBrush = task.IsManuallyMoved ? movedStroke : defaultStroke;
+                            thumbBorder.Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Gold, BlurRadius = 15, ShadowDepth = 0, Opacity = 1 };
+                            }
+                        else
+                            {
+                            thumbBorder.Background = task.IsManuallyMoved ? fadedMovedFill : fadedFill;
+                            thumbBorder.BorderBrush = task.IsManuallyMoved ? fadedMovedStroke : fadedStroke;
+                            thumbBorder.Effect = null;
+                            }
+                        }
+                    else
+                        {
+                        thumbBorder.Background = task.IsManuallyMoved ? movedFill : defaultFill;
+                        thumbBorder.BorderBrush = task.IsManuallyMoved ? movedStroke : defaultStroke;
+                        thumbBorder.Effect = null;
+                        }
+                    }
+                }
+            }
         #endregion
+
+        private void RecalculateButton_Click(object sender, RoutedEventArgs e)
+            {
+            RecalculateAndRedraw();
+            }
+
+        private void ApplyButton_Click(object sender, RoutedEventArgs e)
+            {
+            // 1. 准备要写入CAD的数据
+            var tasksToApply = _originalTargets;
+
+            // 2. 将数据传递给我们的静态桥接服务
+            CadBridgeService.LayoutTasksToApply = tasksToApply;
+
+            // 3. 向AutoCAD发送执行命令
+            CadBridgeService.SendCommandToAutoCAD("TEST_APPLY\n");
+
+            // 4. 关闭预览窗口
+            this.Close();
+            }
         }
 
     public static class LayoutTaskExtensionsForView

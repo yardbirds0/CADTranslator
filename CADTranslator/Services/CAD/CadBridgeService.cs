@@ -1,9 +1,11 @@
 ﻿// 文件路径: CADTranslator/Services/CadBridgeService.cs
 using Autodesk.AutoCAD.ApplicationServices;
+using CADTranslator.AutoCAD.Commands;
+using CADTranslator.Models.CAD;
 using CADTranslator.ViewModels;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Text.RegularExpressions;
-using CADTranslator.AutoCAD.Commands;
 
 namespace CADTranslator.Services.CAD
     {
@@ -12,7 +14,7 @@ namespace CADTranslator.Services.CAD
     /// </summary>
     public static class CadBridgeService
         {
-
+        public static List<LayoutTask> LayoutTasksToApply { get; set; }
         /// <summary>
         /// 【新增】向AutoCAD发送一个命令字符串。
         /// </summary>

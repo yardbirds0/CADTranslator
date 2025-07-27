@@ -565,133 +565,188 @@ namespace CADTranslator.AutoCAD.Commands
 
 
         [CommandMethod("TEST")]
-        public void TestLayoutCommand()
-        {
+        public async void TestLayoutCommand()
+            {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
             var db = doc.Database;
             var editor = doc.Editor;
 
-            // 【新增】加载设置
             var settingsService = new SettingsService();
             var settings = settingsService.LoadSettings();
 
-            editor.WriteMessage("\n[TEST] 请选择需要分析的对象...");
-            var selRes = editor.GetSelection();
-            if (selRes.Status != PromptStatus.OK) return;
+            // 新增一个标志，用于决定是否执行翻译
+            bool useTranslation = settings.TestModeUsesTranslation;
 
-            var selectedIds = selRes.Value.GetObjectIds();
-
-            // --- 第1阶段：数据采集 (逻辑不变) ---
-            var targets = new List<LayoutTask>();
-            var rawObstacles = new List<Entity>();
-            var obstacleReportData = new List<Tuple<Extents3d, string>>();
-            var preciseObstacles = new List<NtsGeometry>();
-            var obstacleIdMap = new Dictionary<ObjectId, NtsGeometry>();
-
-            try
-            {
-                using (var tr = db.TransactionManager.StartTransaction())
+            while (true)
                 {
-                    // ▼▼▼ 请用下面的循环体替换原有的 for/foreach 循环 ▼▼▼
-                    foreach (var id in selectedIds)
+                try
                     {
-                        if (id.IsNull || id.IsErased)
-                            continue;
-                        var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                        if (ent == null) continue;
-                        var entityType = id.ObjectClass.DxfName;
+                    var selOpts = new PromptSelectionOptions();
+                    var translationStatus = useTranslation ? "翻译排版" : "原文排版";
+                    selOpts.MessageForAdding = $"\n请选择要分析的对象 (当前模式: {translationStatus})";
 
-                        if (ent is DBText dbText)
+                    selOpts.Keywords.Add("FY", "FY", "切换排版模式(FY)");
+                    selOpts.MessageForAdding += selOpts.Keywords.GetDisplayString(true);
+
+                    selOpts.KeywordInput += (s, args) => { throw new KeywordException(args.Input.ToUpper()); };
+
+                    var selRes = editor.GetSelection(selOpts);
+                    if (selRes.Status != PromptStatus.OK) return;
+
+                    var selectedIds = selRes.Value.GetObjectIds();
+
+                    // --- 数据采集 ---
+                    var targets = new List<LayoutTask>();
+                    var rawObstacles = new List<Entity>();
+                    var obstacleReportData = new List<Tuple<Extents3d, string>>();
+                    var preciseObstacles = new List<NtsGeometry>();
+                    var obstacleIdMap = new Dictionary<ObjectId, NtsGeometry>();
+
+                    using (var tr = db.TransactionManager.StartTransaction())
                         {
-                            if (Regex.IsMatch(dbText.TextString, @"[\u4e00-\u9fa5]"))
-                                targets.Add(LayoutTask.From(dbText, tr));
-                            rawObstacles.Add(ent);
-                            obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
-                        }
-                        else if (ent is MText mText)
-                        {
-                            if (Regex.IsMatch(mText.Text, @"[\u4e00-\u9fa5]"))
-                                targets.Add(LayoutTask.From(mText));
-                            rawObstacles.Add(ent);
-                            obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
-                        }
-                        // 【核心修改】在这里增加了对 Hatch 颜色的判断
-                        else if (ent is Hatch hatch)
-                        {
-                            // 只有当颜色不是 251, 252, 253 时，才视为障碍物
-                            if (hatch.ColorIndex != 251 && hatch.ColorIndex != 252 && hatch.ColorIndex != 253)
+                        foreach (var id in selectedIds)
                             {
+                            if (id.IsNull || id.IsErased) continue;
+                            var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                            if (ent == null) continue;
+                            var entityType = id.ObjectClass.DxfName;
+
+                            if (ent is DBText dbText)
+                                {
+                                if (Regex.IsMatch(dbText.TextString, @"[\u4e00-\u9fa5]"))
+                                    targets.Add(LayoutTask.From(dbText, tr));
                                 rawObstacles.Add(ent);
                                 obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
+                                }
+                            else if (ent is MText mText)
+                                {
+                                if (Regex.IsMatch(mText.Text, @"[\u4e00-\u9fa5]"))
+                                    targets.Add(LayoutTask.From(mText));
+                                rawObstacles.Add(ent);
+                                obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
+                                }
+                            else if (ent is Hatch hatch)
+                                {
+                                if (hatch.ColorIndex != 251 && hatch.ColorIndex != 252 && hatch.ColorIndex != 253)
+                                    {
+                                    rawObstacles.Add(ent);
+                                    obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
+                                    }
+                                }
+                            else
+                                {
+                                rawObstacles.Add(ent);
+                                obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
+                                }
+                            }
+
+                        foreach (var obstacleEntity in rawObstacles)
+                            {
+                            var ntsGeometries = GeometryConverter.ToNtsGeometry(obstacleEntity).ToList();
+                            preciseObstacles.AddRange(ntsGeometries);
+                            ntsGeometries.ForEach(g =>
+                            {
+                                if (!obstacleIdMap.ContainsKey(obstacleEntity.ObjectId))
+                                    obstacleIdMap[obstacleEntity.ObjectId] = g;
+                            });
                             }
                         }
-                        else
-                        {
-                            rawObstacles.Add(ent);
-                            obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
-                        }
-                    }
 
-                    foreach (var obstacleEntity in rawObstacles)
-                    {
-                        var ntsGeometries = GeometryConverter.ToNtsGeometry(obstacleEntity).ToList();
-                        preciseObstacles.AddRange(ntsGeometries);
-                        ntsGeometries.ForEach(g =>
+                    // --- 语义分析 ---
+                    editor.WriteMessage("\n数据采集完成，正在启动语义分析引擎...");
+                    var analyzer = new SemanticAnalyzer(targets, rawObstacles);
+                    var analyzedTargets = analyzer.AnalyzeAndGroup();
+                    editor.WriteMessage($"\n语义分析完成！识别出 {analyzedTargets.Count} 个独立的布局任务。");
+
+                    // --- 【核心新增】翻译流程 ---
+                    if (useTranslation)
                         {
-                            if (!obstacleIdMap.ContainsKey(obstacleEntity.ObjectId))
-                                obstacleIdMap[obstacleEntity.ObjectId] = g;
-                        });
+                        editor.WriteMessage("\n翻译模式已激活，正在准备翻译...");
+                        var apiProfile = settings.ApiProfiles.FirstOrDefault(p => p.ServiceType == settings.LastSelectedApiService);
+                        if (apiProfile == null)
+                            {
+                            editor.WriteMessage("\n[错误] 未找到有效的API配置，请先运行 GJX 命令进行设置。");
+                            continue;
+                            }
+
+                        var apiRegistry = new ApiRegistry();
+                        ITranslator translator = apiRegistry.CreateProviderForProfile(apiProfile);
+
+                        editor.WriteMessage($"\n正在使用“{translator.DisplayName}”进行翻译，请稍候...");
+                        var translationTasks = analyzedTargets.Select(async task =>
+                        {
+                            try
+                                {
+                                task.TranslatedText = await translator.TranslateAsync(task.OriginalText, settings.SourceLanguage, settings.TargetLanguage, CancellationToken.None);
+                                }
+                            catch (Exception ex)
+                                {
+                                task.TranslatedText = $"[翻译失败] {ex.Message}";
+                                }
+                        }).ToList();
+
+                        await System.Threading.Tasks.Task.WhenAll(translationTasks);
+                        editor.WriteMessage("\n翻译完成！");
+                        }
+
+
+                    // --- 核心计算 ---
+                    editor.WriteMessage("\n正在启动核心计算引擎...");
+                    var calculator = new LayoutCalculator();
+                    var summary = calculator.CalculateLayouts(analyzedTargets, rawObstacles, settings.TestNumberOfRounds);
+                    editor.WriteMessage("\n计算完成！正在准备可视化报告...");
+
+                    var preciseReport = new StringBuilder();
+                    preciseReport.AppendLine($"成功提取 {preciseObstacles.Count} 个精确几何障碍物：");
+                    preciseReport.AppendLine("========================================");
+                    var preciseCount = 1;
+                    foreach (var geom in preciseObstacles)
+                        preciseReport.AppendLine($"--- 精确几何 #{preciseCount++} [类型: {geom.GeometryType}] ---");
+
+                    Application.DocumentManager.ExecuteInApplicationContext(state =>
+                    {
+                        var resultWindow = new TestResultWindow(analyzedTargets, rawObstacles, obstacleReportData, preciseObstacles, preciseReport.ToString(), obstacleIdMap, summary);
+                        new WindowInteropHelper(resultWindow).Owner = Application.MainWindow.Handle;
+                        resultWindow.Show();
+                    }, null);
+
+                    break; // 成功执行，跳出循环
+                    }
+                catch (KeywordException ex)
+                    {
+                    if (ex.Input == "FY")
+                        {
+                        var pko = new PromptKeywordOptions($"\n请选择排版模式 [原文(Original)/翻译(Translate)] <{(useTranslation ? "T" : "O")}>: ");
+                        pko.Keywords.Add("Original", "O", "使用原文(O)");
+                        pko.Keywords.Add("Translate", "T", "使用翻译(T)");
+                        pko.AllowNone = true;
+
+                        var pkr = editor.GetKeywords(pko);
+                        if (pkr.Status == PromptStatus.OK)
+                            {
+                            if (string.IsNullOrEmpty(pkr.StringResult)) // 用户回车
+                                {
+                                useTranslation = !useTranslation;
+                                }
+                            else // 用户输入关键字
+                                {
+                                useTranslation = pkr.StringResult == "Translate";
+                                }
+                            settings.TestModeUsesTranslation = useTranslation;
+                            settingsService.SaveSettings(settings);
+                            editor.WriteMessage($"\n排版模式已切换为: {(useTranslation ? "翻译排版" : "原文排版")}");
+                            }
+                        }
+                    editor.SetImpliedSelection(new ObjectId[0]);
+                    }
+                catch (Exception ex)
+                    {
+                    editor.WriteMessage($"\n[错误] 在TEST命令执行期间发生异常: {ex.Message}\n{ex.StackTrace}");
+                    return;
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                editor.WriteMessage($"\n[错误] 在数据采集阶段发生异常: {ex.Message}\n{ex.StackTrace}");
-                return;
-            }
-
-            // --- 第2阶段：语义分析 (逻辑不变) ---
-            editor.WriteMessage("\n数据采集完成，正在启动语义分析引擎...");
-            var analyzer = new SemanticAnalyzer(targets, rawObstacles);
-            var analyzedTargets = analyzer.AnalyzeAndGroup();
-            editor.WriteMessage($"\n语义分析完成！识别出 {analyzedTargets.Count} 个独立的布局任务。");
-
-            // --- 第3阶段：核心计算 ---
-            editor.WriteMessage("\n正在启动核心计算引擎...");
-            var calculator = new LayoutCalculator();
-            // 【核心修改】使用从设置中读取的轮次进行计算
-            var summary = calculator.CalculateLayouts(analyzedTargets, rawObstacles, settings.TestNumberOfRounds);
-            editor.WriteMessage("\n计算完成！正在准备可视化报告...");
-
-            // --- 第4阶段：生成报告与显示 ---
-            var targetsReport = new StringBuilder();
-            targetsReport.AppendLine($"成功筛选和分析 {analyzedTargets.Count} 个待处理的中文文字目标：");
-            targetsReport.AppendLine("========================================");
-            foreach (var task in analyzedTargets)
-                targetsReport.Append(task);
-
-            var obstaclesReport = new StringBuilder();
-            obstaclesReport.AppendLine($"共分析 {obstacleReportData.Count} 个初始障碍物 (基于边界框)：");
-            obstaclesReport.AppendLine("========================================");
-            obstacleReportData.ForEach(obs => obstaclesReport.AppendLine($"--- [类型: {obs.Item2}] Min: {obs.Item1.MinPoint}, Max: {obs.Item1.MaxPoint}"));
-
-            var preciseReport = new StringBuilder();
-            preciseReport.AppendLine($"成功提取 {preciseObstacles.Count} 个精确几何障碍物：");
-            preciseReport.AppendLine("========================================");
-            var preciseCount = 1;
-            foreach (var geom in preciseObstacles)
-                preciseReport.AppendLine($"--- 精确几何 #{preciseCount++} [类型: {geom.GeometryType}] ---");
-
-
-            Application.DocumentManager.ExecuteInApplicationContext(state =>
-            {
-                // 【核心修改】将 rawObstacles 传递给窗口
-                var resultWindow = new TestResultWindow(analyzedTargets, rawObstacles, obstacleReportData, preciseObstacles, preciseReport.ToString(), obstacleIdMap, summary);
-                new WindowInteropHelper(resultWindow).Owner = Application.MainWindow.Handle;
-                resultWindow.Show();
-            }, null);
-        }
 
         #region 一个自定义异常类，专门用于在GetSelection的事件中传递关键字。
 
@@ -704,7 +759,77 @@ namespace CADTranslator.AutoCAD.Commands
 
             public string Input { get; }
         }
+        [CommandMethod("TEST_APPLY")]
+        public void ApplyTestLayoutCommand()
+            {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var db = doc.Database;
+            var editor = doc.Editor;
 
+            var tasksToApply = CadBridgeService.LayoutTasksToApply;
+            if (tasksToApply == null || !tasksToApply.Any())
+                {
+                editor.WriteMessage("\n[错误] 未找到从预览窗口传递过来的布局数据。");
+                return;
+                }
+
+
+            try
+                {
+                using (doc.LockDocument())
+                    {
+                    using (var tr = db.TransactionManager.StartTransaction())
+                        {
+                        var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
+
+                        foreach (var task in tasksToApply)
+                            {
+                            if (!task.CurrentUserPosition.HasValue) continue;
+
+                            // 增加一个判断，如果翻译失败则不生成该文本
+                            if (string.IsNullOrEmpty(task.TranslatedText) || task.TranslatedText.StartsWith("[翻译失败]")) continue;
+
+                            using (var newText = new DBText())
+                                {
+                                newText.TextString = task.TranslatedText;
+                                newText.Height = task.Height;
+                                newText.Rotation = task.Rotation;
+                                newText.Oblique = task.Oblique;
+                                newText.WidthFactor = task.WidthFactor;
+                                newText.TextStyleId = task.TextStyleId;
+                                newText.Position = task.CurrentUserPosition.Value;
+
+                                var templateEntity = tr.GetObject(task.ObjectId, OpenMode.ForRead) as Entity;
+                                if (templateEntity != null)
+                                    {
+                                    newText.SetPropertiesFrom(templateEntity);
+                                    }
+
+                                modelSpace.AppendEntity(newText);
+                                tr.AddNewlyCreatedDBObject(newText, true);
+                                }
+                            }
+
+
+                        tr.Commit();
+                        }
+                    }
+
+                // 更新成功提示信息
+                int successCount = tasksToApply.Count(t => t.CurrentUserPosition.HasValue && !string.IsNullOrEmpty(t.TranslatedText) && !t.TranslatedText.StartsWith("[翻译失败]"));
+                editor.WriteMessage($"\n成功应用 {successCount} 个翻译布局到图纸！原始文本已保留。");
+                }
+            catch (Exception ex)
+                {
+                editor.WriteMessage($"\n[错误] 应用布局到CAD时发生意外异常: {ex.Message}\n{ex.StackTrace}");
+                }
+            finally
+                {
+                CadBridgeService.LayoutTasksToApply = null;
+                }
+            Autodesk.AutoCAD.ApplicationServices.Application.MainWindow.Focus();
+            }
         #endregion
+        }
     }
-}

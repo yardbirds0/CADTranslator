@@ -1,5 +1,6 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using CADTranslator.Models.CAD;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -10,6 +11,7 @@ namespace CADTranslator.Models.CAD
         {
         public ObjectId ObjectId { get; }
         public string OriginalText { get; }
+        public string TranslatedText { get; set; }
         public Extents3d Bounds { get; private set; }
         public Point3d Position { get; }
         public Point3d AlignmentPoint { get; }
@@ -21,37 +23,29 @@ namespace CADTranslator.Models.CAD
         public TextHorizontalMode HorizontalMode { get; }
         public TextVerticalMode VerticalMode { get; }
         public string SemanticType { get; set; } = "独立文本";
-        public double SearchRangeFactor { get; set; } = 8.0; // 为每个任务存储搜索范围因子
+        public double SearchRangeFactor { get; set; } = 8.0;
         public Line AssociatedLeader { get; set; }
-
-        /// <summary>
-        /// 算法计算出的原始最佳位置
-        /// </summary>
         public Point3d? AlgorithmPosition { get; set; }
-
-        /// <summary>
-        /// 用户当前放置的位置（可被拖动修改）
-        /// </summary>
         public Point3d? CurrentUserPosition { get; set; }
-
-        /// <summary>
-        /// 标记此任务是否被用户手动移动过
-        /// </summary>
         public bool IsManuallyMoved { get; set; } = false;
-
         public Point3d? BestPosition { get; set; }
         public string FailureReason { get; set; }
         public Dictionary<Point3d, ObjectId> CollisionDetails { get; set; } = new Dictionary<Point3d, ObjectId>();
 
-        // 私有主构造函数，用于从CAD实体创建
+        // ◄◄◄ 【核心修正】恢复被遗漏的 SourceObjectIds 属性
+        public List<ObjectId> SourceObjectIds { get; private set; } = new List<ObjectId>();
+
+
         private LayoutTask(Entity entity, Transaction tr)
             {
             this.ObjectId = entity.ObjectId;
             this.Bounds = entity.GeometricExtents;
+            this.SourceObjectIds.Add(entity.ObjectId); // ◄◄◄ 【核心修正】确保在创建时就记录下原始ID
 
             if (entity is DBText dbText)
                 {
                 OriginalText = dbText.TextString;
+                TranslatedText = dbText.TextString;
                 Position = dbText.Position;
                 AlignmentPoint = dbText.AlignmentPoint;
                 Rotation = dbText.Rotation;
@@ -72,6 +66,7 @@ namespace CADTranslator.Models.CAD
             else if (entity is MText mText)
                 {
                 OriginalText = mText.Text;
+                TranslatedText = mText.Text;
                 Position = mText.Location;
                 AlignmentPoint = mText.Location;
                 Rotation = mText.Rotation;
@@ -84,14 +79,12 @@ namespace CADTranslator.Models.CAD
                 }
             }
 
-        // 公共静态工厂方法，用于安全、无歧义地创建实例
         public static LayoutTask From(DBText dbText, Transaction tr) => new LayoutTask(dbText, tr);
         public static LayoutTask From(MText mText) => new LayoutTask(mText, null);
 
-        // 用于合并的构造函数
         public LayoutTask(LayoutTask template, string mergedText, Extents3d mergedBounds)
             {
-            ObjectId = template.ObjectId; // ObjectId暂时只保留第一个的
+            ObjectId = template.ObjectId;
             Position = template.Position;
             AlignmentPoint = template.AlignmentPoint;
             Rotation = template.Rotation;
@@ -101,16 +94,21 @@ namespace CADTranslator.Models.CAD
             TextStyleId = template.TextStyleId;
             HorizontalMode = template.HorizontalMode;
             VerticalMode = template.VerticalMode;
-
             OriginalText = mergedText;
+            TranslatedText = mergedText;
             Bounds = mergedBounds;
+
+            // ◄◄◄ 【核心修正】确保合并后的任务也能继承原始ID
+            // 注意：这里的逻辑是基于您现有的 SemanticAnalyzer 中的合并方式，我们只继承模板任务的ID
+            // 如果未来要支持合并多个任务的ID，需要改造 SemanticAnalyzer
+            SourceObjectIds = new List<ObjectId>(template.SourceObjectIds);
             }
 
-        // 用于在多轮推演中创建副本的“复制构造函数”
         public LayoutTask(LayoutTask other)
             {
             ObjectId = other.ObjectId;
             OriginalText = other.OriginalText;
+            TranslatedText = other.TranslatedText;
             Bounds = other.Bounds;
             Position = other.Position;
             AlignmentPoint = other.AlignmentPoint;
@@ -122,16 +120,16 @@ namespace CADTranslator.Models.CAD
             HorizontalMode = other.HorizontalMode;
             VerticalMode = other.VerticalMode;
             SemanticType = other.SemanticType;
-            SearchRangeFactor = other.SearchRangeFactor; // 复制搜索范围因子
-            //AssociatedLeader = other.AssociatedLeader;
-            // 复制新增的交互属性
+            SearchRangeFactor = other.SearchRangeFactor;
             AlgorithmPosition = other.AlgorithmPosition;
             CurrentUserPosition = other.CurrentUserPosition;
             IsManuallyMoved = other.IsManuallyMoved;
-
             BestPosition = other.BestPosition;
             FailureReason = other.FailureReason;
             CollisionDetails = new Dictionary<Point3d, ObjectId>(other.CollisionDetails);
+
+            // ◄◄◄ 【核心修正】确保在复制任务时，也完整复制ID列表
+            SourceObjectIds = new List<ObjectId>(other.SourceObjectIds);
             }
 
         public override string ToString()
@@ -139,6 +137,10 @@ namespace CADTranslator.Models.CAD
             var sb = new StringBuilder();
             sb.AppendLine($"--- 文字对象 (ID: {ObjectId}) [类型: {SemanticType}] ---");
             sb.AppendLine($"  原文: '{OriginalText}'");
+            if (OriginalText != TranslatedText)
+                {
+                sb.AppendLine($"  译文: '{TranslatedText}'");
+                }
             if (BestPosition.HasValue)
                 {
                 sb.AppendLine($"  [计算结果] 最佳位置: {BestPosition.Value}");
@@ -156,8 +158,9 @@ namespace CADTranslator.Models.CAD
             return sb.ToString();
             }
         }
+    }
 
-    public static class LayoutTaskExtensions
+public static class LayoutTaskExtensions
         {
         public static Extents3d GetTranslatedBounds(this LayoutTask task)
             {
@@ -197,4 +200,4 @@ namespace CADTranslator.Models.CAD
                 }
             }
         }
-    }
+    
