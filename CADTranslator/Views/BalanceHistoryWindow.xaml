@@ -96,18 +96,39 @@
                 BorderThickness="0,1,0,0"
                 BorderBrush="{DynamicResource ControlElevationBorderBrush}"
                 Padding="0,15,0,0">
-            <StackPanel Orientation="Horizontal"
-                        HorizontalAlignment="Right">
-                <ui:Button Content="删除记录"
-                           Command="{Binding DeleteCommand}"
-                           CommandParameter="{Binding ElementName=HistoryDataGrid, Path=SelectedItems}"
-                           Appearance="Danger"
-                           Icon="Delete24" />
-                <ui:Button Content="关闭"
-                           Click="CloseButton_Click"
-                           Margin="10,0,0,0"
-                           IsCancel="True" />
-            </StackPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            HorizontalAlignment="Left">
+                    <TextBlock Text="请选择查看的API 服务:"
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0"
+                               Opacity="0.8" />
+                    <ComboBox ItemsSource="{Binding AvailableApiServices}"
+                                 SelectedItem="{Binding SelectedApiService}"
+                                 Width="180" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Right">
+                    <ui:Button Content="删除记录"
+                               Command="{Binding DeleteCommand}"
+                               CommandParameter="{Binding ElementName=HistoryDataGrid, Path=SelectedItems}"
+                               Appearance="Danger"
+                               Icon="Delete24" />
+                    <ui:Button Content="关闭"
+                               Click="CloseButton_Click"
+                               Margin="10,0,0,0"
+                               IsCancel="True" />
+                </StackPanel>
+            </Grid>
         </Border>
     </Grid>
 </ui:FluentWindow>

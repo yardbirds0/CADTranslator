@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using static CADTranslator.Services.Settings.SettingsService;
 
 namespace CADTranslator.Services.Settings
     {
@@ -43,6 +44,9 @@ namespace CADTranslator.Services.Settings
         public string TargetLanguage { get; set; } = "en";   // 默认目标语言为英语
         public int TestNumberOfRounds { get; set; } = 100;
         public double TestSearchRangeFactor { get; set; } = 8.0;
+        public PromptTemplateType SelectedPromptTemplate { get; set; } = PromptTemplateType.Structure;
+        public string CustomPrompt { get; set; } = "你是一个专业的结构专业图纸翻译家。你的任务是把用户的文本从 {fromLanguage} 翻译成 {toLanguage}. 不要添加任何额外的解释，只返回翻译好的文本。遇到符号则保留原来的样式。";
+        public PromptSendingMode SendingMode { get; set; } = PromptSendingMode.Once;
         public bool TestModeUsesTranslation { get; set; } = false;
 
         // API相关的设置
@@ -134,6 +138,8 @@ namespace CADTranslator.Services.Settings
                 FriendlyNameMappings = GetDefaultMappings()
                 };
             }
+
+
 
         /// <summary>
         /// 获取我们预定义的友好名称映射规则

@@ -169,51 +169,56 @@ namespace CADTranslator.Services.Translation
             string usageUrl = $"{_endpoint}/v1/query/usage_details";
             try
                 {
-                // 根据文档，我们需要查询过去24小时的用量作为“余额”参考
-                var requestData = new
+                // 【核心修正】为余额查询创建一个专用的、不带"Bearer"的HttpClient
+                using (var usageClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) })
                     {
-                    model = "%", // 使用通配符查询所有模型
-                    hours = 24
-                    };
+                    usageClient.DefaultRequestHeaders.Add("Authorization", _apiKey); // 直接使用API Key
 
-                string jsonPayload = JsonConvert.SerializeObject(requestData);
-                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+                    var requestData = new
+                        {
+                        model = "%",
+                        hours = 24
+                        };
 
-                var response = await _lazyHttpClient.Value.PostAsync(usageUrl, content, CancellationToken.None);
-                if (!response.IsSuccessStatusCode)
-                    {
-                    await HandleApiError(response);
-                    }
+                    string jsonPayload = JsonConvert.SerializeObject(requestData);
+                    var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-                string jsonResponse = await response.Content.ReadAsStringAsync();
-                try
-                    {
-                    var usageData = JArray.Parse(jsonResponse);
-                    if (usageData == null)
-                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "在用量查询API响应中未找到有效数据。");
+                    // 使用专用的usageClient发起请求
+                    var response = await usageClient.PostAsync(usageUrl, content, CancellationToken.None);
 
-                    // 汇总所有记录的数据
-                    long totalPromptTokens = usageData.Sum(item => item["promptTokens"]?.Value<long>() ?? 0);
-                    long totalCompletionTokens = usageData.Sum(item => item["completionTokens"]?.Value<long>() ?? 0);
-                    long totalTokens = usageData.Sum(item => item["totalTokens"]?.Value<long>() ?? 0);
-                    long totalRequests = usageData.Sum(item => item["count"]?.Value<long>() ?? 0);
-                    double totalCost = usageData.Sum(item => item["cost"]?.Value<double>() ?? 0.0);
+                    if (!response.IsSuccessStatusCode)
+                        {
+                        await HandleApiError(response);
+                        }
 
-                    // 格式化为Key-Value对以便显示
-                    var balanceInfo = new List<KeyValuePair<string, string>>
-                    {
-                        new KeyValuePair<string, string>("查询范围", "过去24小时"),
-                        new KeyValuePair<string, string>("总成本(cost)", $"{totalCost:F4}"),
-                        new KeyValuePair<string, string>("总请求数(count)", totalRequests.ToString()),
-                        new KeyValuePair<string, string>("总Tokens(totalTokens)", totalTokens.ToString()),
-                        new KeyValuePair<string, string>("输入Tokens(promptTokens)", totalPromptTokens.ToString()),
-                        new KeyValuePair<string, string>("输出Tokens(completionTokens)", totalCompletionTokens.ToString())
-                    };
-                    return balanceInfo;
-                    }
-                catch (JsonException ex)
-                    {
-                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法解析用量查询API的响应: {ex.Message}");
+                    string jsonResponse = await response.Content.ReadAsStringAsync();
+                    try
+                        {
+                        var usageData = JArray.Parse(jsonResponse);
+                        if (usageData == null)
+                            throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "在用量查询API响应中未找到有效数据。");
+
+                        long totalPromptTokens = usageData.Sum(item => item["promptTokens"]?.Value<long>() ?? 0);
+                        long totalCompletionTokens = usageData.Sum(item => item["completionTokens"]?.Value<long>() ?? 0);
+                        long totalTokens = usageData.Sum(item => item["totalTokens"]?.Value<long>() ?? 0);
+                        long totalRequests = usageData.Sum(item => item["count"]?.Value<long>() ?? 0);
+                        double totalCost = usageData.Sum(item => item["cost"]?.Value<double>() ?? 0.0);
+
+                        var balanceInfo = new List<KeyValuePair<string, string>>
+                        {
+                            new KeyValuePair<string, string>("查询范围", "过去24小时"),
+                            new KeyValuePair<string, string>("总成本(cost)", $"{totalCost:F4}"),
+                            new KeyValuePair<string, string>("总请求数(count)", totalRequests.ToString()),
+                            new KeyValuePair<string, string>("总Tokens(totalTokens)", totalTokens.ToString()),
+                            new KeyValuePair<string, string>("输入Tokens(promptTokens)", totalPromptTokens.ToString()),
+                            new KeyValuePair<string, string>("输出Tokens(completionTokens)", totalCompletionTokens.ToString())
+                        };
+                        return balanceInfo;
+                        }
+                    catch (JsonException ex)
+                        {
+                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法解析用量查询API的响应: {ex.Message}");
+                        }
                     }
                 }
             catch (TaskCanceledException)

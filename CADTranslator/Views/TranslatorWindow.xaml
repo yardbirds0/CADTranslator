@@ -4,6 +4,7 @@
                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                  xmlns:vm="clr-namespace:CADTranslator.ViewModels"
+                 xmlns:settings="clr-namespace:CADTranslator.Models.API"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  xmlns:Tools="clr-namespace:CADTranslator.Tools.UI"
                  xmlns:interactivity="http://schemas.microsoft.com/xaml/behaviors"
@@ -32,6 +33,7 @@
             <Tools:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter" />
             <Tools:ProgressConverter x:Key="ProgressConverter" />
             <Tools:ProgressToGlowColorConverter x:Key="ProgressToGlowColorConverter" />
+            <Tools:EnumToBooleanConverter x:Key="EnumToBooleanConverter" />
 
             <Style TargetType="{x:Type DataGridCell}"
                    BasedOn="{StaticResource {x:Type DataGridCell}}">
@@ -456,6 +458,66 @@
                                                    Command="{Binding GetBalanceCommand}"
                                                    IsEnabled="{Binding IsBalanceFeatureEnabled}" />
                                     </Grid>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="{DynamicResource SystemAccentColorLight3Brush}"
+                                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,8"
+                                    Margin="0,10,0,0"
+                                    IsEnabled="{Binding CurrentProvider.IsPromptSupported}">
+                                <StackPanel>
+                                    <TextBlock Text="提示词"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               HorizontalAlignment="Left"
+                                               Margin="0,0,0,8" />
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="提示词模板"
+                                                   FontWeight="Normal"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,10,0" />
+                                        <ComboBox Grid.Column="1"
+                                                     ItemsSource="{Binding PromptTemplateDisplayNames}"
+                                                     DisplayMemberPath="Value"
+                                                     SelectedValuePath="Key"
+                                                     SelectedValue="{Binding SelectedPromptTemplate}" />
+                                    </Grid>
+
+                                    <Grid Margin="0,8,0,0">
+                                        <ui:TextBox Text="{Binding FormattedDisplayedPrompt, Mode=OneWay}"
+                                                    IsReadOnly="{Binding IsPromptBoxReadOnly}"
+                                                    TextWrapping="Wrap"
+                                                    AcceptsReturn="True"
+                                                    VerticalScrollBarVisibility="Auto"
+                                                    MinHeight="120" />
+                                        <TextBlock Text="此接口为专业翻译接口，无需提示词"
+                                                   Foreground="LightGray"
+                                                   FontStyle="Italic"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   Visibility="{Binding CurrentProvider.IsPromptSupported, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                                   IsHitTestVisible="False" />
+                                    </Grid>
+
+                                    <StackPanel Margin="0,8,0,0"
+                                                Orientation="Horizontal">
+                                        <RadioButton Content="逐句发送"
+                                                     GroupName="SendingMode"
+                                                     IsChecked="{Binding SendingMode, ConverterParameter={x:Static settings:PromptSendingMode.PerSentence}, Converter={StaticResource EnumToBooleanConverter}}" />
+                                        <RadioButton Content="单次发送"
+                                                     GroupName="SendingMode"
+                                                     Margin="15,0,0,0"
+                                                     IsChecked="{Binding SendingMode, ConverterParameter={x:Static settings:PromptSendingMode.Once}, Converter={StaticResource EnumToBooleanConverter}}"
+                                                     Cursor="" />
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
 
@@ -982,7 +1044,7 @@
                                                           Progress="{Binding ProgressValue, Converter={StaticResource ProgressConverter}}" />
                             </Grid>
 
-                            <Ellipse Stroke="WhiteSmoke"
+                            <!--Ellipse Stroke="WhiteSmoke"
                                      StrokeDashCap="Round"
                                      Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}"
                                      StrokeThickness="12">
@@ -1003,7 +1065,7 @@
                                                                        StartAngle="-150"
                                                                        AnimationDuration="0:0:1" />
                                 </interactivity:Interaction.Behaviors>
-                            </Ellipse>
+                            </Ellipse-->
 
                             <Grid>
                                 <Grid>

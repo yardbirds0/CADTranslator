@@ -316,16 +316,17 @@ namespace CADTranslator.Services.CAD
                             newText.Rotation = jig.Rotation; // 【核心修正】应用旋转角度
 
                             newText.HorizontalMode = currentParaInfo.HorizontalMode;
-                            newText.VerticalMode = currentParaInfo.VerticalMode;
+                            newText.VerticalMode = currentParaInfo.VerticalMode; // 【核心修正】使用文字自己的垂直对齐
 
-                            // 【核心修正】使用Jig返回的最终坐标
-                            if (newText.HorizontalMode != TextHorizontalMode.TextLeft || newText.VerticalMode != TextVerticalMode.TextBase)
+                            // 【核心修正】智能判断：保留原始对齐方式，并让CAD自动调整
+                            if (newText.HorizontalMode == TextHorizontalMode.TextLeft && newText.VerticalMode == TextVerticalMode.TextBase)
                                 {
-                                newText.AlignmentPoint = finalWcsPosition;
+                                newText.Position = finalWcsPosition;
                                 }
                             else
                                 {
-                                newText.Position = finalWcsPosition;
+                                newText.AlignmentPoint = finalWcsPosition;
+                                newText.AdjustAlignment(_db); // <-- 关键！
                                 }
 
                             modelSpace.AppendEntity(newText);

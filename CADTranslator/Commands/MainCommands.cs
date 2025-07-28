@@ -305,9 +305,6 @@ namespace CADTranslator.AutoCAD.Commands
             }
         }
 
-
-        // ▼▼▼ 【请用下面的代码块，替换掉旧的 ApplyTranslationLayoutCommand 方法】 ▼▼▼
-
         /// <summary>
         ///     【这是新的核心逻辑方法】
         ///     一个可被外部直接调用的静态方法，负责执行应用翻译到图纸的完整逻辑。
@@ -745,6 +742,143 @@ namespace CADTranslator.AutoCAD.Commands
                     {
                     editor.WriteMessage($"\n[错误] 在TEST命令执行期间发生异常: {ex.Message}\n{ex.StackTrace}");
                     return;
+                    }
+                }
+            }
+
+        [CommandMethod("WZKD")]
+        public void AdjustWidthFactorCommand()
+            {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var db = doc.Database;
+            var editor = doc.Editor;
+
+            // 1. 提示用户选择对象
+            var selOpts = new PromptSelectionOptions
+                {
+                MessageForAdding = "\n请选择要统一调整宽度因子的文字对象: "
+                };
+            var selRes = editor.GetSelection(selOpts);
+            if (selRes.Status != PromptStatus.OK) return;
+
+            // 2. 筛选出有效的文字对象ID
+            var textEntityIds = new List<ObjectId>();
+            using (var tr = db.TransactionManager.StartTransaction())
+                {
+                foreach (var id in selRes.Value.GetObjectIds())
+                    {
+                    var ent = tr.GetObject(id, OpenMode.ForRead);
+                    if (ent is DBText || ent is MText)
+                        {
+                        textEntityIds.Add(id);
+                        }
+                    }
+                tr.Commit();
+                }
+
+            if (textEntityIds.Count == 0)
+                {
+                editor.WriteMessage("\n选择中未找到任何有效的文字对象。");
+                return;
+                }
+
+            // 3. 启动Jig进行交互
+            var jig = new WidthFactorJig(doc, textEntityIds);
+            var result = editor.Drag(jig);
+
+            // 4. 用户确认后，应用最终的宽度因子
+            if (result.Status == PromptStatus.OK)
+                {
+                using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                    foreach (var id in textEntityIds)
+                        {
+                        var ent = tr.GetObject(id, OpenMode.ForWrite);
+                        if (ent is DBText dbText)
+                            {
+                            dbText.WidthFactor = jig.FinalWidthFactor;
+                            }
+                        // MText的宽度因子是只读的，但Jig的预览已经模拟了效果
+                        // 实际应用时，对于MText我们不做修改，以保持其原始属性
+                        }
+                    tr.Commit();
+                    editor.WriteMessage($"\n已成功将 {textEntityIds.Count} 个文字对象的宽度因子统一调整为 {jig.FinalWidthFactor:F2}。");
+                    }
+                }
+            }
+
+        [CommandMethod("WZHJJ")]
+        public void AdjustLineSpacingCommand()
+            {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var db = doc.Database;
+            var editor = doc.Editor;
+
+            // 1. 提示用户选择对象
+            var selOpts = new PromptSelectionOptions
+                {
+                MessageForAdding = "\n请选择要统一调整行间距的文字对象: "
+                };
+            var selRes = editor.GetSelection(selOpts);
+            if (selRes.Status != PromptStatus.OK) return;
+
+            // 2. 筛选出有效的文字对象ID
+            var textEntityIds = new List<ObjectId>();
+            using (var tr = db.TransactionManager.StartTransaction())
+                {
+                foreach (var id in selRes.Value.GetObjectIds())
+                    {
+                    var ent = tr.GetObject(id, OpenMode.ForRead);
+                    if (ent is DBText || ent is MText)
+                        {
+                        textEntityIds.Add(id);
+                        }
+                    }
+                tr.Commit();
+                }
+
+            if (textEntityIds.Count < 2)
+                {
+                editor.WriteMessage("\n请至少选择两个文字对象以调整行间距。");
+                return;
+                }
+
+            // 3. 启动Jig进行交互
+            var jig = new LineSpacingJig(doc, textEntityIds);
+            var result = editor.Drag(jig);
+
+            // 4. 用户确认后，应用最终计算出的新位置
+            if (result.Status == PromptStatus.OK)
+                {
+                using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                    foreach (var pair in jig.FinalPositions)
+                        {
+                        var ent = tr.GetObject(pair.Key, OpenMode.ForWrite);
+                        if (ent is DBText dbText)
+                            {
+                            // 【核心修正】智能判断：保留原始对齐方式
+                            if (dbText.HorizontalMode == TextHorizontalMode.TextLeft && dbText.VerticalMode == TextVerticalMode.TextBase)
+                                {
+                                // 对左对齐文字，直接设置Position
+                                dbText.Position = pair.Value;
+                                }
+                            else
+                                {
+                                // 对非左对齐文字，设置AlignmentPoint并让CAD自动调整
+                                dbText.AlignmentPoint = pair.Value;
+                                dbText.AdjustAlignment(db); // <-- 关键！
+                                }
+                            }
+                        else if (ent is MText mText)
+                            {
+                            mText.Location = pair.Value;
+                            }
+                        }
+                    tr.Commit();
+                    editor.WriteMessage($"\n已成功为 {textEntityIds.Count} 个文字对象统一调整了行间距。");
                     }
                 }
             }

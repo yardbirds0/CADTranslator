@@ -177,7 +177,7 @@ namespace CADTranslator.Services.CAD
                                 newText.HorizontalMode = originalHMode;
                                 newText.VerticalMode = originalVMode;
 
-                                // 【核心修改】直接使用Jig返回的精确坐标
+                                // 【核心修正】智能判断：保留原始对齐方式，并让CAD自动调整
                                 if (originalHMode == TextHorizontalMode.TextLeft && originalVMode == TextVerticalMode.TextBase)
                                     {
                                     newText.Position = finalWcsPosition;
@@ -185,6 +185,7 @@ namespace CADTranslator.Services.CAD
                                 else
                                     {
                                     newText.AlignmentPoint = finalWcsPosition;
+                                    newText.AdjustAlignment(_db); // <-- 关键！
                                     }
 
                                 modelSpace.AppendEntity(newText);

@@ -199,6 +199,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Models\API\PromptEnums.cs" />
     <Compile Include="Models\CAD\LayoutTask.cs" />
     <Compile Include="Models\CAD\UnderlineStyle.cs" />
     <Compile Include="Services\CAD\GeometryConverter.cs" />
@@ -245,8 +246,11 @@
     <Compile Include="Services\Translation\OpenAiTranslator.cs" />
     <Compile Include="Services\CAD\UnderlineService.cs" />
     <Compile Include="Services\UI\WindowService.cs" />
+    <Compile Include="Tools\CAD\Jigs\LineSpacingJig.cs" />
+    <Compile Include="Tools\CAD\Jigs\WidthFactorJig.cs" />
     <Compile Include="Tools\Controls\WaveProgressBar.cs" />
     <Compile Include="Tools\Effects\GlowEffect.cs" />
+    <Compile Include="Tools\UI\EnumToBooleanConverter.cs" />
     <Compile Include="Tools\UI\InverseBooleanConverter.cs" />
     <Compile Include="Tools\UI\PaneStateToGridLengthConverter.cs" />
     <Compile Include="Tools\UI\PasswordBoxHelper.cs" />

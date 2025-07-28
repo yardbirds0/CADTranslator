@@ -15,8 +15,10 @@ namespace CADTranslator.ViewModels
         #region --- 字段与事件 ---
 
         private readonly ObservableCollection<BalanceRecord> _masterRecordList;
-        private readonly AppSettings _settings; // ◄◄◄ 【新增】用于存储设置
+        private readonly AppSettings _settings;
         public event Action<List<BalanceRecord>> DeleteRequested;
+
+        private ApiServiceType _selectedApiService;
 
         #endregion
 
@@ -25,17 +27,45 @@ namespace CADTranslator.ViewModels
         public DataTable HistoryDataTable { get; private set; }
         public RelayCommand DeleteCommand { get; }
 
+        // 【新增】用于绑定ComboBox的数据源
+        public List<ApiServiceType> AvailableApiServices { get; private set; }
+
+        // 【新增】用于绑定ComboBox的选中项
+        public ApiServiceType SelectedApiService
+            {
+            get => _selectedApiService;
+            set
+                {
+                if (SetField(ref _selectedApiService, value))
+                    {
+                    // 当选项变化时，立刻重建表格
+                    BuildDataTable();
+                    }
+                }
+            }
+
         #endregion
 
         #region --- 构造函数 ---
 
-        // ▼▼▼ 【核心修改】构造函数现在接收 AppSettings ▼▼▼
-        public BalanceHistoryViewModel(ObservableCollection<BalanceRecord> historyRecords, AppSettings settings)
+        public BalanceHistoryViewModel(ObservableCollection<BalanceRecord> historyRecords, AppSettings settings, ApiServiceType defaultService)
             {
             _masterRecordList = historyRecords ?? throw new ArgumentNullException(nameof(historyRecords));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
 
             DeleteCommand = new RelayCommand(ExecuteDelete, CanExecuteDelete);
+
+            // 【新增】从所有历史记录中，提炼出有哪些API服务，作为ComboBox的选项
+            AvailableApiServices = _masterRecordList
+                .Select(r => r.ServiceType)
+                .Distinct()
+                .OrderBy(s => s.ToString())
+                .ToList();
+
+            // 【新增】设置智能默认选项
+            _selectedApiService = defaultService;
+
+            // 初始时，根据默认选项构建表格
             BuildDataTable();
 
             _masterRecordList.CollectionChanged += (s, e) => BuildDataTable();
@@ -43,7 +73,7 @@ namespace CADTranslator.ViewModels
 
         #endregion
 
-        #region --- 命令实现 ---
+        #region --- 命令实现 (不变) ---
 
         private bool CanExecuteDelete(object parameter)
             {
@@ -77,69 +107,58 @@ namespace CADTranslator.ViewModels
 
         #endregion
 
-        #region --- 私有方法 ---
+        #region --- 私有方法 (BuildDataTable 已升级) ---
 
-        // ▼▼▼ 【核心修改】重写整个 BuildDataTable 方法 ▼▼▼
         private void BuildDataTable()
             {
             var newTable = new DataTable();
-            if (_masterRecordList == null || !_masterRecordList.Any())
+
+            // 【核心修改】步骤 1: 只筛选出当前选中API的记录
+            var filteredRecords = _masterRecordList
+                .Where(r => r.ServiceType == SelectedApiService)
+                .ToList();
+
+            if (!filteredRecords.Any())
                 {
                 HistoryDataTable = newTable;
                 OnPropertyChanged(nameof(HistoryDataTable));
                 return;
                 }
 
-            // 1. 添加固定的初始列
+            // 【核心修改】步骤 2: 只根据“筛选后”的记录来动态创建列
             newTable.Columns.Add("查询时间", typeof(string));
-            newTable.Columns.Add("API服务", typeof(string));
 
-            // 2. 严格按照 settings 中定义的顺序来创建数据列
-            foreach (var mappingRulePair in _settings.FriendlyNameMappings)
+            var allKeysInFilteredHistory = filteredRecords
+                .SelectMany(r => r.Data?.Select(kvp => kvp.Key) ?? Enumerable.Empty<string>())
+                .Distinct()
+                .ToList();
+
+            foreach (var key in allKeysInFilteredHistory)
                 {
-                var mappingRule = mappingRulePair.Value;
-                // 使用规则的友好名称作为列的标题。实际的绑定是在后台通过原始Key进行的。
-                // 注意：列名必须是唯一的，这里我们用友好名称。
-                if (!newTable.Columns.Contains(mappingRule.DefaultFriendlyName))
+                var mappingRule = _settings.FriendlyNameMappings.Values.FirstOrDefault(r => r.Aliases.Contains(key));
+                string columnName = mappingRule?.DefaultFriendlyName ?? key;
+                if (!newTable.Columns.Contains(columnName))
                     {
-                    newTable.Columns.Add(mappingRule.DefaultFriendlyName, typeof(string));
+                    newTable.Columns.Add(columnName, typeof(string));
                     }
                 }
 
-            // 3. 添加任何在规则中未定义的“其他”列，以防API返回了新字段
-            var allKeysInHistory = _masterRecordList
-                .SelectMany(r => r.Data.Select(kvp => kvp.Key))
-                .Distinct();
-            var allKnownAliases = _settings.FriendlyNameMappings.Values.SelectMany(r => r.Aliases).ToList();
-
-            foreach (var key in allKeysInHistory)
-                {
-                if (!allKnownAliases.Contains(key) && !newTable.Columns.Contains(key))
-                    {
-                    newTable.Columns.Add(key, typeof(string)); // 对于未知列，直接用原始Key
-                    }
-                }
-
-            // 4. 填充数据行
-            foreach (var record in _masterRecordList.OrderByDescending(r => r.Timestamp))
+            // 【核心修改】步骤 3: 只填充“筛选后”的记录到表格中
+            foreach (var record in filteredRecords.OrderByDescending(r => r.Timestamp))
                 {
                 var row = newTable.NewRow();
                 row["查询时间"] = record.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff");
-                row["API服务"] = record.ServiceType.ToString();
 
-                foreach (var kvp in record.Data)
+                if (record.Data != null)
                     {
-                    // 找到这个原始Key属于哪个规则
-                    var rule = _settings.FriendlyNameMappings.Values.FirstOrDefault(r => r.Aliases.Contains(kvp.Key));
-                    if (rule != null)
+                    foreach (var kvp in record.Data)
                         {
-                        // 使用规则的友好名称来填充对应的列
-                        row[rule.DefaultFriendlyName] = kvp.Value;
-                        }
-                    else if (newTable.Columns.Contains(kvp.Key))
-                        {
-                        // 如果是未知的Key，直接用Key填充
-                        row[kvp.Key] = kvp.Value;
+                        var rule = _settings.FriendlyNameMappings.Values.FirstOrDefault(r => r.Aliases.Contains(kvp.Key));
+                        string colName = rule?.DefaultFriendlyName ?? kvp.Key;
+                        if (newTable.Columns.Contains(colName))
+                            {
+                            row[colName] = kvp.Value;
+                            }
                         }
                     }
                 newTable.Rows.Add(row);
@@ -151,8 +170,15 @@ namespace CADTranslator.ViewModels
 
         #endregion
 
-        #region --- INotifyPropertyChanged 实现 ---
+        #region --- INotifyPropertyChanged 实现 (不变) ---
         public event PropertyChangedEventHandler PropertyChanged;
+        protected bool SetField<T>(ref T field, T value, [CallerMemberName] string propertyName = null)
+            {
+            if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+            field = value;
+            OnPropertyChanged(propertyName);
+            return true;
+            }
         protected void OnPropertyChanged([CallerMemberName] string propertyName = null)
             {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));

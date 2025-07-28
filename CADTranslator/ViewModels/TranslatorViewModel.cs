@@ -7,7 +7,6 @@ using CADTranslator.Services.Settings;
 using CADTranslator.Services.Translation;
 using CADTranslator.Services.UI;
 using CADTranslator.Views;
-using System.Windows;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -17,8 +16,10 @@ using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Media;
 using Wpf.Ui.Controls;
+using static CADTranslator.Services.Settings.SettingsService;
 using MessageBoxResult = Wpf.Ui.Controls.MessageBoxResult;
 
 namespace CADTranslator.ViewModels
@@ -64,6 +65,80 @@ namespace CADTranslator.ViewModels
             (Brush)new BrushConverter().ConvertFromString("#6741D9")
         };
         private int _brushIndex = 0;
+        private Dictionary<PromptTemplateType, string> _promptTemplates;
+        private string _customPrompt; // 用于保存“自定义”模板的内容
+
+        public Dictionary<PromptTemplateType, string> PromptTemplateDisplayNames { get; private set; }
+        // 【修改】这个属性不再直接使用，但保留以防万一
+        public List<PromptTemplateType> PromptTemplateOptions { get; } = Enum.GetValues(typeof(PromptTemplateType)).Cast<PromptTemplateType>().ToList();
+
+        public PromptTemplateType SelectedPromptTemplate
+            {
+            get => _currentSettings.SelectedPromptTemplate;
+            set
+                {
+                if (_currentSettings.SelectedPromptTemplate != value)
+                    {
+                    // 当切换模板时，更新显示的提示词
+                    _currentSettings.SelectedPromptTemplate = value;
+                    OnPropertyChanged();
+                    UpdateDisplayedPrompt();
+                    OnPropertyChanged(nameof(IsPromptBoxReadOnly)); // 通知UI更新编辑状态
+                    if (!_isLoading) SaveSettings();
+                    }
+                }
+            }
+
+        private string _displayedPrompt; // 【新增】为DisplayedPrompt创建一个标准的后台字段
+        public string DisplayedPrompt
+            {
+            get => _displayedPrompt;
+            set
+                {
+                if (SetField(ref _displayedPrompt, value))
+                    {
+                    if (SelectedPromptTemplate == PromptTemplateType.Custom)
+                        {
+                        _customPrompt = value;
+                        }
+                    OnPropertyChanged(nameof(FormattedDisplayedPrompt)); // 【新增】通知格式化属性更新
+                    }
+                }
+            }
+
+
+        public string FormattedDisplayedPrompt
+            {
+            get
+                {
+                if (string.IsNullOrEmpty(DisplayedPrompt))
+                    return string.Empty;
+
+                // 找到当前语言对应的中文名称
+                var fromLang = SupportedLanguages.FirstOrDefault(l => l.Value == SourceLanguage)?.DisplayName ?? SourceLanguage;
+                var toLang = SupportedLanguages.FirstOrDefault(l => l.Value == TargetLanguage)?.DisplayName ?? TargetLanguage;
+
+                // 执行替换
+                return DisplayedPrompt
+                    .Replace("{fromLanguage}", $"[{fromLang}]")
+                    .Replace("{toLanguage}", $"[{toLang}]");
+                }
+            }
+        public bool IsPromptBoxReadOnly => SelectedPromptTemplate != PromptTemplateType.Custom;
+
+        public PromptSendingMode SendingMode
+            {
+            get => _currentSettings.SendingMode;
+            set
+                {
+                if (_currentSettings.SendingMode != value)
+                    {
+                    _currentSettings.SendingMode = value;
+                    OnPropertyChanged();
+                    if (!_isLoading) SaveSettings();
+                    }
+                }
+            }
         #endregion
 
         #region --- 绑定属性 ---
@@ -179,28 +254,30 @@ namespace CADTranslator.ViewModels
         public string CurrentModelInput { get; set; }
         public string SourceLanguage
             {
-            get => _currentSettings?.SourceLanguage ?? "auto"; // 从设置中读取，如果设置为null则提供默认值
+            get => _currentSettings?.SourceLanguage ?? "auto";
             set
                 {
                 if (_currentSettings != null && _currentSettings.SourceLanguage != value)
                     {
                     _currentSettings.SourceLanguage = value;
-                    OnPropertyChanged(); // 通知UI更新
-                    if (!_isLoading) SaveSettings(); // 保存设置
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(FormattedDisplayedPrompt)); // 【新增】通知格式化属性更新
+                    if (!_isLoading) SaveSettings();
                     }
                 }
             }
 
         public string TargetLanguage
             {
-            get => _currentSettings?.TargetLanguage ?? "en"; // 从设置中读取，如果设置为null则提供默认值
+            get => _currentSettings?.TargetLanguage ?? "en";
             set
                 {
                 if (_currentSettings != null && _currentSettings.TargetLanguage != value)
                     {
                     _currentSettings.TargetLanguage = value;
-                    OnPropertyChanged(); // 通知UI更新
-                    if (!_isLoading) SaveSettings(); // 保存设置
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(FormattedDisplayedPrompt)); // 【新增】通知格式化属性更新
+                    if (!_isLoading) SaveSettings();
                     }
                 }
             }
@@ -420,6 +497,9 @@ namespace CADTranslator.ViewModels
 
             // 加载初始设置
             LoadSettings();
+            InitializePromptTemplates();
+            _customPrompt = _currentSettings.CustomPrompt; // 从设置中加载用户上次的自定义内容
+            UpdateDisplayedPrompt(); // 根据加载的设置，显示正确的初始提示词
             Log("欢迎使用CAD翻译工具箱。");
             }
 
@@ -988,6 +1068,15 @@ namespace CADTranslator.ViewModels
             OnPropertyChanged(nameof(SourceLanguage));
             OnPropertyChanged(nameof(TargetLanguage));
             _isLoading = false;
+            if (CurrentProvider != null)
+                _currentSettings.LastSelectedApiService = CurrentProvider.ServiceType;
+
+            if (SelectedPromptTemplate == PromptTemplateType.Custom)
+                {
+                _currentSettings.CustomPrompt = DisplayedPrompt;
+                }
+
+            _settingsService.SaveSettings(_currentSettings);
 
 
             }
@@ -1450,7 +1539,7 @@ namespace CADTranslator.ViewModels
 
         private void OnViewHistory(object parameter)
             {
-            var historyViewModel = new BalanceHistoryViewModel(this.BalanceHistory, _currentSettings);
+            var historyViewModel = new BalanceHistoryViewModel(this.BalanceHistory, _currentSettings, CurrentProvider.ServiceType);
 
             historyViewModel.DeleteRequested += (recordsToDelete) =>
             {
@@ -1587,6 +1676,53 @@ namespace CADTranslator.ViewModels
             {
             for (int i = 0; i < TextBlockList.Count; i++) { TextBlockList[i].Id = i + 1; }
             }
+
+        #endregion
+
+        #region --- 提示词辅助方法 ---
+
+        private void InitializePromptTemplates()
+            {
+            // 初始化中文名称字典
+            PromptTemplateDisplayNames = new Dictionary<PromptTemplateType, string>
+                {
+                [PromptTemplateType.Custom] = "自定义",
+                [PromptTemplateType.Structure] = "结构专业",
+                [PromptTemplateType.Architecture] = "建筑专业",
+                [PromptTemplateType.HVAC] = "暖通专业",
+                [PromptTemplateType.Electrical] = "电气专业",
+                [PromptTemplateType.Plumbing] = "给排水专业",
+                [PromptTemplateType.Process] = "工艺专业",
+                [PromptTemplateType.Thermal] = "热力专业"
+                };
+
+            // 初始化提示词内容字典 (保持不变)
+            _promptTemplates = new Dictionary<PromptTemplateType, string>
+                {
+                [PromptTemplateType.Structure] = "你是一个专业的结构专业图纸翻译家。你的任务是把用户的文本从 {fromLanguage} 翻译成 {toLanguage}. 不要添加任何额外的解释，只返回翻译好的文本。遇到符号则保留原来的样式。",
+                [PromptTemplateType.Architecture] = "你是一个专业的建筑专业图纸翻译家...",
+                [PromptTemplateType.HVAC] = "你是一个专业的暖通专业图纸翻译家...",
+                [PromptTemplateType.Electrical] = "你是一个专业的电气专业图纸翻译家...",
+                [PromptTemplateType.Plumbing] = "你是一个专业的给排水专业图纸翻译家...",
+                [PromptTemplateType.Process] = "你是一个专业的工艺专业图纸翻译家...",
+                [PromptTemplateType.Thermal] = "你是一个专业的热力专业图纸翻译家..."
+                };
+            }
+
+        private void UpdateDisplayedPrompt()
+            {
+            if (SelectedPromptTemplate == PromptTemplateType.Custom)
+                {
+                DisplayedPrompt = _customPrompt;
+                }
+            else
+                {
+                DisplayedPrompt = _promptTemplates.ContainsKey(SelectedPromptTemplate)
+                                ? _promptTemplates[SelectedPromptTemplate]
+                                : string.Empty;
+                }
+            }
+
 
         #endregion
 

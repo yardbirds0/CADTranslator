@@ -54,5 +54,26 @@ namespace CADTranslator.Tools.CAD
 
             return points;
         }
-    }
+        public static Vector3d GetProjectedVectorOn(this Vector3d vectorToProject, Vector3d vectorToProjectOn)
+            {
+            // 公式: Proj_b(a) = (a · unit_b) * unit_b
+            // 其中 unit_b 是 b 的单位向量
+
+            // 【核心修正】使用AutoCAD API正确的“零向量”判断方法
+            if (vectorToProjectOn.IsZeroLength())
+                {
+                // 返回一个标准的零向量
+                return new Vector3d(0, 0, 0);
+                }
+
+            // 【核心修正】使用 .GetNormal() 方法获取目标向量的单位向量
+            Vector3d unitVectorToProjectOn = vectorToProjectOn.GetNormal();
+
+            // 计算点积
+            double dotProduct = vectorToProject.DotProduct(unitVectorToProjectOn);
+
+            // 将点积（一个标量）乘以单位向量，得到最终的投影向量
+            return unitVectorToProjectOn * dotProduct;
+            }
+        }
 }
