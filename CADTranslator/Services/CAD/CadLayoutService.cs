@@ -40,15 +40,13 @@ namespace CADTranslator.Services.CAD
 
         public bool ApplySmartLayoutToCad(ObservableCollection<TextBlockViewModel> textBlockList, List<ObjectId> idsToDelete, string lineSpacing)
             {
-            // ▼▼▼ 【新增代码】在这里加载设置 ▼▼▼
             var settingsService = new SettingsService();
             var currentSettings = settingsService.LoadSettings();
             bool addUnderline = currentSettings.AddUnderlineAfterSmartLayout;
-            // ▲▲▲ 新增结束 ▲▲▲
 
             var paragraphInfos = new List<ParagraphInfo>();
 
-            // 1. 准备Jig所需的数据 (这部分不变)
+            // 步骤 1: 准备Jig所需的数据 (现在会完整地传递所有几何信息)
             using (var tr = _db.TransactionManager.StartTransaction())
                 {
                 foreach (var block in textBlockList)
@@ -67,8 +65,6 @@ namespace CADTranslator.Services.CAD
                         }
                     if (templateEntity == null) continue;
 
-                    // ... (这部分数据准备的代码也完全不变) ...
-
                     var pInfo = new ParagraphInfo
                         {
                         Text = block.TranslatedText,
@@ -81,7 +77,9 @@ namespace CADTranslator.Services.CAD
                         HorizontalMode = block.HorizontalMode,
                         VerticalMode = block.VerticalMode,
                         SourceObjectIds = block.SourceObjectIds.ToList(),
-                        GroupKey = block.GroupKey
+                        GroupKey = block.GroupKey,
+                        Rotation = block.Rotation, // 传递旋转角度
+                        Oblique = block.Oblique
                         };
 
                     if (templateEntity is DBText dbText)
@@ -102,13 +100,14 @@ namespace CADTranslator.Services.CAD
                     }
                 tr.Abort();
                 }
+
             if (paragraphInfos.Count == 0)
                 {
                 _editor.WriteMessage("\n没有有效的翻译文本可供排版。");
                 return true;
                 }
 
-            // 2. 开始交互式排版 (这部分不变)
+            // 步骤 2: 开始交互式排版
             try
                 {
                 using (_doc.LockDocument())
@@ -117,11 +116,18 @@ namespace CADTranslator.Services.CAD
                     if (ppr.Status != PromptStatus.OK) return false;
                     Point3d basePoint = ppr.Value;
 
-                    var jig = new SmartLayoutJig(paragraphInfos, basePoint, lineSpacing);
+                    // 【核心修改】从paragraphInfos获取原始旋转角度，并传递给Jig
+                    double rotation = 0;
+                    if (paragraphInfos.Any())
+                        {
+                        rotation = paragraphInfos[0].Rotation;
+                        }
+
+                    var jig = new SmartLayoutJig(paragraphInfos, basePoint, lineSpacing, rotation);
                     var dragResult = _editor.Drag(jig);
                     if (dragResult.Status != PromptStatus.OK) return false;
 
-                    // 3. 用户确认后，将最终结果写入数据库
+                    // 步骤 3: 用户确认后，将最终结果写入数据库
                     using (Transaction tr = _db.TransactionManager.StartTransaction())
                         {
                         var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
@@ -135,13 +141,11 @@ namespace CADTranslator.Services.CAD
                                 }
                             }
 
-                        // ▼▼▼ 【新增代码】创建一个列表来收集新生成的文字ID ▼▼▼
-                        var newTextIds = new List<ObjectId>();
+                        var newTextIds = new List<ObjectId>(); // 用于收集新文字ID以便添加下划线
 
                         for (int i = 0; i < jig.FinalLineInfo.Count; i++)
                             {
-                            // ... (这部分Jig结果处理和文字创建的逻辑完全不变) ...
-                            var (lineText, paraNeedsIndent, isFirstLineOfPara, currentParaIndex, linePosition) = jig.FinalLineInfo[i];
+                            var (lineText, paraNeedsIndent, isFirstLineOfPara, currentParaIndex, finalWcsPosition) = jig.FinalLineInfo[i];
                             var currentParaInfo = paragraphInfos[currentParaIndex];
                             string finalLineText = lineText;
 
@@ -149,7 +153,7 @@ namespace CADTranslator.Services.CAD
 
                             if (match.Success)
                                 {
-                                PlaceGraphicsAlongsideText(finalLineText, match, currentParaInfo, linePosition, jig, tr, modelSpace);
+                                PlaceGraphicsAlongsideText(finalLineText, match, currentParaInfo, finalWcsPosition, jig, tr, modelSpace);
                                 string matchedValue = match.Value;
                                 string corePlaceholder = AdvancedTextService.JigPlaceholder;
                                 string replacementString = matchedValue.Replace(corePlaceholder, new string(' ', currentParaInfo.OriginalSpaceCount));
@@ -165,46 +169,49 @@ namespace CADTranslator.Services.CAD
                                 newText.Height = currentParaInfo.Height;
                                 newText.WidthFactor = currentParaInfo.WidthFactor;
                                 newText.TextStyleId = currentParaInfo.TextStyleId;
+                                newText.Rotation = rotation; // 【核心修改】应用旋转角度
+                                newText.Oblique = currentParaInfo.Oblique;
+
                                 var originalHMode = currentParaInfo.HorizontalMode;
                                 var originalVMode = currentParaInfo.VerticalMode;
                                 newText.HorizontalMode = originalHMode;
                                 newText.VerticalMode = originalVMode;
+
+                                // 【核心修改】直接使用Jig返回的精确坐标
                                 if (originalHMode == TextHorizontalMode.TextLeft && originalVMode == TextVerticalMode.TextBase)
                                     {
-                                    newText.Position = linePosition;
+                                    newText.Position = finalWcsPosition;
                                     }
                                 else
                                     {
-                                    newText.AlignmentPoint = linePosition;
+                                    newText.AlignmentPoint = finalWcsPosition;
                                     }
+
                                 modelSpace.AppendEntity(newText);
                                 tr.AddNewlyCreatedDBObject(newText, true);
                                 newText.AdjustAlignment(_db);
 
-                                // ▼▼▼ 【新增代码】将新文字的ID添加到列表中 ▼▼▼
-                                newTextIds.Add(newText.ObjectId);
+                                newTextIds.Add(newText.ObjectId); // 收集新文字ID
                                 }
                             }
 
-                        // ▼▼▼ 【新增代码】在这里实装下划线功能 ▼▼▼
+                        // 【核心修改】在事务提交前，检查是否需要添加下划线
                         if (addUnderline && newTextIds.Any())
                             {
                             _editor.WriteMessage($"\n正在为新生成的 {newTextIds.Count} 个文本对象添加下划线...");
-                            var underlineService = new UnderlineService(_doc);
-                            var underlineOptions = new UnderlineOptions(); // 使用默认的标题/正文样式
 
-                            // 注意：这里我们不能直接调用 underlineService 的方法，因为它需要自己的事务。
-                            // 因此，我们先提交当前事务，然后再调用它。
-                            tr.Commit(); // 先提交文字创建
+                            // 先提交当前事务，以便UnderlineService能访问到新创建的文字
+                            tr.Commit();
 
                             // 在新的独立事务中添加下划线
+                            var underlineService = new UnderlineService(_doc);
+                            var underlineOptions = new UnderlineOptions();
                             underlineService.AddUnderlinesToObjectIds(newTextIds, underlineOptions);
                             }
                         else
                             {
-                            tr.Commit(); // 如果不需要添加下划线，正常提交即可
+                            tr.Commit(); // 如果不需要，正常提交即可
                             }
-
                         }
                     return true;
                     }

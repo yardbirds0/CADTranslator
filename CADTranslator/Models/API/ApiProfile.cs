@@ -12,7 +12,8 @@ namespace CADTranslator.Models.API
         Gemini,
         OpenAI,
         Custom,
-        SiliconFlow
+        SiliconFlow,
+        ChatAnywhere
         }
 
     public class ApiProfile : INotifyPropertyChanged

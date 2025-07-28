@@ -817,7 +817,7 @@ namespace CADTranslator.AutoCAD.Commands
                                     // 【重要】设置新一行的位置
                                     // 第一行的位置就是任务的当前位置
                                     // 后续行在此基础上，Y坐标向下偏移 (行高 * 1.5)
-                                    newText.Position = new Point3d(currentPosition.X, currentPosition.Y - (i * task.Height * 1.5), currentPosition.Z);
+                                    newText.Position = new Point3d(currentPosition.X, currentPosition.Y - (i * task.Height * 1.2) - task.Height, currentPosition.Z);
 
                                     // 继承图层、颜色等属性
                                     newText.SetPropertiesFrom(templateEntity);

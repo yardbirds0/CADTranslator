@@ -47,6 +47,7 @@ namespace CADTranslator.Services.Translation
             Register(new OpenAiTranslator(placeholder, "gpt-3.5-turbo"));
             Register(new CustomTranslator("http://placeholder.url/v1", placeholder, "custom-model"));
             Register(new SiliconFlowTranslator("https://api.siliconflow.cn/v1", placeholder, "deepseek-llm-7b-chat"));
+            Register(new ChatAnywhereTranslator("https://api.chatanywhere.tech", placeholder, "gpt-3.5-turbo"));
             }
 
         #endregion
@@ -99,6 +100,8 @@ namespace CADTranslator.Services.Translation
                     return new SiliconFlowTranslator(profile.ApiEndpoint, profile.ApiKey, profile.LastSelectedModel);
                 case ApiServiceType.Custom:
                     return new CustomTranslator(profile.ApiEndpoint, profile.ApiKey, profile.LastSelectedModel);
+                case ApiServiceType.ChatAnywhere:
+                    return new ChatAnywhereTranslator(profile.ApiEndpoint, profile.ApiKey, profile.LastSelectedModel);
                 default:
                     throw new NotSupportedException($"不支持的服务类型: {profile.ServiceType}");
                 }

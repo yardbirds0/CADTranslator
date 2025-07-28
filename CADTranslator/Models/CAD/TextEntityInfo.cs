@@ -9,5 +9,6 @@ namespace CADTranslator.Models.CAD
         public string Text { get; set; }
         public Point3d Position { get; set; }
         public double Height { get; set; }
-    }
+        public double Rotation { get; set; }
+        }
 }

@@ -304,7 +304,7 @@ namespace CADTranslator.Views
                 size = new Size(_draggedTask.Bounds.Width(), _draggedTask.Bounds.Height());
                 }
 
-            _draggedTask.CurrentUserPosition = new Point3d(newWorldTopLeft.X, newWorldTopLeft.Y - size.Height, 0);
+            _draggedTask.CurrentUserPosition = new Point3d(newWorldTopLeft.X, newWorldTopLeft.Y, 0);
             _draggedTask.IsManuallyMoved = true;
 
             var currentBounds = _draggedTask.GetTranslatedBounds(useUserPosition: true, accurateSize: size);
@@ -400,40 +400,40 @@ namespace CADTranslator.Views
             {
             if (sender is Thumb resizeThumb && VisualTreeHelper.GetParent(resizeThumb) is Grid containerGrid && containerGrid.DataContext is LayoutTask task)
                 {
-                task.IsManuallyMoved = true;
-                string finalWpfText = "";
+                // 步骤 1: 获取最终的WPF像素宽度
+                double finalWpfWidth = containerGrid.Width;
 
-                // 步骤 3.1: 获取WPF预览最终确定的文本内容
+                // 步骤 2: 创建一个从WPF像素到CAD图形单位的转换矩阵
+                var inverseTransform = _transformMatrix;
+                inverseTransform.Invert(); // Invert()会修改矩阵自身，现在它可以将WPF点转换为CAD点
+
+                // 步骤 3: 计算出新的最大宽度（in CAD units）
+                // 我们通过转换一个宽度向量来获得纯粹的缩放比例，避免位移影响
+                var cadWidthVector = inverseTransform.Transform(new Vector(finalWpfWidth, 0));
+                double newMaxWidthInCadUnits = cadWidthVector.Length;
+
+                // 步骤 4: 使用正确的CAD单位宽度，调用后台进行文本重排和精确测量
+                ReflowAndRemeasureTask(task, newMaxWidthInCadUnits);
+
+                // 步骤 5: 从缓存中获取最新的、精确的CAD尺寸
+                Size newAccurateCadSize = _translatedSizeCache[task.ObjectId];
+
+                // 步骤 6: 【核心修复】使用原始的、正向的变换矩阵，将精确的CAD尺寸转换回WPF像素尺寸，并更新UI
+                // 注意：我们不再使用已经Invert过的矩阵，而是用原始的_transformMatrix的属性
+                double scaleX = _transformMatrix.M11;
+                double scaleY = Math.Abs(_transformMatrix.M22); // Y轴是反的，取绝对值
+
+                containerGrid.Width = newAccurateCadSize.Width * scaleX;
+                containerGrid.Height = newAccurateCadSize.Height * scaleY;
+
+                // 步骤 7: 更新文本框中的换行，以匹配最终的计算结果
                 if (containerGrid.Children.OfType<Thumb>().FirstOrDefault(t => t.Name == "MoveThumb") is Thumb moveThumb && moveThumb.Template.FindName("ThumbBorder", moveThumb) is Border border)
                     {
                     if (border.Child is Viewbox viewbox && viewbox.Child is TextBlock textBlock)
                         {
-                        finalWpfText = textBlock.Text;
+                        textBlock.Text = task.TranslatedText; // task.TranslatedText 已在ReflowAndRemeasureTask中被更新
                         }
                     }
-
-                if (string.IsNullOrEmpty(finalWpfText)) return;
-
-                // 步骤 3.2: 将最终文本按行分割
-                var finalLines = finalWpfText.Split('\n').ToList();
-                task.TranslatedText = finalWpfText; // 更新数据模型
-
-                // 步骤 3.3: 在CAD后台，为每一行都生成一次“影子文本”，并获取它们的尺寸
-                using (var tr = _doc.TransactionManager.StartTransaction())
-                    {
-                    Size newAccurateSize = GetAccurateMultiLineSize(finalLines, task, tr);
-                    _translatedSizeCache[task.ObjectId] = newAccurateSize; // 更新尺寸缓存
-                    tr.Commit();
-                    }
-
-                // 步骤 4: 在WPF界面进行最后一次更新，刷新文本框的最终精确大小
-                var inverseTransform = _transformMatrix;
-                inverseTransform.Invert();
-                double scaleX = inverseTransform.M11;
-                double scaleY = Math.Abs(inverseTransform.M22); // Y轴是反的，取绝对值
-
-                containerGrid.Width = _translatedSizeCache[task.ObjectId].Width * scaleX;
-                containerGrid.Height = _translatedSizeCache[task.ObjectId].Height * scaleY;
                 }
             }
 
@@ -447,7 +447,7 @@ namespace CADTranslator.Views
                 var tokens = tokenizer.Matches(rawText).Cast<Match>().Select(m => m.Value).ToList();
 
                 // 步骤 1: 【逻辑不变】计算出文本应该被分成哪些行
-                var wrappedLines = SmartLayoutJig.GetWrappedLines(tokens, newMaxWidth, task.Height, task.WidthFactor, task.TextStyleId);
+                var wrappedLines = SmartLayoutJig.GetWrappedLines(tokens, newMaxWidth, newMaxWidth, task.Height, task.WidthFactor, task.TextStyleId);
                 string newWrappedText = string.Join("\n", wrappedLines);
 
                 // 更新Task的数据模型
@@ -487,6 +487,7 @@ namespace CADTranslator.Views
                 ReflowAndRemeasureTask(selectedTask, selectedTask.Bounds.Width());
                 _canvasInitialized = false; // 强制重绘
                 DrawLayout();
+                UpdateVisualStyles();
                 }
             }
 
@@ -921,7 +922,7 @@ namespace CADTranslator.Views
             // 这个值可以在后续优化，但目前已经能很好地反映高度变化。
             if (lines.Count > 0 && singleLineHeight > 0)
                 {
-                totalHeight = singleLineHeight * lines.Count + (singleLineHeight * 0.5) * (lines.Count - 1);
+                totalHeight = (singleLineHeight * 1.5 * (lines.Count - 1)) + singleLineHeight;
                 }
 
             return new Size(maxWidth, totalHeight);
@@ -1090,18 +1091,20 @@ public static class LayoutTaskExtensionsForView
     /// </summary>
     public static Extents3d GetTranslatedBounds(this LayoutTask task, bool useUserPosition = false, Size? accurateSize = null)
         {
-        Point3d? positionToUse = useUserPosition ? task.CurrentUserPosition : task.AlgorithmPosition;
+        // 这个方法现在接收的是“左上角”坐标
+        Point3d? topLeft = useUserPosition ? task.CurrentUserPosition : task.AlgorithmPosition;
 
-        if (!positionToUse.HasValue) return task.Bounds;
+        if (!topLeft.HasValue) return task.Bounds;
 
-        // 如果提供了精确尺寸，则使用它；否则回退到旧的估算方式
+        // 获取宽度和高度
         double width = accurateSize?.Width ?? task.Bounds.Width();
         double height = accurateSize?.Height ?? task.Bounds.Height();
 
-        return new Extents3d(
-            positionToUse.Value,
-            new Point3d(positionToUse.Value.X + width, positionToUse.Value.Y + height, 0)
-        );
+        // 【核心修正】根据“左上角”坐标，正确计算出Extents3d所需的“左下角”和“右上角”
+        Point3d minPoint = new Point3d(topLeft.Value.X, topLeft.Value.Y - height, topLeft.Value.Z); // 左下角
+        Point3d maxPoint = new Point3d(topLeft.Value.X + width, topLeft.Value.Y, topLeft.Value.Z);     // 右上角
+
+        return new Extents3d(minPoint, maxPoint);
         }
     }
 // ▲▲▲ 新增结束 ▲▲▲

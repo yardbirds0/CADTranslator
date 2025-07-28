@@ -50,14 +50,16 @@ namespace CADTranslator.Services.CAD
                         _editor.WriteMessage("\n选择的对象中未找到任何有效文字。");
                         return null;
                         }
+                    double dominantRotation = 0;
+                    if (textEntities.Any())
+                        {
+                        // 使用最上方（Y坐标最大）的文字作为基准来确定整体的旋转角度
+                        var topmostEntity = textEntities.OrderByDescending(e => e.Position.Y).First();
+                        dominantRotation = topmostEntity.Rotation;
+                        }
 
-                    List<TextBlock> rawTextBlocks = MergeRawText(textEntities, similarityThreshold);
-
-                    // ====================================================================
-                    // 【重要】从这里开始，是您原有的、完全未经修改的图例和Jig处理逻辑
-                    // 我只是将数据源从 `List<TextBlockViewModel>` 对接到了 `List<TextBlock>`
-                    // ====================================================================
-
+                    // 调用我们新的、需要rotation参数的MergeRawText方法
+                    List<TextBlock> rawTextBlocks = MergeRawText(textEntities, similarityThreshold, dominantRotation);
                     var paragraphInfos = new List<ParagraphInfo>();
                     string specialPattern = @"\s{3,}";
                     string placeholder = "*图例位置*";
@@ -214,7 +216,21 @@ namespace CADTranslator.Services.CAD
                     if (ppr.Status != PromptStatus.OK) { tr.Abort(); return null; }
                     Point3d basePoint = ppr.Value;
 
-                    var jig = new SmartLayoutJig(paragraphInfos, basePoint, lineSpacing);
+                    double rotation = 0;
+                    if (paragraphInfos.Any() && paragraphInfos[0].TemplateEntity != null)
+                        {
+                        var template = paragraphInfos[0].TemplateEntity;
+                        if (template is DBText dbText)
+                            {
+                            rotation = dbText.Rotation;
+                            }
+                        else if (template is MText mText)
+                            {
+                            rotation = mText.Rotation;
+                            }
+                        }
+
+                    var jig = new SmartLayoutJig(paragraphInfos, basePoint, lineSpacing, rotation);
                     var dragResult = _editor.Drag(jig);
                     if (dragResult.Status != PromptStatus.OK) { tr.Abort(); return null; }
 
@@ -233,33 +249,28 @@ namespace CADTranslator.Services.CAD
                         {
                         var lineInfo = jig.FinalLineInfo[i];
                         string lineText = lineInfo.Item1;
-                        bool paraNeedsIndent = lineInfo.Item2;
-                        bool isFirstLineOfPara = lineInfo.Item3;
                         int currentParaIndex = lineInfo.Item4;
+                        Point3d finalWcsPosition = lineInfo.Item5; // 【核心修正】直接使用Jig返回的精确WCS坐标
                         var currentParaInfo = paragraphInfos[currentParaIndex];
 
                         if (currentParaInfo.ContainsSpecialPattern && lineText.Contains(placeholder))
                             {
+                            // (这部分图例处理的代码逻辑是正确的，保持不变)
                             int placeholderIndex = lineText.IndexOf(placeholder);
                             string textBeforePlaceholderInLine = lineText.Substring(0, placeholderIndex);
 
-                            using (var tempText = new DBText { TextString = textBeforePlaceholderInLine, Height = currentParaInfo.Height, WidthFactor = currentParaInfo.WidthFactor, TextStyleId = currentParaInfo.TextStyleId })
+                            using (var tempText = new DBText { TextString = textBeforePlaceholderInLine, Height = currentParaInfo.Height, WidthFactor = currentParaInfo.WidthFactor, TextStyleId = currentParaInfo.TextStyleId, Rotation = jig.Rotation })
                                 {
-                                double yOffset = i * currentParaInfo.Height * 1.5;
-                                double xOffset = (paraNeedsIndent && !isFirstLineOfPara) ? jig.FinalIndent : 0;
-                                Point3d linePos = basePoint + new Vector3d(xOffset, -yOffset, 0);
-
                                 tempText.HorizontalMode = currentParaInfo.HorizontalMode;
-                                tempText.VerticalMode = unifiedVerticalMode;
+                                tempText.VerticalMode = currentParaInfo.VerticalMode;
                                 if (tempText.HorizontalMode != TextHorizontalMode.TextLeft || tempText.VerticalMode != TextVerticalMode.TextBase)
                                     {
-                                    tempText.AlignmentPoint = linePos;
+                                    tempText.AlignmentPoint = finalWcsPosition;
                                     }
                                 else
-                                    tempText.Position = linePos;
+                                    tempText.Position = finalWcsPosition;
                                 tempText.AdjustAlignment(_db);
 
-                                // 【已修正】修复了 modelSpace 的作用域问题
                                 var modelSpaceForJig = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
                                 modelSpaceForJig.AppendEntity(tempText);
                                 tr.AddNewlyCreatedDBObject(tempText, true);
@@ -302,26 +313,19 @@ namespace CADTranslator.Services.CAD
                             newText.Height = currentParaInfo.Height;
                             newText.WidthFactor = currentParaInfo.WidthFactor;
                             newText.TextStyleId = currentParaInfo.TextStyleId;
-
-                            double xOffset = 0;
-                            if (paraNeedsIndent && !isFirstLineOfPara)
-                                {
-                                xOffset = jig.FinalIndent;
-                                }
-
-                            double yOffset = i * currentParaInfo.Height * 1.5;
-                            Point3d linePosition = basePoint + new Vector3d(xOffset, -yOffset, 0);
+                            newText.Rotation = jig.Rotation; // 【核心修正】应用旋转角度
 
                             newText.HorizontalMode = currentParaInfo.HorizontalMode;
-                            newText.VerticalMode = unifiedVerticalMode;
+                            newText.VerticalMode = currentParaInfo.VerticalMode;
 
+                            // 【核心修正】使用Jig返回的最终坐标
                             if (newText.HorizontalMode != TextHorizontalMode.TextLeft || newText.VerticalMode != TextVerticalMode.TextBase)
                                 {
-                                newText.AlignmentPoint = linePosition;
+                                newText.AlignmentPoint = finalWcsPosition;
                                 }
                             else
                                 {
-                                newText.Position = linePosition;
+                                newText.Position = finalWcsPosition;
                                 }
 
                             modelSpace.AppendEntity(newText);
@@ -380,11 +384,13 @@ namespace CADTranslator.Services.CAD
                 if (ent == null) continue;
                 if (ent is DBText dbText)
                     {
-                    textEntities.Add(new TextEntityInfo { ObjectId = ent.ObjectId, Text = dbText.TextString, Position = dbText.Position, Height = dbText.Height });
+                    // 【核心修改】新增对Rotation属性的读取
+                    textEntities.Add(new TextEntityInfo { ObjectId = ent.ObjectId, Text = dbText.TextString, Position = dbText.Position, Height = dbText.Height, Rotation = dbText.Rotation });
                     }
                 else if (ent is MText mText)
                     {
-                    textEntities.Add(new TextEntityInfo { ObjectId = ent.ObjectId, Text = mText.Text, Position = mText.Location, Height = mText.TextHeight });
+                    // 【核心修改】新增对Rotation属性的读取
+                    textEntities.Add(new TextEntityInfo { ObjectId = ent.ObjectId, Text = mText.Text, Position = mText.Location, Height = mText.TextHeight, Rotation = mText.Rotation });
                     }
                 else
                     {
@@ -394,9 +400,17 @@ namespace CADTranslator.Services.CAD
             return (textEntities, graphicEntities);
             }
 
-        private List<TextBlock> MergeRawText(List<TextEntityInfo> textEntities, double similarityThreshold)
+        private List<TextBlock> MergeRawText(List<TextEntityInfo> textEntities, double similarityThreshold, double rotation)
             {
-            var sortedEntities = textEntities.OrderBy(e => -e.Position.Y).ThenBy(e => e.Position.X).ToList();
+            // 步骤 1: 创建一个从世界坐标系(WCS)到旋转后的用户坐标系(UCS)的变换矩阵
+            var wcsToUcs = Matrix3d.Rotation(-rotation, Vector3d.ZAxis, Point3d.Origin);
+
+            // 步骤 2: 【核心】在变换后的坐标系中进行排序，确保阅读顺序正确
+            var sortedEntities = textEntities
+                .OrderByDescending(e => e.Position.TransformBy(wcsToUcs).Y)
+                .ThenBy(e => e.Position.TransformBy(wcsToUcs).X)
+                .ToList();
+
             var textBlocks = new List<TextBlock>();
             if (sortedEntities.Count == 0) return textBlocks;
 
@@ -422,7 +436,11 @@ namespace CADTranslator.Services.CAD
 
                 var lastBlock = textBlocks.Last();
 
-                bool isTooFar = (prevEntity.Position.Y - currEntity.Position.Y) > (prevEntity.Height * 2.0);
+                // 步骤 3: 【核心】所有几何判断，都在变换后的坐标系中进行
+                var prevUcsPos = prevEntity.Position.TransformBy(wcsToUcs);
+                var currUcsPos = currEntity.Position.TransformBy(wcsToUcs);
+
+                bool isTooFar = (prevUcsPos.Y - currUcsPos.Y) > (prevEntity.Height * 2.0);
                 if (isTooFar)
                     {
                     textBlocks.Add(new TextBlock { Id = textBlocks.Count + 1, OriginalText = currentText, SourceObjectIds = { currEntity.ObjectId } });
@@ -454,7 +472,7 @@ namespace CADTranslator.Services.CAD
                 else
                     {
                     currentGroupKey = null;
-                    bool onSameLine = Math.Abs(prevEntity.Position.Y - currEntity.Position.Y) < (prevEntity.Height * 0.5);
+                    bool onSameLine = Math.Abs(prevUcsPos.Y - currUcsPos.Y) < (prevEntity.Height * 0.5);
                     string separator = onSameLine ? " " : "";
                     lastBlock.OriginalText += separator + currentText;
                     lastBlock.SourceObjectIds.Add(currEntity.ObjectId);

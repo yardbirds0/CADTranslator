@@ -204,6 +204,7 @@
     <Compile Include="Services\CAD\GeometryConverter.cs" />
     <Compile Include="Services\CAD\LayoutCalculator.cs" />
     <Compile Include="Services\CAD\SemanticAnalyzer.cs" />
+    <Compile Include="Services\Translation\ChatAnywhereTranslator.cs" />
     <Compile Include="Tools\Behaviors\EllipseProgressBehavior.cs" />
     <Compile Include="Tools\CAD\GeometryHelper.cs" />
     <Compile Include="Tools\CAD\Jigs\BreakLineJig.cs" />
@@ -245,10 +246,12 @@
     <Compile Include="Services\CAD\UnderlineService.cs" />
     <Compile Include="Services\UI\WindowService.cs" />
     <Compile Include="Tools\Controls\WaveProgressBar.cs" />
+    <Compile Include="Tools\Effects\GlowEffect.cs" />
     <Compile Include="Tools\UI\InverseBooleanConverter.cs" />
     <Compile Include="Tools\UI\PaneStateToGridLengthConverter.cs" />
     <Compile Include="Tools\UI\PasswordBoxHelper.cs" />
     <Compile Include="Tools\UI\ProgressConverter.cs" />
+    <Compile Include="Tools\UI\ProgressToGlowColorConverter.cs" />
     <Compile Include="ViewModels\ApiDefinitionViewModel.cs" />
     <Compile Include="ViewModels\BalanceHistoryViewModel.cs" />
     <Compile Include="ViewModels\ModelManagementViewModel.cs" />
@@ -286,6 +289,7 @@
   <ItemGroup>
     <None Include="app.config" />
     <None Include="packages.config" />
+    <Resource Include="Tools\Effects\Shaders\GlowEffect.ps" />
   </ItemGroup>
   <ItemGroup>
     <Analyzer Include="E:\Softwares\Work\AutoCad2020\AutoCAD 2020\accoremgd.dll" />

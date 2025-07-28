@@ -332,8 +332,8 @@ namespace CADTranslator.Services.CAD
                 {
                 var ent = tr.GetObject(selObj.ObjectId, OpenMode.ForRead) as Entity;
                 if (ent == null) continue;
-                if (ent is DBText dbText) textEntities.Add(new TextEntityInfo { ObjectId = ent.ObjectId, Text = dbText.TextString, Position = dbText.Position, Height = dbText.Height });
-                else if (ent is MText mText) textEntities.Add(new TextEntityInfo { ObjectId = ent.ObjectId, Text = mText.Text, Position = mText.Location, Height = mText.TextHeight });
+                if (ent is DBText dbText) textEntities.Add(new TextEntityInfo { ObjectId = ent.ObjectId, Text = dbText.TextString, Position = dbText.Position, Height = dbText.Height, Rotation = dbText.Rotation });
+                else if (ent is MText mText) textEntities.Add(new TextEntityInfo { ObjectId = ent.ObjectId, Text = mText.Text, Position = mText.Location, Height = mText.TextHeight, Rotation = mText.Rotation });
                 else graphicEntities.Add(ent);
                 }
             return (textEntities, graphicEntities);
@@ -341,7 +341,21 @@ namespace CADTranslator.Services.CAD
 
         private List<TextBlock> MergeRawText(List<TextEntityInfo> textEntities, double similarityThreshold)
             {
-            var sortedEntities = textEntities.OrderBy(e => -e.Position.Y).ThenBy(e => e.Position.X).ToList();
+            // 【核心修正】侦察主导旋转角度
+            double dominantRotation = 0;
+            if (textEntities.Any())
+                {
+                var topmostEntity = textEntities.OrderByDescending(e => e.Position.Y).First();
+                dominantRotation = topmostEntity.Rotation;
+                }
+
+            // 【核心修正】在旋转后的坐标系中进行排序
+            var wcsToUcs = Matrix3d.Rotation(-dominantRotation, Vector3d.ZAxis, Point3d.Origin);
+            var sortedEntities = textEntities
+                .OrderByDescending(e => e.Position.TransformBy(wcsToUcs).Y)
+                .ThenBy(e => e.Position.TransformBy(wcsToUcs).X)
+                .ToList();
+
             var textBlocks = new List<TextBlock>();
             if (sortedEntities.Count == 0) return textBlocks;
 
@@ -367,8 +381,11 @@ namespace CADTranslator.Services.CAD
 
                 var lastBlock = textBlocks.Last();
 
-                // 规则1: 物理距离过远 -> 强制分割
-                bool isTooFar = (prevEntity.Position.Y - currEntity.Position.Y) > (prevEntity.Height * 2.0);
+                // 【核心修正】所有几何判断，都在变换后的坐标系中进行
+                var prevUcsPos = prevEntity.Position.TransformBy(wcsToUcs);
+                var currUcsPos = currEntity.Position.TransformBy(wcsToUcs);
+
+                bool isTooFar = (prevUcsPos.Y - currUcsPos.Y) > (prevEntity.Height * 2.0);
                 if (isTooFar)
                     {
                     textBlocks.Add(new TextBlock { Id = textBlocks.Count + 1, OriginalText = currentText, SourceObjectIds = { currEntity.ObjectId } });
@@ -376,7 +393,6 @@ namespace CADTranslator.Services.CAD
                     continue;
                     }
 
-                // 规则2: 显式序号开头 -> 强制分割
                 bool startsNewParagraph = paragraphMarkers.IsMatch(currentText);
                 if (startsNewParagraph)
                     {
@@ -385,19 +401,11 @@ namespace CADTranslator.Services.CAD
                     continue;
                     }
 
-                // ▼▼▼ 【核心修改】智能判断逻辑升级为“双轨制” ▼▼▼
-                // 我们现在同时使用两种算法进行判断
-
-                // 算法1: 计算原始的莱文斯坦距离相似度
                 double levenshteinSimilarity = CalculateSimilarity(lastBlock.OriginalText, currentText);
-
-                // 算法2: 计算新的结构化相似度 (LCS)
                 double structuralSimilarity = CalculateStructuralSimilarity(lastBlock.OriginalText, currentText);
 
-                // 如果【任何一个】算法认为相似度足够高，就执行分割和分组
                 if (levenshteinSimilarity > similarityThreshold || structuralSimilarity > similarityThreshold)
                     {
-                    // 相似度高 -> 认为是并列项，进行分割和分组
                     if (currentGroupKey == null)
                         {
                         currentGroupKey = Guid.NewGuid().ToString();
@@ -408,14 +416,12 @@ namespace CADTranslator.Services.CAD
                     }
                 else
                     {
-                    // 两个算法都认为相似度低 -> 认为是普通换行，进行合并
                     currentGroupKey = null;
-                    bool onSameLine = Math.Abs(prevEntity.Position.Y - currEntity.Position.Y) < (prevEntity.Height * 0.5);
+                    bool onSameLine = Math.Abs(prevUcsPos.Y - currUcsPos.Y) < (prevEntity.Height * 0.5);
                     string separator = onSameLine ? " " : "";
                     lastBlock.OriginalText += separator + currentText;
                     lastBlock.SourceObjectIds.Add(currEntity.ObjectId);
                     }
-                // ▲▲▲ 修改结束 ▲▲▲
                 }
 
             return textBlocks;

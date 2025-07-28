@@ -70,8 +70,22 @@ namespace CADTranslator.Services.CAD
                     if (bestLayoutMap.TryGetValue(originalTask.ObjectId, out var bestResultTask))
                         {
                         originalTask.BestPosition = bestResultTask.BestPosition;
-                        originalTask.AlgorithmPosition = bestResultTask.BestPosition; // 算法原始位置
-                        originalTask.CurrentUserPosition = bestResultTask.BestPosition; // 用户当前位置（初始值）
+
+                        // ▼▼▼【核心修正】将计算出的“左下角”点位转换为“左上角”点位再存储 ▼▼▼
+                        if (bestResultTask.BestPosition.HasValue)
+                            {
+                            var bottomLeft = bestResultTask.BestPosition.Value;
+                            var height = originalTask.Bounds.Height(); // 获取原始文本的高度
+                            var topLeft = new Point3d(bottomLeft.X, bottomLeft.Y + height, bottomLeft.Z);
+                            originalTask.AlgorithmPosition = topLeft;
+                            originalTask.CurrentUserPosition = topLeft;
+                            }
+                        else
+                            {
+                            originalTask.AlgorithmPosition = null;
+                            originalTask.CurrentUserPosition = null;
+                            }
+                        // ▲▲▲ 修正结束 ▲▲▲
 
                         originalTask.FailureReason = bestResultTask.FailureReason;
                         originalTask.CollisionDetails = bestResultTask.CollisionDetails;

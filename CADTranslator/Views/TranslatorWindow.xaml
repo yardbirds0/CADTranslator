@@ -9,6 +9,7 @@
                  xmlns:interactivity="http://schemas.microsoft.com/xaml/behaviors"
                  xmlns:behaviors="clr-namespace:CADTranslator.Tools.Behaviors"
                  xmlns:controls="clr-namespace:CADTranslator.Tools.Controls"
+                 xmlns:effects="clr-namespace:CADTranslator.Tools.Effects"
                  mc:Ignorable="d"
                  d:DataContext="{d:DesignInstance Type=vm:TranslatorViewModel,IsDesignTimeCreatable=False}"
                  Title="CAD Translator Toolbox"
@@ -30,6 +31,7 @@
             <Tools:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
             <Tools:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter" />
             <Tools:ProgressConverter x:Key="ProgressConverter" />
+            <Tools:ProgressToGlowColorConverter x:Key="ProgressToGlowColorConverter" />
 
             <Style TargetType="{x:Type DataGridCell}"
                    BasedOn="{StaticResource {x:Type DataGridCell}}">
@@ -81,36 +83,7 @@
                         <ControlTemplate TargetType="{x:Type controls:WaveProgressBar}">
                             <Viewbox x:Name="Root"
                                      Stretch="Uniform">
-                                <Viewbox.Resources>
-                                    <Storyboard x:Key="ProgressStoryboard"
-                                                FillBehavior="HoldEnd"
-                                                Duration="0:0:1">
-                                        <PointAnimation Storyboard.TargetName="PART_LineSegment"
-                                                        Storyboard.TargetProperty="Point">
-                                            <PointAnimation.EasingFunction>
-                                                <BackEase Amplitude="0.5" />
-                                            </PointAnimation.EasingFunction>
-                                        </PointAnimation>
-                                        <PointAnimation Storyboard.TargetName="PART_BezierSegment"
-                                                        Storyboard.TargetProperty="Point1">
-                                            <PointAnimation.EasingFunction>
-                                                <BackEase Amplitude="1.5" />
-                                            </PointAnimation.EasingFunction>
-                                        </PointAnimation>
-                                        <PointAnimation Storyboard.TargetName="PART_BezierSegment"
-                                                        Storyboard.TargetProperty="Point2">
-                                            <PointAnimation.EasingFunction>
-                                                <BackEase Amplitude="0.1" />
-                                            </PointAnimation.EasingFunction>
-                                        </PointAnimation>
-                                        <PointAnimation Storyboard.TargetName="PART_BezierSegment"
-                                                        Storyboard.TargetProperty="Point3">
-                                            <PointAnimation.EasingFunction>
-                                                <BackEase Amplitude="0.5" />
-                                            </PointAnimation.EasingFunction>
-                                        </PointAnimation>
-                                    </Storyboard>
-                                </Viewbox.Resources>
+                                
                                 <Path Width="100"
                                       Height="100"
                                       Fill="{TemplateBinding Background}">
@@ -1005,8 +978,8 @@
                                                      RadiusX="75"
                                                      RadiusY="75" />
                                 </Grid.Clip>
-
-                                <controls:WaveProgressBar Progress="{Binding ProgressValue, Converter={StaticResource ProgressConverter}}" />
+                                <controls:WaveProgressBar x:Name="MyWaveProgressBar"
+                                                          Progress="{Binding ProgressValue, Converter={StaticResource ProgressConverter}}" />
                             </Grid>
 
                             <Ellipse Stroke="WhiteSmoke"
@@ -1019,7 +992,6 @@
                                                                        StartAngle="-150" />
                                 </interactivity:Interaction.Behaviors>
                             </Ellipse>
-
                             <Ellipse Margin="4"
                                      Stroke="LightBlue"
                                      StrokeDashCap="Round"
@@ -1033,12 +1005,34 @@
                                 </interactivity:Interaction.Behaviors>
                             </Ellipse>
 
-                            <TextBlock Text="{Binding ProgressValue, StringFormat={}{0}%}"
-                                       Foreground="#feffe4"
-                                       FontSize="30"
-                                       FontWeight="Bold"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center" />
+                            <Grid>
+                                <Grid>
+                                    <Grid.Effect>
+                                        <effects:GlowEffect Amount="8" />
+                                    </Grid.Effect>
+                                    <TextBlock Text="{Binding ElementName=MyWaveProgressBar, Path=DisplayedProgress, StringFormat={}{0:F0}%}"
+                                               FontSize="30"
+                                               FontWeight="Bold"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center">
+                                        <TextBlock.Foreground>
+                                            <Binding ElementName="MyWaveProgressBar"
+                                                     Path="Progress"
+                                                     Converter="{StaticResource ProgressToGlowColorConverter}" />
+                                        </TextBlock.Foreground>
+                                        <TextBlock.Effect>
+                                            <BlurEffect Radius="20"
+                                                        RenderingBias="Quality" />
+                                        </TextBlock.Effect>
+                                    </TextBlock>
+                                </Grid>
+                                <TextBlock Text="{Binding ElementName=MyWaveProgressBar, Path=DisplayedProgress, StringFormat={}{0:F0}%}"
+                                           Foreground="#ebfeff"
+                                           FontSize="30"
+                                           FontWeight="Bold"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                            </Grid>
                         </Grid>
                     </Grid>
 
