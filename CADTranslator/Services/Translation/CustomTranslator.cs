@@ -68,7 +68,7 @@ namespace CADTranslator.Services.Translation
         public bool IsModelFetchingSupported => false;
         public bool IsBalanceCheckSupported => false;
         public bool IsTokenCountSupported => false;
-
+        public bool IsBatchTranslationSupported => false;
         #endregion
 
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
@@ -133,6 +133,11 @@ namespace CADTranslator.Services.Translation
                 {
                 throw new ApiException(ApiErrorType.Unknown, ServiceType, $"调用自定义API({_endpoint})时发生未知异常: {ex.Message.Replace('\t', ' ')}");
                 }
+            }
+
+        public Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+            {
+            throw new NotSupportedException("自定义接口服务不支持批量翻译。");
             }
 
         public Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)

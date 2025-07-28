@@ -69,6 +69,7 @@ namespace CADTranslator.Services.Translation
         public bool IsModelFetchingSupported => true;
         public bool IsBalanceCheckSupported => true; // 文档中提供了用量查询接口
         public bool IsTokenCountSupported => false; // 文档中未提及
+        public bool IsBatchTranslationSupported => false;
 
         #endregion
 
@@ -129,6 +130,10 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
+        public Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+            {
+            throw new NotSupportedException("ChatAnywhere 服务不支持批量翻译。");
+            }
         public async Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {
             string modelListUrl = $"{_endpoint}/v1/models";

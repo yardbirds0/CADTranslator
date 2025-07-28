@@ -67,6 +67,8 @@ namespace CADTranslator.Services.CAD
             doc.Editor.WriteMessage($"\n[CADTranslator] {cleanMessage}\n");
             }
 
+
+
         /// <summary>
         /// 【新增】通过回车符(\r)覆盖当前命令行，用于实时更新状态。
         /// </summary>

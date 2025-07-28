@@ -44,6 +44,7 @@ namespace CADTranslator.Services.Translation
         public bool IsModelFetchingSupported => true;
         public bool IsBalanceCheckSupported => false;
         public bool IsTokenCountSupported => true;
+        public bool IsBatchTranslationSupported => false;
         #endregion
 
         #region --- 核心与扩展功能 (ITranslator 实现) ---
@@ -110,6 +111,11 @@ namespace CADTranslator.Services.Translation
                 throw new ApiException(ApiErrorType.ApiError, ServiceType, ex.Message);
                 }
             }
+        public Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+            {
+            throw new NotSupportedException("Gemini API 服务当前实现不支持批量翻译。");
+            }
+
 
         public async Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {

@@ -11,7 +11,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
-using System.Threading; // ◄◄◄ 【新增】引入 CancellationToken
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CADTranslator.Services.Translation
@@ -69,27 +69,46 @@ namespace CADTranslator.Services.Translation
         public bool IsModelFetchingSupported => true;
         public bool IsBalanceCheckSupported => true;
         public bool IsTokenCountSupported => false;
+        public bool IsBatchTranslationSupported => true; // 【新增】明确表示支持批量翻译
 
         #endregion
 
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
 
-        // ▼▼▼ 【方法重写】重写整个 TranslateAsync 方法以支持 CancellationToken ▼▼▼
-        public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+            {
+            // 单句翻译可以直接复用批量翻译的逻辑，只是列表里只有一个元素
+            return Task.Run(async () =>
+            {
+                var resultList = await TranslateBatchAsync(new List<string> { textToTranslate }, fromLanguage, toLanguage, cancellationToken);
+                return resultList.FirstOrDefault() ?? string.Empty;
+            });
+            }
+
+        // 【新增】实现新的批量翻译方法
+        public async Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
 
+            if (textsToTranslate == null || !textsToTranslate.Any())
+                return new List<string>();
+
             try
                 {
+                // 1. 构造JSON格式的输入
+                string textsAsJsonArray = JsonConvert.SerializeObject(textsToTranslate);
+                string prompt = $"You are a professional translator for Civil Engineering drawings. Your task is to translate a JSON array of strings from {fromLanguage} to {toLanguage}. Your response MUST be a JSON array of strings, with each string being the translation of the corresponding string in the input array. Maintain the same order. Do not add any extra explanations or content outside of the JSON array.\n\nInput JSON array:\n---\n{textsAsJsonArray}\n---";
+
                 var requestData = new
                     {
                     model = _model,
                     messages = new[]
                     {
-                        new { role = "system", content = $"你是一个专业的结构专业图纸翻译家。你的任务是把用户的文本从 {fromLanguage} 翻译成 {toLanguage}. 不要添加任何额外的解释，只返回翻译好的文本。遇到符号则保留原来的样式。" },
-                        new { role = "user", content = textToTranslate }
+                        new { role = "user", content = prompt }
                     },
+                    // 【核心】指定返回格式为 JSON 对象
+                    response_format = new { type = "json_object" },
                     stream = false
                     };
 
@@ -97,7 +116,6 @@ namespace CADTranslator.Services.Translation
                 var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
                 string requestUrl = $"{_endpoint}/chat/completions";
 
-                // 【核心修改】将 cancellationToken 传递给 PostAsync
                 var response = await _lazyHttpClient.Value.PostAsync(requestUrl, content, cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
@@ -108,16 +126,27 @@ namespace CADTranslator.Services.Translation
                 string jsonResponse = await response.Content.ReadAsStringAsync();
                 try
                     {
+                    // 2. 解析返回的JSON
                     var data = JObject.Parse(jsonResponse);
-                    var translatedText = data["choices"]?[0]?["message"]?["content"]?.ToString();
-                    if (translatedText == null)
+                    var responseContent = data["choices"]?[0]?["message"]?["content"]?.ToString();
+
+                    if (responseContent == null)
                         throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API响应中缺少有效的'content'字段。");
 
-                    return translatedText.Trim();
+                    // 3. 从返回内容中提取JSON数组
+                    // 模型有时会在JSON前后添加```json ... ```标记，我们需要移除它们
+                    var cleanedContent = responseContent.Trim().Trim('`').Replace("json", "").Trim();
+
+                    var translatedList = JsonConvert.DeserializeObject<List<string>>(cleanedContent);
+
+                    if (translatedList == null || translatedList.Count != textsToTranslate.Count)
+                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API返回的翻译结果数量 ({translatedList?.Count ?? 0}) 与原文数量 ({textsToTranslate.Count}) 不匹配。");
+
+                    return translatedList;
                     }
                 catch (JsonException ex)
                     {
-                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法解析API返回的成功响应: {ex.Message}");
+                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法将API返回的内容解析为JSON数组: {ex.Message}");
                     }
                 }
             catch (TaskCanceledException)
@@ -131,12 +160,13 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
+
         public async Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {
+            // (此方法代码保持不变)
             const string modelListUrl = "https://api.siliconflow.cn/v1/models";
             try
                 {
-                // 【核心修改】将 cancellationToken 传递给 GetAsync
                 var response = await _lazyHttpClient.Value.GetAsync(modelListUrl, cancellationToken);
                 if (!response.IsSuccessStatusCode)
                     {
@@ -158,9 +188,7 @@ namespace CADTranslator.Services.Translation
                 }
             catch (TaskCanceledException)
                 {
-                // 【核心修改】捕获取消异常，并检查是否是我们的令牌主动取消的
-                if (cancellationToken.IsCancellationRequested) throw; // 如果是，直接抛出，让ViewModel知道是超时
-                // 否则，认为是其他原因（比如HttpClient自己的超时）
+                if (cancellationToken.IsCancellationRequested) throw;
                 throw new ApiException(ApiErrorType.NetworkError, ServiceType, "获取模型列表请求超时。");
                 }
             catch (HttpRequestException ex)
@@ -171,10 +199,10 @@ namespace CADTranslator.Services.Translation
 
         public async Task<List<KeyValuePair<string, string>>> CheckBalanceAsync()
             {
+            // (此方法代码保持不变)
             const string userInfoUrl = "https://api.siliconflow.cn/v1/user/info";
             try
                 {
-                // 【核心修改】为 GetAsync 也传递一个 CancellationToken.None
                 var response = await _lazyHttpClient.Value.GetAsync(userInfoUrl, CancellationToken.None);
                 if (!response.IsSuccessStatusCode)
                     {
@@ -219,6 +247,7 @@ namespace CADTranslator.Services.Translation
 
         #region --- 私有辅助方法 ---
 
+        // (此方法代码保持不变)
         private async Task HandleApiError(HttpResponseMessage response)
             {
             string errorBody = await response.Content.ReadAsStringAsync();

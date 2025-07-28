@@ -77,6 +77,11 @@ namespace CADTranslator.Services.Translation
         /// </summary>
         bool IsTokenCountSupported { get; }
 
+        /// <summary>
+        /// 【新增】获取一个值，该值指示此服务是否支持JSON模式的批量翻译。
+        /// </summary>
+        bool IsBatchTranslationSupported { get; }
+
         #endregion
 
         #region --- 3. 核心与扩展功能 ---
@@ -89,6 +94,16 @@ namespace CADTranslator.Services.Translation
         /// <param name="toLanguage">目标语言代码</param>
         /// <returns>翻译后的文本</returns>
         Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// 【新增】(核心功能) 异步批量翻译多段文本。
+        /// </summary>
+        /// <param name="textsToTranslate">待翻译的文本列表</param>
+        /// <param name="fromLanguage">源语言代码</param>
+        /// <param name="toLanguage">目标语言代码</param>
+        /// <param name="cancellationToken">用于取消操作的令牌。</param>
+        /// <returns>一个与输入列表顺序对应的翻译结果列表。</returns>
+        Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken);
 
         /// <summary>
         /// (扩展功能) 异步获取此服务可用的模型列表。

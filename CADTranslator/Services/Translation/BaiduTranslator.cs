@@ -29,8 +29,6 @@ namespace CADTranslator.Services.Translation
 
         public BaiduTranslator(string appId, string appKey)
             {
-            // 在这里我们不检查AppID和AppKey是否为空，因为您有提供默认值。
-            // 真正的配置检查将在调用时进行，如果用户提供了空值则会失败。
             _appId = appId;
             _appKey = appKey;
             }
@@ -55,14 +53,15 @@ namespace CADTranslator.Services.Translation
         public bool IsModelFetchingSupported => false;
         public bool IsBalanceCheckSupported => false;
         public bool IsTokenCountSupported => false;
+        public bool IsBatchTranslationSupported => false; // 【新增】明确表示不支持批量翻译
 
         #endregion
 
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
 
-        public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken) // ◄◄◄ 【新增】cancellationToken 参数
+        public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
-            // 1. 配置检查
+            // (此方法代码保持不变)
             if (string.IsNullOrWhiteSpace(_appId) || string.IsNullOrWhiteSpace(_appKey))
                 {
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "App ID 或 App Key 不能为空。");
@@ -95,24 +94,19 @@ namespace CADTranslator.Services.Translation
 
                 string fullUrl = $"{baseUrl}?{queryString}";
 
-                // 2. 发起API请求并处理响应
-                // ▼▼▼ 【核心修改】将 cancellationToken 传递给 GetAsync 方法 ▼▼▼
                 var response = await _httpClient.GetAsync(fullUrl, cancellationToken);
 
-                // 当任务被取消时，上面的调用会抛出 TaskCanceledException，并被下面的catch块捕获
                 response.EnsureSuccessStatusCode();
 
                 string jsonResponse = await response.Content.ReadAsStringAsync();
                 var result = JsonConvert.DeserializeObject<BaiduTranslationResult>(jsonResponse);
 
-                // 3. 处理API返回的业务错误
                 if (!string.IsNullOrEmpty(result?.ErrorCode))
                     {
                     string friendlyMessage = $"错误码: {result.ErrorCode}, {result.ErrorMessage?.Replace('\t', ' ')}";
                     throw new ApiException(ApiErrorType.ApiError, ServiceType, friendlyMessage, response.StatusCode, result.ErrorCode);
                     }
 
-                // 4. 处理成功的响应
                 if (result?.TransResult != null && result.TransResult.Any())
                     {
                     var translatedText = new StringBuilder();
@@ -123,19 +117,14 @@ namespace CADTranslator.Services.Translation
                     return translatedText.ToString();
                     }
 
-                // 5. 处理未知的成功响应格式
                 throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API未返回有效或可解析的结果。");
-
                 }
-            // 6. 捕获网络层面的异常
-            catch (TaskCanceledException) // ◄◄◄ 这个catch块现在也会捕获由cancellationToken引发的取消
+            catch (TaskCanceledException)
                 {
-                // 检查是不是由我们的令牌主动取消的
                 if (cancellationToken.IsCancellationRequested)
                     {
-                    throw; // 如果是，直接重新抛出，让ViewModel知道是主动取消
+                    throw;
                     }
-                // 否则，认为是普通的网络超时
                 throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求超时。请检查您的网络连接或VPN设置。");
                 }
             catch (HttpRequestException ex)
@@ -148,15 +137,21 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
+        // 【新增】实现新的批量翻译方法
+        public Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+            {
+            // 因为不支持，所以直接抛出 NotSupportedException 异常
+            throw new NotSupportedException("百度翻译服务不支持批量翻译。");
+            }
+
+
         public Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {
-            // 因为不支持，所以抛出异常
             throw new NotSupportedException("百度翻译服务不支持获取模型列表。");
             }
 
         public Task<List<KeyValuePair<string, string>>> CheckBalanceAsync()
             {
-            // 因为不支持，所以抛出异常
             throw new NotSupportedException("百度翻译服务不支持查询余额。");
             }
 
@@ -169,6 +164,7 @@ namespace CADTranslator.Services.Translation
 
         #region --- 私有辅助方法 ---
 
+        // (这部分代码保持不变)
         private string GenerateSign(string query, string salt)
             {
             string str = _appId + query + salt + _appKey;

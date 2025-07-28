@@ -55,6 +55,7 @@ namespace CADTranslator.Services.Translation
         public bool IsModelFetchingSupported => false;
         public bool IsBalanceCheckSupported => false;
         public bool IsTokenCountSupported => false;
+        public bool IsBatchTranslationSupported => false;
 
         #endregion
 
@@ -119,6 +120,11 @@ namespace CADTranslator.Services.Translation
                 // 其他所有情况，都视为API接口错误
                 throw new ApiException(ApiErrorType.ApiError, ServiceType, ex.Message);
                 }
+            }
+
+        public Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+            {
+            throw new NotSupportedException("当前OpenAI集成不支持批量翻译。");
             }
         public Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {
