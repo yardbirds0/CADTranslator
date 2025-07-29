@@ -1,6 +1,4 @@
-﻿// 文件路径: CADTranslator/Services/CadLayoutService.cs
-
-using Autodesk.AutoCAD.ApplicationServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
@@ -45,71 +43,72 @@ namespace CADTranslator.Services.CAD
             bool addUnderline = currentSettings.AddUnderlineAfterSmartLayout;
 
             var paragraphInfos = new List<ParagraphInfo>();
-
-            // 步骤 1: 准备Jig所需的数据 (现在会完整地传递所有几何信息)
-            using (var tr = _db.TransactionManager.StartTransaction())
+            try // ◄◄◄ 1. 在最外层包裹 try
                 {
-                foreach (var block in textBlockList)
+
+                // 步骤 1: 准备Jig所需的数据 (现在会完整地传递所有几何信息)
+                using (var tr = _db.TransactionManager.StartTransaction())
                     {
-                    if (string.IsNullOrWhiteSpace(block.TranslatedText) || block.TranslatedText.StartsWith("[")) continue;
-                    Entity templateEntity = null;
-                    foreach (var id in block.SourceObjectIds)
+                    foreach (var block in textBlockList)
                         {
-                        if (id.IsNull || id.IsErased) continue;
-                        var entity = tr.GetObject(id, OpenMode.ForRead);
-                        if (entity is DBText || entity is MText)
+                        if (string.IsNullOrWhiteSpace(block.TranslatedText) || block.TranslatedText.StartsWith("[")) continue;
+                        Entity templateEntity = null;
+                        foreach (var id in block.SourceObjectIds)
                             {
-                            templateEntity = entity as Entity;
-                            break;
+                            if (id.IsNull || id.IsErased) continue;
+                            var entity = tr.GetObject(id, OpenMode.ForRead);
+                            if (entity is DBText || entity is MText)
+                                {
+                                templateEntity = entity as Entity;
+                                break;
+                                }
                             }
-                        }
-                    if (templateEntity == null) continue;
+                        if (templateEntity == null) continue;
 
-                    var pInfo = new ParagraphInfo
-                        {
-                        Text = block.TranslatedText,
-                        TemplateEntity = templateEntity,
-                        AssociatedGraphicsBlockId = block.AssociatedGraphicsBlockId,
-                        OriginalAnchorPoint = block.OriginalAnchorPoint,
-                        OriginalSpaceCount = block.OriginalSpaceCount,
-                        Position = block.Position,
-                        AlignmentPoint = block.AlignmentPoint,
-                        HorizontalMode = block.HorizontalMode,
-                        VerticalMode = block.VerticalMode,
-                        SourceObjectIds = block.SourceObjectIds.ToList(),
-                        GroupKey = block.GroupKey,
-                        Rotation = block.Rotation, // 传递旋转角度
-                        Oblique = block.Oblique
-                        };
+                        var pInfo = new ParagraphInfo
+                            {
+                            Text = block.TranslatedText,
+                            TemplateEntity = templateEntity,
+                            AssociatedGraphicsBlockId = block.AssociatedGraphicsBlockId,
+                            OriginalAnchorPoint = block.OriginalAnchorPoint,
+                            OriginalSpaceCount = block.OriginalSpaceCount,
+                            Position = block.Position,
+                            AlignmentPoint = block.AlignmentPoint,
+                            HorizontalMode = block.HorizontalMode,
+                            VerticalMode = block.VerticalMode,
+                            SourceObjectIds = block.SourceObjectIds.ToList(),
+                            GroupKey = block.GroupKey,
+                            Rotation = block.Rotation, // 传递旋转角度
+                            Oblique = block.Oblique
+                            };
 
-                    if (templateEntity is DBText dbText)
-                        {
-                        pInfo.Height = dbText.Height;
-                        pInfo.WidthFactor = dbText.WidthFactor;
-                        pInfo.TextStyleId = dbText.TextStyleId;
-                        }
-                    else if (templateEntity is MText mText)
-                        {
-                        pInfo.Height = mText.TextHeight;
-                        pInfo.WidthFactor = 1.0;
-                        pInfo.TextStyleId = mText.TextStyleId;
-                        }
-                    pInfo.Height = (pInfo.Height <= 0) ? 2.5 : pInfo.Height;
+                        if (templateEntity is DBText dbText)
+                            {
+                            pInfo.Height = dbText.Height;
+                            pInfo.WidthFactor = dbText.WidthFactor;
+                            pInfo.TextStyleId = dbText.TextStyleId;
+                            }
+                        else if (templateEntity is MText mText)
+                            {
+                            pInfo.Height = mText.TextHeight;
+                            pInfo.WidthFactor = 1.0;
+                            pInfo.TextStyleId = mText.TextStyleId;
+                            }
+                        pInfo.Height = (pInfo.Height <= 0) ? 2.5 : pInfo.Height;
 
-                    paragraphInfos.Add(pInfo);
+                        paragraphInfos.Add(pInfo);
+                        }
+                    tr.Abort();
                     }
-                tr.Abort();
-                }
 
-            if (paragraphInfos.Count == 0)
-                {
-                _editor.WriteMessage("\n没有有效的翻译文本可供排版。");
-                return true;
-                }
+                if (paragraphInfos.Count == 0)
+                    {
+                    _editor.WriteMessage("\n没有有效的翻译文本可供排版。");
+                    return true;
+                    }
 
-            // 步骤 2: 开始交互式排版
-            try
-                {
+
+                // 步骤 2: 开始交互式排版
                 using (_doc.LockDocument())
                     {
                     var ppr = _editor.GetPoint("\n请为翻译后的段落指定左上角基点:");
@@ -130,8 +129,8 @@ namespace CADTranslator.Services.CAD
                     // 步骤 3: 用户确认后，将最终结果写入数据库
                     using (Transaction tr = _db.TransactionManager.StartTransaction())
                         {
+                        var objectsToUnderline = new Dictionary<ObjectId, bool>();
                         var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
-
                         foreach (var id in idsToDelete)
                             {
                             if (!id.IsErased)
@@ -192,37 +191,36 @@ namespace CADTranslator.Services.CAD
                                 tr.AddNewlyCreatedDBObject(newText, true);
                                 newText.AdjustAlignment(_db);
 
-                                newTextIds.Add(newText.ObjectId); // 收集新文字ID
+                                objectsToUnderline.Add(newText.ObjectId, currentParaInfo.IsTitle);
                                 }
                             }
 
                         // 【核心修改】在事务提交前，检查是否需要添加下划线
-                        if (addUnderline && newTextIds.Any())
+                        if (addUnderline && objectsToUnderline.Any())
                             {
-                            _editor.WriteMessage($"\n正在为新生成的 {newTextIds.Count} 个文本对象添加下划线...");
+                            _editor.WriteMessage($"\n正在为新生成的 {objectsToUnderline.Count} 个文本对象添加下划线...");
 
-                            // 先提交当前事务，以便UnderlineService能访问到新创建的文字
-                            tr.Commit();
+                            tr.Commit(); // 先提交，让下划线服务能访问到新对象
 
-                            // 在新的独立事务中添加下划线
                             var underlineService = new UnderlineService(_doc);
                             var underlineOptions = new UnderlineOptions();
-                            underlineService.AddUnderlinesToObjectIds(newTextIds, underlineOptions);
+                            underlineService.AddUnderlinesToObjectIds(objectsToUnderline, underlineOptions); // <-- 传递指令字典
                             }
                         else
                             {
-                            tr.Commit(); // 如果不需要，正常提交即可
+                            tr.Commit();
                             }
                         }
                     return true;
                     }
                 }
-            catch (System.Exception ex)
+            catch (System.Exception ex) // ◄◄◄ 2. 捕获所有可能的异常
                 {
-                _editor.WriteMessage($"\n[CadLayoutService] 应用智能排版时发生错误: {ex.Message}\n{ex.StackTrace}");
+                _editor.WriteMessage($"\n[CadLayoutService] 应用智能排版时发生严重错误: {ex.Message}\n{ex.StackTrace}");
                 return false;
                 }
             }
+
 
         private void PlaceGraphicsAlongsideText(string lineText, System.Text.RegularExpressions.Match placeholderMatch, ParagraphInfo paraInfo, Point3d lineBasePoint, SmartLayoutJig jig, Transaction tr, BlockTableRecord modelSpace)
             {
@@ -260,24 +258,26 @@ namespace CADTranslator.Services.CAD
 
             Vector3d displacement = newAnchorPoint - paraInfo.OriginalAnchorPoint;
             Matrix3d transformMatrix = Matrix3d.Displacement(displacement);
-
-            using (var blockRef = new BlockReference(paraInfo.OriginalAnchorPoint, paraInfo.AssociatedGraphicsBlockId))
+            if (!paraInfo.AssociatedGraphicsBlockId.IsNull)
                 {
-                blockRef.TransformBy(transformMatrix);
-                modelSpace.AppendEntity(blockRef);
-                tr.AddNewlyCreatedDBObject(blockRef, true);
-
-                DBObjectCollection explodedObjects = new DBObjectCollection();
-                blockRef.Explode(explodedObjects);
-                foreach (DBObject obj in explodedObjects)
+                using (var blockRef = new BlockReference(paraInfo.OriginalAnchorPoint, paraInfo.AssociatedGraphicsBlockId))
                     {
-                    if (obj is Entity explodedEntity)
+                    blockRef.TransformBy(transformMatrix);
+                    modelSpace.AppendEntity(blockRef);
+                    tr.AddNewlyCreatedDBObject(blockRef, true);
+
+                    DBObjectCollection explodedObjects = new DBObjectCollection();
+                    blockRef.Explode(explodedObjects);
+                    foreach (DBObject obj in explodedObjects)
                         {
-                        modelSpace.AppendEntity(explodedEntity);
-                        tr.AddNewlyCreatedDBObject(explodedEntity, true);
+                        if (obj is Entity explodedEntity)
+                            {
+                            modelSpace.AppendEntity(explodedEntity);
+                            tr.AddNewlyCreatedDBObject(explodedEntity, true);
+                            }
                         }
+                    blockRef.Erase();
                     }
-                blockRef.Erase();
                 }
             }
 

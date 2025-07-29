@@ -364,7 +364,7 @@ namespace CADTranslator.Services.CAD
 
             var firstEntity = sortedEntities.First();
             var firstBlock = new TextBlock { Id = 1, OriginalText = firstEntity.Text.Trim(), SourceObjectIds = { firstEntity.ObjectId } };
-            if (titleMarkers.IsMatch(firstBlock.OriginalText))
+            if (titleMarkers.IsMatch(firstBlock.OriginalText) && !paragraphMarkers.IsMatch(firstBlock.OriginalText))
                 {
                 firstBlock.IsTitle = true;
                 }

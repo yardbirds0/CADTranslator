@@ -78,6 +78,16 @@ namespace CADTranslator.Services.Translation
         bool IsTokenCountSupported { get; }
 
         /// <summary>
+        /// 【新增】获取一个值，该值指示此服务是否支持本地Token计算。
+        /// </summary>
+        bool IsLocalTokenCountSupported { get; } // <-- 在这里添加新属性
+
+        /// <summary>
+        /// 【新增】获取此API服务的计费方式。
+        /// </summary>
+        BillingUnit UnitType { get; } // <-- 在这里添加新属性
+
+        /// <summary>
         /// 【新增】获取一个值，该值指示此服务是否支持JSON模式的批量翻译。
         /// </summary>
         bool IsBatchTranslationSupported { get; }
@@ -93,7 +103,8 @@ namespace CADTranslator.Services.Translation
         /// <param name="fromLanguage">源语言代码</param>
         /// <param name="toLanguage">目标语言代码</param>
         /// <returns>翻译后的文本</returns>
-        Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken);
+        Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken); // <-- 修改返回类型
+
 
         /// <summary>
         /// 【新增】(核心功能) 异步批量翻译多段文本。
@@ -103,7 +114,7 @@ namespace CADTranslator.Services.Translation
         /// <param name="toLanguage">目标语言代码</param>
         /// <param name="cancellationToken">用于取消操作的令牌。</param>
         /// <returns>一个与输入列表顺序对应的翻译结果列表。</returns>
-        Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken);
+        Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken); // <-- 修改返回类型
 
         /// <summary>
         /// (扩展功能) 异步获取此服务可用的模型列表。
@@ -126,7 +137,7 @@ namespace CADTranslator.Services.Translation
         /// </summary>
         /// <param name="textToCount">需要计算的文本。</param>
         /// <returns>一个包含Token数量的整数。</returns>
-        Task<int> CountTokensAsync(string textToCount);
+        Task<int> CountTokensAsync(string textToCount, CancellationToken cancellationToken); // <-- 在这里增加参数
 
         #endregion
         }

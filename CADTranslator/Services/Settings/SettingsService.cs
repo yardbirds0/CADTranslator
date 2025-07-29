@@ -48,6 +48,8 @@ namespace CADTranslator.Services.Settings
         public string CustomPrompt { get; set; } = "你是一个专业的结构专业图纸翻译家。你的任务是把用户的文本从 {fromLanguage} 翻译成 {toLanguage}. 不要添加任何额外的解释，只返回翻译好的文本。遇到符号则保留原来的样式。";
         public PromptSendingMode SendingMode { get; set; } = PromptSendingMode.Once;
         public bool TestModeUsesTranslation { get; set; } = false;
+        public int MaxCharsPerBatch { get; set; } = 2000;
+        public int MaxTokensPerBatch { get; set; } = 4000;
 
         // API相关的设置
         public ApiServiceType LastSelectedApiService { get; set; } = ApiServiceType.Baidu;

@@ -1,5 +1,5 @@
 ﻿// 文件路径: CADTranslator/Services/CAD/UnderlineService.cs
-// 【请用此代码完整替换】
+// 【完整文件替换 - 最终修正版】
 
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -9,7 +9,7 @@ using CADTranslator.Models.CAD;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions; // ◄◄◄ 【新增】引入正则表达式库
+using System.Text.RegularExpressions;
 
 namespace CADTranslator.Services.CAD
     {
@@ -25,8 +25,9 @@ namespace CADTranslator.Services.CAD
         private readonly Database _db;
         private readonly Editor _editor;
 
-        // 【新增】用于识别标题的正则表达式，与AdvancedTextService保持一致
+        // 这两个正则表达式现在专供交互式命令(WZXHX)使用
         private readonly Regex _titleMarkers = new Regex(@"(说明|注意|技术要求|参数|示例|NOTES|SPECIFICATION|LEGEND|DESCRIPTION)[\s:：]*$|:$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private readonly Regex _paragraphMarkers = new Regex(@"^\s*(?:[<(（【〔](?:\d+|[a-zA-Z])[>)）】〕]|\d+[、.]|[\u25A0\u25CF\u25B2\u25B6]|[a-zA-Z][、.])");
 
         public UnderlineService(Document doc)
             {
@@ -39,71 +40,79 @@ namespace CADTranslator.Services.CAD
 
         #region --- 1. 交互式入口 (供 WZXHX 命令调用) ---
 
-        /// <summary>
-        /// 【保持不变】这是给用户直接使用的 WZXHX 命令的入口。
-        /// 它会提示用户去选择对象。
-        /// </summary>
         public void AddUnderlinesToSelectedText(UnderlineOptions options)
             {
             var selRes = _editor.GetSelection();
             if (selRes.Status != PromptStatus.OK) return;
 
-            // 调用核心的执行逻辑
+            // 调用为 SelectionSet 设计的重载方法
             ExecuteUnderlining(selRes.Value, options);
             }
 
         #endregion
 
-        #region --- 2. 自动化入口 (供 WZPB 命令调用) ---
+        #region --- 2. 自动化入口 (供 WZPB 等命令调用) ---
 
-        /// <summary>
-        /// 【保持不变】这是给其他命令自动化调用的入口。
-        /// </summary>
-        public void AddUnderlinesToObjectIds(List<ObjectId> objectIds, UnderlineOptions options)
+        public void AddUnderlinesToObjectIds(Dictionary<ObjectId, bool> objectsToUnderline, UnderlineOptions options)
             {
-            if (objectIds == null || !objectIds.Any()) return;
+            if (objectsToUnderline == null || !objectsToUnderline.Any()) return;
 
-            var selSet = SelectionSet.FromObjectIds(objectIds.ToArray());
-
-            // 调用核心的执行逻辑
-            ExecuteUnderlining(selSet, options);
+            // 调用为 Dictionary 设计的重载方法
+            ExecuteUnderlining(objectsToUnderline, options);
             }
 
         #endregion
 
-        // 文件路径: CADTranslator/Services/CAD/UnderlineService.cs
+        #region --- 3. 核心执行逻辑 (重载) ---
 
-        #region --- 3. 核心执行逻辑 (ExecuteUnderlining) ---
-
+        /// <summary>
+        /// 【新增重载】为交互式命令 WZXHX 服务。
+        /// 它会自己进行标题判断。
+        /// </summary>
         private void ExecuteUnderlining(SelectionSet selSet, UnderlineOptions options)
             {
+            var objectsToUnderline = new Dictionary<ObjectId, bool>();
+            using (var tr = _db.TransactionManager.StartTransaction())
+                {
+                foreach (SelectedObject selObj in selSet)
+                    {
+                    var ent = tr.GetObject(selObj.ObjectId, OpenMode.ForRead) as Entity;
+                    if (ent is DBText || ent is MText)
+                        {
+                        string textContent = GetTextFromEntity(ent);
+                        bool isTitle = _titleMarkers.IsMatch(textContent.Trim()) && !_paragraphMarkers.IsMatch(textContent.Trim());
+                        objectsToUnderline.Add(selObj.ObjectId, isTitle);
+                        }
+                    }
+                tr.Commit();
+                }
+
+            // 调用核心实现
+            if (objectsToUnderline.Any())
+                {
+                ExecuteUnderlining(objectsToUnderline, options);
+                }
+            }
+
+        /// <summary>
+        /// 【核心实现】为自动化流程服务。
+        /// 它直接使用外部传入的标题判断结果。
+        /// </summary>
+        private void ExecuteUnderlining(Dictionary<ObjectId, bool> objectsToUnderline, UnderlineOptions options)
+            {
+            if (objectsToUnderline == null || !objectsToUnderline.Any()) return;
+
             using (var tr = _db.TransactionManager.StartTransaction())
                 {
                 try
                     {
+                    var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
+
                     EnsureLayerAndLinetype(tr, options.TitleStyle);
                     EnsureLayerAndLinetype(tr, options.DefaultStyle);
 
-                    var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(_db), OpenMode.ForWrite);
-
-                    var textEntities = new List<Entity>();
-                    foreach (SelectedObject selObj in selSet)
-                        {
-                        var ent = tr.GetObject(selObj.ObjectId, OpenMode.ForRead) as Entity;
-                        if (ent is DBText || ent is MText)
-                            {
-                            textEntities.Add(ent);
-                            }
-                        }
-
-                    if (textEntities.Count == 0)
-                        {
-                        if (_editor.IsQuiescent) _editor.WriteMessage("\n选择的对象中未找到任何有效文字。");
-                        return;
-                        }
-
-                    // 步骤 1: 只针对“非标题”的普通行，计算最大宽度和最左对齐点
-                    var nonTitleEntities = textEntities.Where(ent => !_titleMarkers.IsMatch(GetTextFromEntity(ent).Trim())).ToList();
+                    var nonTitleIds = objectsToUnderline.Where(kvp => !kvp.Value).Select(kvp => kvp.Key).ToList();
+                    var nonTitleEntities = nonTitleIds.Select(id => tr.GetObject(id, OpenMode.ForRead) as Entity).Where(e => e != null).ToList();
 
                     double maxWidth = 0;
                     if (nonTitleEntities.Any())
@@ -122,7 +131,9 @@ namespace CADTranslator.Services.CAD
                                         tempText.Justify = AttachmentPoint.BaseLeft;
                                         }
                                     var extents = tempText.GeometricExtents;
+                                    // ▼▼▼ 错误修复点 ▼▼▼
                                     if (extents != null) currentWidth = extents.MaxPoint.X - extents.MinPoint.X;
+                                    // ▲▲▲ 错误修复点 ▲▲▲
                                     }
                                 }
                             else if (ent is MText mText)
@@ -137,8 +148,9 @@ namespace CADTranslator.Services.CAD
                     double dominantRotation = 0;
                     if (nonTitleEntities.Any())
                         {
-                        if (nonTitleEntities.FirstOrDefault() is DBText firstDbText) dominantRotation = firstDbText.Rotation;
-                        else if (nonTitleEntities.FirstOrDefault() is MText firstMText) dominantRotation = firstMText.Rotation;
+                        var firstEntity = nonTitleEntities.First();
+                        if (firstEntity is DBText firstDbText) dominantRotation = firstDbText.Rotation;
+                        else if (firstEntity is MText firstMText) dominantRotation = firstMText.Rotation;
 
                         Matrix3d wcsToUcs = Matrix3d.Rotation(-dominantRotation, Vector3d.ZAxis, Point3d.Origin);
                         foreach (var ent in nonTitleEntities)
@@ -149,30 +161,29 @@ namespace CADTranslator.Services.CAD
                             }
                         }
 
-                    // 步骤 2: 遍历所有行，根据是否为标题，应用不同逻辑
                     int linesUnderlined = 0;
-                    foreach (var ent in textEntities)
+                    foreach (var pair in objectsToUnderline)
                         {
+                        var ent = tr.GetObject(pair.Key, OpenMode.ForRead) as Entity;
+                        if (ent == null) continue;
+
                         double rotation = 0, height = 0, unrotatedWidth = 0;
-                        string textContent = "";
                         Point3d originalInsertionPoint = Point3d.Origin;
 
                         if (ent is DBText dbText)
                             {
                             rotation = dbText.Rotation;
                             height = dbText.Height;
-                            textContent = dbText.TextString;
                             originalInsertionPoint = dbText.Position;
                             }
                         else if (ent is MText mText)
                             {
                             rotation = mText.Rotation;
                             height = mText.TextHeight;
-                            textContent = mText.Text;
                             originalInsertionPoint = mText.Location;
                             }
 
-                        bool isTitle = _titleMarkers.IsMatch(textContent.Trim());
+                        bool isTitle = pair.Value;
                         UnderlineStyle styleToUse = isTitle ? options.TitleStyle : options.DefaultStyle;
 
                         double verticalOffset = isTitle ? -(height / 4.0) : options.VerticalOffset;
@@ -184,8 +195,6 @@ namespace CADTranslator.Services.CAD
 
                         if (isTitle)
                             {
-                            // --- 标题逻辑：使用自身宽度和位置 ---
-                            // 【核心修正】不再重新声明变量，而是直接使用克隆体来计算宽度
                             using (var tempClone = (Entity)ent.Clone())
                                 {
                                 if (tempClone is DBText tempDb)
@@ -205,7 +214,6 @@ namespace CADTranslator.Services.CAD
                             }
                         else
                             {
-                            // --- 正文逻辑：使用最大宽度和最左对齐点 ---
                             Matrix3d wcsToUcs = Matrix3d.Rotation(-dominantRotation, Vector3d.ZAxis, Point3d.Origin);
                             Point3d originalInsertionPointUcs = originalInsertionPoint.TransformBy(wcsToUcs);
                             Point3d alignedInsertionPointUcs = new Point3d(minUcsX, originalInsertionPointUcs.Y, originalInsertionPointUcs.Z);
@@ -218,7 +226,6 @@ namespace CADTranslator.Services.CAD
                             endPointWcs = startPointWcs + rotatedBaseline;
                             }
 
-                        // ... (创建Polyline或Line的部分保持不变) ...
                         if (isTitle)
                             {
                             using (var underline = new Polyline())
@@ -266,26 +273,20 @@ namespace CADTranslator.Services.CAD
 
         #region --- 4. 辅助方法 ---
 
-        /// <summary>
-        /// 【已修改】确保下划线样式中定义的图层和线型都存在。
-        /// </summary>
         private void EnsureLayerAndLinetype(Transaction tr, UnderlineStyle style)
             {
-            // 确保图层存在
             var layerTable = (LayerTable)tr.GetObject(_db.LayerTableId, OpenMode.ForRead);
             if (!layerTable.Has(style.Layer))
                 {
-                // 如果需要写入，则必须用写模式打开对象
                 layerTable.UpgradeOpen();
                 using (var newLayer = new LayerTableRecord { Name = style.Layer })
                     {
                     layerTable.Add(newLayer);
                     tr.AddNewlyCreatedDBObject(newLayer, true);
                     }
-                layerTable.DowngradeOpen(); // 操作完成，降回读模式
+                layerTable.DowngradeOpen();
                 }
 
-            // 确保线型存在
             var linetypeTable = (LinetypeTable)tr.GetObject(_db.LinetypeTableId, OpenMode.ForRead);
             if (!string.Equals(style.Linetype, "ByLayer", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(style.Linetype, "ByBlock", StringComparison.OrdinalIgnoreCase) &&
@@ -296,9 +297,6 @@ namespace CADTranslator.Services.CAD
                 }
             }
 
-        /// <summary>
-        /// 【新增】一个安全的、统一的从DBText或MText获取文本的方法。
-        /// </summary>
         private string GetTextFromEntity(Entity ent)
             {
             if (ent is DBText dbText) return dbText.TextString;

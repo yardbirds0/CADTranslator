@@ -69,12 +69,14 @@ namespace CADTranslator.Services.Translation
         public bool IsBalanceCheckSupported => false;
         public bool IsTokenCountSupported => false;
         public bool IsBatchTranslationSupported => false;
+        public bool IsLocalTokenCountSupported => true;
+        public BillingUnit UnitType => BillingUnit.Token;
         #endregion
 
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
 
         // ▼▼▼ 【方法重写】重写整个 TranslateAsync 方法以支持 CancellationToken ▼▼▼
-        public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
@@ -113,7 +115,7 @@ namespace CADTranslator.Services.Translation
                     if (translatedText == null)
                         throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API响应中缺少有效的'content'字段。");
 
-                    return translatedText.Trim();
+                    return (translatedText.Trim(),null);
                     }
                 catch (JsonException ex)
                     {
@@ -135,7 +137,7 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
-        public Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
             throw new NotSupportedException("自定义接口服务不支持批量翻译。");
             }
@@ -150,7 +152,7 @@ namespace CADTranslator.Services.Translation
             throw new NotSupportedException("自定义接口服务不支持在线查询余额。");
             }
 
-        public Task<int> CountTokensAsync(string textToCount)
+        public Task<int> CountTokensAsync(string textToCount, CancellationToken cancellationToken)
             {
             throw new NotSupportedException("自定义接口服务不支持计算Token。");
             }

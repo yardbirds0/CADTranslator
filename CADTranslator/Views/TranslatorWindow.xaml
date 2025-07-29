@@ -18,7 +18,7 @@
                  Width="1080"
                  WindowStartupLocation="CenterScreen"
                  WindowBackdropType="Mica"
-                 d:DesignHeight="1400"
+                 d:DesignHeight="1800"
                  Loaded="TranslatorWindow_Loaded"
                  ExtendsContentIntoTitleBar="True">
 
@@ -506,18 +506,6 @@
                                                    Visibility="{Binding CurrentProvider.IsPromptSupported, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
                                                    IsHitTestVisible="False" />
                                     </Grid>
-
-                                    <StackPanel Margin="0,8,0,0"
-                                                Orientation="Horizontal">
-                                        <RadioButton Content="逐句发送"
-                                                     GroupName="SendingMode"
-                                                     IsChecked="{Binding SendingMode, ConverterParameter={x:Static settings:PromptSendingMode.PerSentence}, Converter={StaticResource EnumToBooleanConverter}}" />
-                                        <RadioButton Content="单次发送"
-                                                     GroupName="SendingMode"
-                                                     Margin="15,0,0,0"
-                                                     IsChecked="{Binding SendingMode, ConverterParameter={x:Static settings:PromptSendingMode.Once}, Converter={StaticResource EnumToBooleanConverter}}"
-                                                     Cursor="" />
-                                    </StackPanel>
                                 </StackPanel>
                             </Border>
 
@@ -645,6 +633,91 @@
                                                          OffContent="排版后不增加下划线"
                                                          HorizontalAlignment="Left" />
                                     </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{DynamicResource SystemAccentColorLight3Brush}"
+                                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,8"
+                                    Margin="0,15,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="原文发送模式"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               HorizontalAlignment="Center"
+                                               Margin="0,0,0,8" />
+
+                                    <RadioButton Content="每句话发起一次请求"
+                                                 GroupName="SendingMode"
+                                                 IsChecked="{Binding SendingMode, ConverterParameter={x:Static settings:PromptSendingMode.PerSentence}, Converter={StaticResource EnumToBooleanConverter}}" />
+
+                                    <RadioButton Content="多句话合并为一次请求"
+                                                 GroupName="SendingMode"
+                                                 Margin="0,5,0,0"
+                                                 IsChecked="{Binding SendingMode, ConverterParameter={x:Static settings:PromptSendingMode.Once}, Converter={StaticResource EnumToBooleanConverter}}" />
+
+                                    <StackPanel Margin="20,8,0,0"
+                                                Visibility="{Binding IsCharLimitVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       Text="最大单次发送字符"
+                                                       FontStyle="Normal"
+                                                       FontWeight="Regular"
+                                                       VerticalAlignment="Center"
+                                                       Margin="-15,0,10,0" />
+                                            <ComboBox Grid.Column="1"
+                                                      VerticalAlignment="Center"
+                                                      Margin="-5,0,0,0"
+                                                      ItemsSource="{Binding CharLimitOptions}"
+                                                      Text="{Binding MaxCharsPerBatch, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                      IsEditable="True"
+                                                      Width="100"
+                                                      HorizontalAlignment="Left" />
+                                        </Grid>
+                                        <Slider Minimum="100"
+                                                Maximum="3000"
+                                                TickFrequency="10"
+                                                IsSnapToTickEnabled="True"
+                                                Value="{Binding MaxCharsPerBatch, Mode=TwoWay}"
+                                                Margin="-10,5,10,0" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="20,8,0,0"
+                                                Visibility="{Binding IsTokenLimitVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       Text="最大单次发送Token"
+                                                       VerticalAlignment="Center"
+                                                       FontWeight="Regular"
+                                                       FontStyle="Normal"
+                                                       Margin="-15,0,10,0" />
+                                            <ComboBox Grid.Column="1"
+                                                      VerticalAlignment="Center"
+                                                      ItemsSource="{Binding TokenLimitOptions}"
+                                                      Text="{Binding MaxTokensPerBatch, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                      IsEditable="True"
+                                                      Margin="-8,0,0,0"
+                                                      Width="100"
+                                                      HorizontalAlignment="Left" />
+                                        </Grid>
+                                        <Slider Minimum="1000"
+                                                Maximum="10000"
+                                                TickFrequency="100"
+                                                IsSnapToTickEnabled="True"
+                                                Value="{Binding MaxTokensPerBatch, Mode=TwoWay}"
+                                                Margin="-10,5,10,0" />
+                                    </StackPanel>
+
                                 </StackPanel>
                             </Border>
 

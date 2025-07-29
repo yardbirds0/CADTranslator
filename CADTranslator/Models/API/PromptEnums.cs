@@ -26,4 +26,14 @@ namespace CADTranslator.Models.API
         Once, // 只发送一次（批处理模式）
         PerSentence // 每句都发送（旧模式）
         }
+
+    /// <summary>
+    /// 定义API的计费单位
+    /// </summary>
+    public enum BillingUnit
+        {
+        Character, // 按字符计费
+        Token      // 按Token计费
+        }
+
     }

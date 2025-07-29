@@ -1,11 +1,9 @@
-﻿// 文件路径: CADTranslator/ViewModels/TranslatorViewModel.cs
-// 【完整文件替换】
-
-using CADTranslator.Models.API;
+﻿using CADTranslator.Models.API;
 using CADTranslator.Models.CAD;
 using CADTranslator.Models.UI;
 using CADTranslator.Services.CAD;
 using CADTranslator.Services.Settings;
+using CADTranslator.Services.Tokenization;
 using CADTranslator.Services.Translation;
 using CADTranslator.Services.UI;
 using CADTranslator.Views;
@@ -42,6 +40,7 @@ namespace CADTranslator.ViewModels
         private int _totalTokens = 0;
         private bool _isTokenCountAvailable = false;
         private CancellationTokenSource _translationCts;
+        private readonly ITokenizationService _tokenizationService;
 
 
         // 【新增】用于管理背景色的画刷
@@ -156,6 +155,43 @@ namespace CADTranslator.ViewModels
             }
 
         public bool IsUiEnabled => !IsBusy;
+        public bool IsCharLimitVisible => CurrentProvider?.UnitType == BillingUnit.Character;
+        public bool IsTokenLimitVisible => CurrentProvider?.UnitType == BillingUnit.Token;
+
+        public ObservableCollection<int> CharLimitOptions { get; } = new ObservableCollection<int> { 100, 500, 1000, 2000, 3000 };
+        public ObservableCollection<int> TokenLimitOptions { get; } = new ObservableCollection<int> { 1000, 2000, 4000, 8000, 10000 };
+
+        public int MaxCharsPerBatch
+            {
+            get => _currentSettings.MaxCharsPerBatch;
+            set
+                {
+                // 输入验证与范围限制
+                int clampedValue = Math.Max(100, Math.Min(3000, value));
+                if (_currentSettings.MaxCharsPerBatch != clampedValue)
+                    {
+                    _currentSettings.MaxCharsPerBatch = clampedValue;
+                    OnPropertyChanged();
+                    if (!_isLoading) SaveSettings();
+                    }
+                }
+            }
+
+        public int MaxTokensPerBatch
+            {
+            get => _currentSettings.MaxTokensPerBatch;
+            set
+                {
+                // 输入验证与范围限制
+                int clampedValue = Math.Max(1000, Math.Min(10000, value));
+                if (_currentSettings.MaxTokensPerBatch != clampedValue)
+                    {
+                    _currentSettings.MaxTokensPerBatch = clampedValue;
+                    OnPropertyChanged();
+                    if (!_isLoading) SaveSettings();
+                    }
+                }
+            }
 
         public ITranslator CurrentProvider
             {
@@ -171,7 +207,8 @@ namespace CADTranslator.ViewModels
                         ApiProfiles.Add(CurrentProfile);
                         }
                     UpdateUiFromCurrentProfile();
-
+                    OnPropertyChanged(nameof(IsCharLimitVisible));
+                    OnPropertyChanged(nameof(IsTokenLimitVisible));
                     OnPropertyChanged(nameof(IsUserIdEnabled));
                     OnPropertyChanged(nameof(IsApiKeyEnabled));
                     OnPropertyChanged(nameof(IsModelRequired));
@@ -271,7 +308,11 @@ namespace CADTranslator.ViewModels
             new LanguageItem { DisplayName = "自动检测", Value = "auto" }, new LanguageItem { DisplayName = "中文", Value = "zh" },
             new LanguageItem { DisplayName = "英文", Value = "en" }, new LanguageItem { DisplayName = "日语", Value = "ja" },
             new LanguageItem { DisplayName = "韩语", Value = "ko" }, new LanguageItem { DisplayName = "法语", Value = "fr" },
-            new LanguageItem { DisplayName = "德语", Value = "de" }, new LanguageItem { DisplayName = "俄语", Value = "ru" }
+            new LanguageItem { DisplayName = "德语", Value = "de" }, new LanguageItem { DisplayName = "俄语", Value = "ru" },
+            new LanguageItem { DisplayName = "印尼语", Value = "id" },
+            new LanguageItem { DisplayName = "越南语", Value = "vie" },
+            new LanguageItem { DisplayName = "马来语", Value = "may" },
+            new LanguageItem { DisplayName = "泰语", Value = "th" }
         };
 
         public bool IsLiveLayoutEnabled
@@ -431,6 +472,7 @@ namespace CADTranslator.ViewModels
             ISettingsService settingsService,
             IAdvancedTextService advancedTextService,
             ICadLayoutService cadLayoutService,
+             ITokenizationService tokenizationService,
             ApiRegistry apiRegistry)
             {
             _windowService = windowService ?? throw new ArgumentNullException(nameof(windowService));
@@ -438,6 +480,7 @@ namespace CADTranslator.ViewModels
             _advancedTextService = advancedTextService ?? throw new ArgumentNullException(nameof(advancedTextService));
             _cadLayoutService = cadLayoutService ?? throw new ArgumentNullException(nameof(cadLayoutService));
             _apiRegistry = apiRegistry ?? throw new ArgumentNullException(nameof(apiRegistry));
+            _tokenizationService = tokenizationService ?? throw new ArgumentNullException(nameof(tokenizationService));
 
             TextBlockList = new ObservableCollection<TextBlockViewModel>();
             ModelList = new ObservableCollection<ModelViewModel>();
@@ -478,6 +521,8 @@ namespace CADTranslator.ViewModels
         #region --- 核心方法 (选择、应用) ---
         private async void OnSelectText(object parameter)
             {
+            int extractedCount = 0;
+
             try
                 {
                 var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
@@ -500,6 +545,7 @@ namespace CADTranslator.ViewModels
                         }
 
                     List<ParagraphInfo> paragraphInfos = _advancedTextService.ExtractAndProcessParagraphs(selRes.Value, this.SimilarityThreshold);
+                    extractedCount = paragraphInfos.Count;
 
                     if (paragraphInfos.Count == 0)
                         {
@@ -528,7 +574,6 @@ namespace CADTranslator.ViewModels
                             TextStyleId = p.TextStyleId
                             }).ToList();
                         LoadTextBlocks(textBlocks);
-                        Log($"成功提取并分析了 {textBlocks.Count} 个段落。");
                         }
                     }
                 }
@@ -540,11 +585,16 @@ namespace CADTranslator.ViewModels
             finally
                 {
                 _windowService.ShowMainWindow();
-                await UpdateTokenCountAsync();
+
+                // ▼▼▼ 【核心修改】日志记录逻辑移动到Token计算之后 ▼▼▼
+                await UpdateTokenCountAsync(extractedCount);
+                // ▲▲▲ 修改结束 ▲▲▲
+
                 TranslateCommand.RaiseCanExecuteChanged();
                 IsProgressIndeterminate = false;
                 }
             }
+
 
         private async void OnApplyToCad(object parameter)
             {
@@ -565,7 +615,6 @@ namespace CADTranslator.ViewModels
             CadBridgeService.InvokeApplyLayout();
             }
         #endregion
-
 
         #region --- 翻译主逻辑 (调度中心) ---
 
@@ -598,19 +647,16 @@ namespace CADTranslator.ViewModels
             {
             // --- 准备阶段 ---
             if (CurrentProvider == null || CurrentProfile == null) { await _windowService.ShowInformationDialogAsync("操作无效", "请先选择一个API配置。"); return; }
-
             if (IsModelRequired)
                 {
                 string modelNameToUse = null;
                 if (!string.IsNullOrWhiteSpace(CurrentModelInput) && (SelectedModel == null || CurrentModelInput != SelectedModel.Name)) { modelNameToUse = CurrentModelInput.Trim(); }
                 else if (SelectedModel != null) { modelNameToUse = SelectedModel.Name; }
-
                 if (string.IsNullOrWhiteSpace(modelNameToUse))
                     {
                     await _windowService.ShowInformationDialogAsync("操作无效", "必须指定一个模型才能进行翻译。");
                     return;
                     }
-
                 CurrentProfile.LastSelectedModel = modelNameToUse;
                 if (ModelList.All(m => m.Name != modelNameToUse))
                     {
@@ -626,7 +672,7 @@ namespace CADTranslator.ViewModels
             ClearAllRowHighlights();
             var totalStopwatch = new System.Diagnostics.Stopwatch();
             totalStopwatch.Start();
-            Log("翻译任务开始", clearPrevious: true);
+            // 注意: "翻译任务开始" 的日志已移除，clearPrevious 的职责已下移
 
             int totalItems = itemsToTranslate.Count;
             if (totalItems == 0) { Log("没有需要翻译的新内容。"); IsBusy = false; return; }
@@ -634,22 +680,20 @@ namespace CADTranslator.ViewModels
             UpdateProgress(0, totalItems);
             _translationCts = new CancellationTokenSource();
 
+            TranslationUsage totalUsage = new TranslationUsage();
+
             try
                 {
                 ITranslator translator = _apiRegistry.CreateProviderForProfile(CurrentProfile);
 
-                // --- 【核心决策】---
                 if (SendingMode == PromptSendingMode.Once && translator.IsBatchTranslationSupported)
                     {
-                    await ExecuteBatchTranslation(translator, itemsToTranslate, _translationCts.Token);
+                    var usage = await ExecuteBatchTranslation(translator, itemsToTranslate, _translationCts.Token);
+                    totalUsage.Add(usage);
                     }
                 else
                     {
-                    if (SendingMode == PromptSendingMode.Once)
-                        {
-                        Log($"注意: 当前API服务 ({translator.DisplayName}) 不支持批量发送，已自动切换到逐句发送模式。");
-                        }
-                    await ExecuteSentenceBySentenceTranslation(translator, itemsToTranslate, _translationCts.Token);
+                    var usage = await ExecuteSentenceBySentenceTranslation(translator, itemsToTranslate, _translationCts.Token);
                     }
                 }
             catch (Exception ex)
@@ -661,6 +705,13 @@ namespace CADTranslator.ViewModels
                 {
                 totalStopwatch.Stop();
                 if (_translationCts != null && _translationCts.IsCancellationRequested) { Log("任务被用户取消。"); }
+
+                if (totalUsage.TotalTokens > 0)
+                    {
+                    // 根据计费单位决定日志文本
+                    string unitName = CurrentProvider.UnitType == BillingUnit.Character ? "字符" : "Token";
+                    Log($"本次总{unitName}用量为 {totalUsage.TotalTokens}，其中输入{unitName}用量 {totalUsage.PromptTokens}，输出{unitName}用量 {totalUsage.CompletionTokens}");
+                    }
 
                 if (_failedItems.Any()) { Log($"任务完成，有 {_failedItems.Count} 个项目失败或被取消。总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒"); }
                 else { Log($"全部翻译任务成功完成！总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒"); }
@@ -677,25 +728,79 @@ namespace CADTranslator.ViewModels
         /// <summary>
         /// 【新版批量翻译】带详尽实时反馈
         /// </summary>
-        private async Task ExecuteBatchTranslation(ITranslator translator, List<TextBlockViewModel> itemsToTranslate, CancellationToken cancellationToken)
+        private async Task<TranslationUsage> ExecuteBatchTranslation(ITranslator translator, List<TextBlockViewModel> itemsToTranslate, CancellationToken cancellationToken)
             {
-            Log($"启动单次发送模式...");
-            const int chunkSize = 50;
-            var allChunks = itemsToTranslate
-                .Select((item, index) => new { item, index })
-                .GroupBy(x => x.index / chunkSize)
-                .Select((g, i) => new { ChunkIndex = i + 1, Items = g.Select(x => x.item).ToList() })
-                .ToList();
+            TranslationUsage accumulatedUsage = new TranslationUsage();
+            List<List<TextBlockViewModel>> allChunks;
 
-            Log($"分析完成，已将任务分割为 {allChunks.Count} 个批次。");
+            // 步骤 1: 聚合策略日志
+            string unitName = translator.UnitType == BillingUnit.Character ? "字符" : "Token";
+            int limit = translator.UnitType == BillingUnit.Character ? MaxCharsPerBatch : MaxTokensPerBatch;
+            Log($"采用[多句话合并为一次请求]模式，当前接口按[{unitName}]计费，最大[{unitName}数]为[{limit}]", clearPrevious: true);
+
+            // 步骤 2: 智能分块
+            if (translator.UnitType == BillingUnit.Character)
+                {
+                allChunks = new List<List<TextBlockViewModel>>();
+                var currentChunk = new List<TextBlockViewModel>();
+                int currentLength = 0;
+                foreach (var item in itemsToTranslate)
+                    {
+                    int itemLength = item.OriginalText.Length;
+                    if (currentChunk.Any() && currentLength + itemLength + 1 > MaxCharsPerBatch)
+                        {
+                        allChunks.Add(currentChunk);
+                        currentChunk = new List<TextBlockViewModel>();
+                        currentLength = 0;
+                        }
+                    currentChunk.Add(item);
+                    currentLength += itemLength + 1;
+                    }
+                if (currentChunk.Any()) allChunks.Add(currentChunk);
+                }
+            else // BillingUnit.Token
+                {
+                allChunks = new List<List<TextBlockViewModel>>();
+                var currentChunk = new List<TextBlockViewModel>();
+                int currentTokens = 0;
+                foreach (var item in itemsToTranslate)
+                    {
+                    var (itemTokens, _) = _tokenizationService.CountTokens(item.OriginalText, CurrentProfile?.LastSelectedModel);
+                    if (itemTokens < 0) itemTokens = item.OriginalText.Length / 2;
+                    if (currentChunk.Any() && currentTokens + itemTokens > MaxTokensPerBatch)
+                        {
+                        allChunks.Add(currentChunk);
+                        currentChunk = new List<TextBlockViewModel>();
+                        currentTokens = 0;
+                        }
+                    currentChunk.Add(item);
+                    currentTokens += itemTokens;
+                    }
+                if (currentChunk.Any()) allChunks.Add(currentChunk);
+                }
+
+            // 步骤 3: 丰富的分块结果日志
+            long totalAmount = (translator.UnitType == BillingUnit.Character)
+        ? itemsToTranslate.Sum(i => (long)i.OriginalText.Length)
+        : itemsToTranslate.Sum(i => {
+            var (tokenCount, _) = _tokenizationService.CountTokens(i.OriginalText, CurrentProfile?.LastSelectedModel);
+            return (long)(tokenCount >= 0 ? tokenCount : i.OriginalText.Length / 2); // 使用估算作为备用
+        });
+            Log($"共计[{totalAmount}]个[{unitName}]，已分割为[{allChunks.Count}]个批次进行处理。");
+
             IsProgressIndeterminate = false;
 
+            // 步骤 4: 智能并发日志
             int concurrencyLevel = IsMultiThreadingEnabled ? (int.TryParse(CurrentConcurrencyLevelInput, out int userLevel) && userLevel > 1 ? userLevel : 2) : 1;
-            Log(IsMultiThreadingEnabled ? $"启动并发批量翻译！最大并发量: {concurrencyLevel}" : "启动单线程批量翻译。");
+            if (IsMultiThreadingEnabled && allChunks.Count > 1)
+                {
+                Log($"启动并发批量翻译！最大并发量: {concurrencyLevel}");
+                }
 
             var semaphore = new SemaphoreSlim(concurrencyLevel);
             var allTasks = new List<Task>();
             int completedChunks = 0;
+
 
             foreach (var chunk in allChunks)
                 {
@@ -706,52 +811,56 @@ namespace CADTranslator.ViewModels
                 {
                     var stopwatch = new System.Diagnostics.Stopwatch();
                     stopwatch.Start();
-                    var chunkLogPrefix = $"[批次{chunk.ChunkIndex}/{allChunks.Count}]";
-                    Log($"{chunkLogPrefix} 开始处理..."); // 为每个批次添加一个固定的开始日志
+                    var chunkLogPrefix = $"[批次{completedChunks + 1}/{allChunks.Count}]";
+                    Log($"{chunkLogPrefix} 开始处理 (包含 {chunk.Count} 项)...");
 
                     try
                         {
-                        using (var timerCts = new CancellationTokenSource())
-                            {
-                            var timerTask = Task.Run(async () =>
-                            {
-                                while (!timerCts.IsCancellationRequested)
+                        var timerCts = new CancellationTokenSource();
+                        var timerTask = Task.Run(async () =>
+                        {
+                            while (!timerCts.IsCancellationRequested)
+                                {
+                                await Task.Delay(1000, timerCts.Token);
+                                if (stopwatch.IsRunning)
                                     {
-                                    await Task.Delay(1000, timerCts.Token);
-                                    var elapsedSeconds = stopwatch.Elapsed.TotalSeconds;
-                                    var statusText = $"{chunkLogPrefix} 翻译中... 已用时 {elapsedSeconds:F0} 秒";
+                                    var statusText = $"{chunkLogPrefix} 翻译中... 已用时 {stopwatch.Elapsed.TotalSeconds:F0} 秒";
                                     _windowService.InvokeOnUIThread(() =>
                                     {
-                                        chunk.Items.ForEach(item => {
+                                        chunk.ForEach(item => {
                                             if (item.Status == TranslationStatus.Translating)
                                                 item.TranslatedText = statusText;
                                         });
                                     });
                                     UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] {statusText}");
                                     }
-                            }, timerCts.Token);
+                                }
+                        }, timerCts.Token);
 
-                            _windowService.InvokeOnUIThread(() =>
-                            {
-                                _windowService.ScrollToGridItem(chunk.Items.First());
-                                chunk.Items.ForEach(item => SetItemStatus(item, TranslationStatus.Translating));
-                            });
+                        _windowService.InvokeOnUIThread(() =>
+                        {
+                            _windowService.ScrollToGridItem(chunk.First());
+                            var initialStatusText = $"{chunkLogPrefix} 翻译中...";
+                            chunk.ForEach(item => { SetItemStatus(item, TranslationStatus.Translating); item.TranslatedText = initialStatusText; });
+                        });
 
-                            var originalTexts = chunk.Items.Select(i => i.OriginalText).ToList();
-                            var translatedTexts = await translator.TranslateBatchAsync(originalTexts, SourceLanguage, TargetLanguage, cancellationToken);
+                        var originalTexts = chunk.Select(i => i.OriginalText).ToList();
+                        var (translatedTexts, usage) = await translator.TranslateBatchAsync(originalTexts, SourceLanguage, TargetLanguage, cancellationToken);
 
-                            timerCts.Cancel();
-                            try { await timerTask; } catch (OperationCanceledException) { }
+                        lock (accumulatedUsage) { accumulatedUsage.Add(usage); }
 
-                            _windowService.InvokeOnUIThread(() =>
-                            {
-                                for (int i = 0; i < chunk.Items.Count; i++)
-                                    {
-                                    chunk.Items[i].TranslatedText = translatedTexts[i];
-                                    SetItemStatus(chunk.Items[i], TranslationStatus.Success);
-                                    }
-                            });
-                            }
+                        timerCts.Cancel();
+                        try { await timerTask; } catch (OperationCanceledException) { }
+
+                        _windowService.InvokeOnUIThread(() =>
+                        {
+                            for (int i = 0; i < chunk.Count; i++)
+                                {
+                                chunk[i].TranslatedText = translatedTexts[i];
+                                SetItemStatus(chunk[i], TranslationStatus.Success);
+                                }
+                        });
+
                         stopwatch.Stop();
                         UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] ✓ {chunkLogPrefix} 处理完成。用时 {stopwatch.Elapsed.TotalSeconds:F1} 秒。");
                         }
@@ -761,11 +870,7 @@ namespace CADTranslator.ViewModels
                         stopwatch.Stop();
                         _windowService.InvokeOnUIThread(() =>
                         {
-                            chunk.Items.ForEach(item =>
-                            {
-                                SetItemStatus(item, TranslationStatus.Failed);
-                                HandleApiException(ex as ApiException ?? new ApiException(ApiErrorType.Unknown, CurrentProvider.ServiceType, ex.Message), item);
-                            });
+                            chunk.ForEach(item => { SetItemStatus(item, TranslationStatus.Failed); HandleApiException(ex as ApiException ?? new ApiException(ApiErrorType.Unknown, CurrentProvider.ServiceType, ex.Message), item); });
                         });
                         UpdateLastLog($"[{DateTime.Now:HH:mm:ss}] ✗ {chunkLogPrefix} 处理失败: {ex.Message}");
                         }
@@ -779,22 +884,33 @@ namespace CADTranslator.ViewModels
                 }
 
             await Task.WhenAll(allTasks);
+            return accumulatedUsage;
             }
-
 
         /// <summary>
         /// 【完全恢复的】逐句翻译逻辑
         /// </summary>
-        private async Task ExecuteSentenceBySentenceTranslation(ITranslator translator, List<TextBlockViewModel> itemsToTranslate, CancellationToken cancellationToken)
+        private async Task<TranslationUsage> ExecuteSentenceBySentenceTranslation(ITranslator translator, List<TextBlockViewModel> itemsToTranslate, CancellationToken cancellationToken)
             {
+            // 步骤 1: 聚合策略日志
+            Log($"采用[每句话发起一次请求]模式。", clearPrevious: true);
             int completedItems = 0;
             IsProgressIndeterminate = false;
+            TranslationUsage accumulatedUsage = new TranslationUsage();
 
             if (IsMultiThreadingEnabled)
                 {
-                #region --- 多线程逐句翻译 (已恢复您原有逻辑) ---
+                #region --- 多线程逐句翻译 ---
                 int concurrencyLevel = int.TryParse(CurrentConcurrencyLevelInput, out int userLevel) && userLevel > 1 ? userLevel : 2;
-                Log($"启动并发翻译，总数: {itemsToTranslate.Count}，最大并发量: {concurrencyLevel}");
+
+                // 步骤 2: 丰富的分块/任务说明日志
+                Log($"共计[{itemsToTranslate.Count}]个项目。");
+
+                // 步骤 3: 智能并发日志
+                if (itemsToTranslate.Count > 1)
+                    {
+                    Log($"启动并发翻译！最大并发量: {concurrencyLevel}");
+                    }
 
                 var batches = itemsToTranslate
                     .Select((item, index) => new { item, index })
@@ -838,20 +954,29 @@ namespace CADTranslator.ViewModels
                         {
                             try
                                 {
+                                // ▼▼▼ 修改开始 ▼▼▼
                                 _windowService.InvokeOnUIThread(() =>
                                 {
                                     _windowService.ScrollToGridItem(item);
                                     SetItemStatus(item, TranslationStatus.Translating);
+                                    // 立即为每个项设置包含编号的初始状态文本
+                                    string itemSentenceNumber = $"第 {index + 1} 句";
+                                    var initialStatusText = $"{batchPrefix} {itemSentenceNumber}: 翻译中...";
+                                    item.TranslatedText = initialStatusText;
                                 });
+                                // ▲▲▲ 修改结束 ▲▲▲
 
-                                string result = await translator.TranslateAsync(item.OriginalText, SourceLanguage, TargetLanguage, cancellationToken);
+                                var (result, usage) = await translator.TranslateAsync(item.OriginalText, SourceLanguage, TargetLanguage, cancellationToken);
+
+                                // 累加用量
+                                lock (accumulatedUsage) { accumulatedUsage.Add(usage); }
 
                                 _windowService.InvokeOnUIThread(() =>
                                 {
                                     item.TranslatedText = result;
                                     SetItemStatus(item, TranslationStatus.Success);
                                 });
-                                }
+                                }                                
                             catch (Exception ex)
                                 {
                                 if (cancellationToken.IsCancellationRequested) return;
@@ -881,18 +1006,23 @@ namespace CADTranslator.ViewModels
             else
                 {
                 #region --- 单线程逐句翻译 (已恢复您原有逻辑) ---
-                Log($"启动单线程翻译，总数: {itemsToTranslate.Count}");
+                Log($"共计[{itemsToTranslate.Count}]个项目，将逐一处理。");
                 foreach (var item in itemsToTranslate)
                     {
                     if (cancellationToken.IsCancellationRequested) break;
 
+                    string statusPrefix = $"第 {completedItems + 1}/{itemsToTranslate.Count} 项";
+
+                    // ▼▼▼ 修改开始 ▼▼▼
                     _windowService.InvokeOnUIThread(() =>
                     {
                         _windowService.ScrollToGridItem(item);
                         SetItemStatus(item, TranslationStatus.Translating);
+                        // 立即设置包含编号的初始状态文本
+                        item.TranslatedText = $"{statusPrefix}: 翻译中...";
                     });
+                    // ▲▲▲ 修改结束 ▲▲▲
 
-                    string statusPrefix = $"第 {completedItems + 1}/{itemsToTranslate.Count} 项";
                     var stopwatch = new System.Diagnostics.Stopwatch();
                     stopwatch.Start();
                     Log($"{statusPrefix} 开始处理...");
@@ -915,7 +1045,11 @@ namespace CADTranslator.ViewModels
 
                         try
                             {
-                            string result = await translator.TranslateAsync(item.OriginalText, SourceLanguage, TargetLanguage, cancellationToken);
+                            var (result, usage) = await translator.TranslateAsync(item.OriginalText, SourceLanguage, TargetLanguage, cancellationToken);
+
+                            // 累加用量
+                            accumulatedUsage.Add(usage);
+
                             _windowService.InvokeOnUIThread(() =>
                             {
                                 item.TranslatedText = result;
@@ -950,6 +1084,7 @@ namespace CADTranslator.ViewModels
                     }
                 #endregion
                 }
+            return accumulatedUsage;
             }
 
         #endregion
@@ -1303,7 +1438,7 @@ namespace CADTranslator.ViewModels
 
             if (SendingMode == PromptSendingMode.Once && CurrentProvider.IsBatchTranslationSupported)
                 {
-                ProgressText = $"批次 ({completed}/{total})";
+                ProgressText = $"批次 ({completed}/{total}){tokenInfo}";
                 }
             else
                 {
@@ -1311,29 +1446,84 @@ namespace CADTranslator.ViewModels
                 }
             }
 
-        private async Task UpdateTokenCountAsync()
+        private async Task UpdateTokenCountAsync(int extractedCount)
             {
-            if (CurrentProvider == null || !CurrentProvider.IsTokenCountSupported || !TextBlockList.Any())
+            string logPrefix = (extractedCount > 0) ? $"成功提取并分析了 {extractedCount} 个段落。" : "";
+            if (string.IsNullOrEmpty(logPrefix))
                 {
-                _isTokenCountAvailable = false;
+                UpdateProgress(0, TextBlockList.Count);
                 return;
                 }
 
-            try
+            // 在开始计算前，先重置状态
+            _isTokenCountAvailable = false;
+
+            // 检查是否有必要和有可能计算Token
+            if (CurrentProvider != null && CurrentProvider.IsTokenCountSupported && TextBlockList.Any())
                 {
-                var translator = _apiRegistry.CreateProviderForProfile(CurrentProfile);
+                string modelName = CurrentProfile?.LastSelectedModel;
                 string combinedText = string.Join("\n", TextBlockList.Select(b => b.OriginalText));
 
-                _totalTokens = await translator.CountTokensAsync(combinedText);
-                _isTokenCountAvailable = true;
-                }
-            catch (Exception ex)
-                {
-                _isTokenCountAvailable = false;
-                Log($"[Token计算失败] {ex.Message}", isError: true);
-                }
-            }
+                // --- “三级火箭”决策开始 ---
 
+                // 第一级：尝试使用本地服务进行精确计算 (例如：Tiktoken for GPT models)
+                if (CurrentProvider.IsLocalTokenCountSupported && _tokenizationService.CanTokenize(modelName))
+                    {
+                    var (tokenCount, errorMessage) = _tokenizationService.CountTokens(combinedText, modelName);
+                    if (errorMessage == null)
+                        {
+                        _totalTokens = tokenCount;
+                        _isTokenCountAvailable = true;
+                        }
+                    }
+
+                // 第二级：如果第一级不适用或失败，则尝试通过API计算 (例如：Gemini)
+                if (!_isTokenCountAvailable && !CurrentProvider.IsLocalTokenCountSupported)
+                    {
+                    using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5))) // 5秒超时
+                        {
+                        try
+                            {
+                            var translator = _apiRegistry.CreateProviderForProfile(CurrentProfile);
+                            _totalTokens = await translator.CountTokensAsync(combinedText, cts.Token);
+                            _isTokenCountAvailable = true;
+                            }
+                        catch
+                            {
+                            // 失败则自动进入第三级
+                            _isTokenCountAvailable = false;
+                            }
+                        }
+                    }
+
+                // 第三级：如果前两级都失败或不适用，使用 gpt-4o 模型进行本地估算
+                if (!_isTokenCountAvailable)
+                    {
+                    var (tokenCount, errorMessage) = _tokenizationService.CountTokens(combinedText, "gpt-3.5-turbo");
+                    if (errorMessage == null)
+                        {
+                        _totalTokens = tokenCount;
+                        _isTokenCountAvailable = true;
+                        logPrefix += " (Token为估算值)"; // 明确告知用户这是估算
+                        }
+                    }
+                }
+
+            // 【最终日志输出】
+            // 根据 _isTokenCountAvailable 的最终状态来决定日志内容
+            if (_isTokenCountAvailable)
+                {
+                string unitName = CurrentProvider.UnitType == BillingUnit.Character ? "字符" : "Token";
+                Log($"{logPrefix} 总{unitName}量：{_totalTokens}");
+                }
+            else
+                {
+                // 如果所有方法都失败，则只显示基础信息
+                Log(logPrefix);
+                }
+
+            UpdateProgress(0, TextBlockList.Count);
+            }
         private void HandleApiException(ApiException apiEx, TextBlockViewModel failedItem)
             {
             string errorPrefix = apiEx.ErrorType switch
@@ -1407,7 +1597,7 @@ namespace CADTranslator.ViewModels
             foreach (var item in selectedViewModels.AsEnumerable().Reverse()) { TextBlockList.Remove(item); }
             TextBlockList.Insert(firstIndex, mergedItem);
             RenumberItems();
-            await UpdateTokenCountAsync();
+            await UpdateTokenCountAsync(TextBlockList.Count);
             }
 
         private async void OnDelete(object selectedItems)
@@ -1421,7 +1611,7 @@ namespace CADTranslator.ViewModels
                 {
                 foreach (var item in itemsToDelete) { TextBlockList.Remove(item); }
                 RenumberItems();
-                await UpdateTokenCountAsync();
+                await UpdateTokenCountAsync(TextBlockList.Count);
                 }
             }
 
@@ -1478,7 +1668,7 @@ namespace CADTranslator.ViewModels
 
             var currentBlocksState = TextBlockList.ToList();
             LoadTextBlocks(currentBlocksState);
-            await UpdateTokenCountAsync();
+            await UpdateTokenCountAsync(TextBlockList.Count);
             }
 
         private async void OnEdit(object selectedItem)
@@ -1512,7 +1702,7 @@ namespace CADTranslator.ViewModels
                 UpdateProgress(0, 0);
                 IsProgressIndeterminate = false;
                 Log("界面已重置，请重新选择CAD文字。");
-                await UpdateTokenCountAsync();
+                await UpdateTokenCountAsync(TextBlockList.Count);
                 }
             }
 

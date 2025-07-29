@@ -13,6 +13,7 @@ using CADTranslator.Services.UI;
 using CADTranslator.Services.CAD;
 using CADTranslator.Services.Settings;
 using CADTranslator.Services.Translation; // ◄◄◄ 【新增】引入AutoCAD服务
+using CADTranslator.Services.Tokenization;
 
 namespace CADTranslator.Views
     {
@@ -34,13 +35,15 @@ namespace CADTranslator.Views
             // 3. 创建与数据和逻辑相关的服务
             ISettingsService settingsService = new SettingsService();
             ApiRegistry apiRegistry = new ApiRegistry();
+            ITokenizationService tokenizationService = new GptTokenizationService();
 
             // 4. 将所有创建好的服务，注入到ViewModel的构造函数中
             var viewModel = new TranslatorViewModel(
                 windowService,
                 settingsService,
                 advancedTextService,
-                cadLayoutService,
+                cadLayoutService,               
+                tokenizationService,
                 apiRegistry
             );
 

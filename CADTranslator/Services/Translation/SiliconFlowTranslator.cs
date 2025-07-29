@@ -18,22 +18,50 @@ namespace CADTranslator.Services.Translation
     {
     public class SiliconFlowTranslator : ITranslator
         {
-        #region --- 字段 ---
+        #region --- 内部数据模型 ---
 
+        private class SiliconFlowUsage
+            {
+            [JsonProperty("prompt_tokens")]
+            public long PromptTokens { get; set; }
+            [JsonProperty("completion_tokens")]
+            public long CompletionTokens { get; set; }
+            [JsonProperty("total_tokens")]
+            public long TotalTokens { get; set; }
+            }
+
+        private class SiliconFlowResponse
+            {
+            [JsonProperty("choices")]
+            public List<Choice> Choices { get; set; }
+            [JsonProperty("usage")]
+            public SiliconFlowUsage Usage { get; set; }
+            }
+        private class Choice
+            {
+            [JsonProperty("message")]
+            public Message Message { get; set; }
+            }
+        private class Message
+            {
+            [JsonProperty("content")]
+            public string Content { get; set; }
+            }
+
+        #endregion
+
+        #region --- 字段 ---
         private readonly Lazy<HttpClient> _lazyHttpClient;
         private readonly string _endpoint;
         private readonly string _apiKey;
         private readonly string _model;
-
         #endregion
 
         #region --- 构造函数 ---
-
         public SiliconFlowTranslator(string apiEndpoint, string apiKey, string model)
             {
             if (string.IsNullOrWhiteSpace(apiEndpoint))
                 throw new ApiException(ApiErrorType.ConfigurationError, ApiServiceType.SiliconFlow, "API URL (终结点) 不能为空。");
-
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ApiException(ApiErrorType.ConfigurationError, ApiServiceType.SiliconFlow, "API 密钥不能为空。");
 
@@ -48,19 +76,12 @@ namespace CADTranslator.Services.Translation
                 return client;
             });
             }
-
         #endregion
 
-        #region --- 1. 身份标识 (ITranslator 实现) ---
-
+        #region --- 身份与能力声明 ---
         public ApiServiceType ServiceType => ApiServiceType.SiliconFlow;
         public string DisplayName => "硅基流动";
         public string ApiDocumentationUrl => "https://www.siliconflow.cn/pricing";
-
-        #endregion
-
-        #region --- 2. 能力声明 (ITranslator 实现) ---
-
         public bool IsApiKeyRequired => true;
         public bool IsUserIdRequired => false;
         public bool IsApiUrlRequired => true;
@@ -68,35 +89,30 @@ namespace CADTranslator.Services.Translation
         public bool IsPromptSupported => true;
         public bool IsModelFetchingSupported => true;
         public bool IsBalanceCheckSupported => true;
-        public bool IsTokenCountSupported => false;
-        public bool IsBatchTranslationSupported => true; // 【新增】明确表示支持批量翻译
-
+        public bool IsTokenCountSupported => true;
+        public bool IsLocalTokenCountSupported => true;
+        public bool IsBatchTranslationSupported => true;
+        public BillingUnit UnitType => BillingUnit.Token;
         #endregion
 
-        #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
+        #region --- 核心与扩展功能 ---
 
-        public Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
-            // 单句翻译可以直接复用批量翻译的逻辑，只是列表里只有一个元素
-            return Task.Run(async () =>
-            {
-                var resultList = await TranslateBatchAsync(new List<string> { textToTranslate }, fromLanguage, toLanguage, cancellationToken);
-                return resultList.FirstOrDefault() ?? string.Empty;
-            });
+            // 单句翻译直接复用批量翻译逻辑，效率更高
+            var (translatedTexts, usage) = await TranslateBatchAsync(new List<string> { textToTranslate }, fromLanguage, toLanguage, cancellationToken);
+            return (translatedTexts.FirstOrDefault() ?? string.Empty, usage);
             }
 
-        // 【新增】实现新的批量翻译方法
-        public async Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
-
             if (textsToTranslate == null || !textsToTranslate.Any())
-                return new List<string>();
+                return (new List<string>(), null);
 
             try
                 {
-                // 1. 构造JSON格式的输入
                 string textsAsJsonArray = JsonConvert.SerializeObject(textsToTranslate);
                 string prompt = $"You are a professional translator for Civil Engineering drawings. Your task is to translate a JSON array of strings from {fromLanguage} to {toLanguage}. Your response MUST be a JSON array of strings, with each string being the translation of the corresponding string in the input array. Maintain the same order. Do not add any extra explanations or content outside of the JSON array.\n\nInput JSON array:\n---\n{textsAsJsonArray}\n---";
 
@@ -107,7 +123,6 @@ namespace CADTranslator.Services.Translation
                     {
                         new { role = "user", content = prompt }
                     },
-                    // 【核心】指定返回格式为 JSON 对象
                     response_format = new { type = "json_object" },
                     stream = false
                     };
@@ -126,23 +141,30 @@ namespace CADTranslator.Services.Translation
                 string jsonResponse = await response.Content.ReadAsStringAsync();
                 try
                     {
-                    // 2. 解析返回的JSON
-                    var data = JObject.Parse(jsonResponse);
-                    var responseContent = data["choices"]?[0]?["message"]?["content"]?.ToString();
+                    var data = JsonConvert.DeserializeObject<SiliconFlowResponse>(jsonResponse);
+                    var responseContent = data?.Choices?.FirstOrDefault()?.Message?.Content;
 
                     if (responseContent == null)
                         throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API响应中缺少有效的'content'字段。");
 
-                    // 3. 从返回内容中提取JSON数组
-                    // 模型有时会在JSON前后添加```json ... ```标记，我们需要移除它们
                     var cleanedContent = responseContent.Trim().Trim('`').Replace("json", "").Trim();
-
                     var translatedList = JsonConvert.DeserializeObject<List<string>>(cleanedContent);
 
                     if (translatedList == null || translatedList.Count != textsToTranslate.Count)
                         throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API返回的翻译结果数量 ({translatedList?.Count ?? 0}) 与原文数量 ({textsToTranslate.Count}) 不匹配。");
 
-                    return translatedList;
+                    TranslationUsage usage = null;
+                    if (data.Usage != null)
+                        {
+                        usage = new TranslationUsage
+                            {
+                            PromptTokens = data.Usage.PromptTokens,
+                            CompletionTokens = data.Usage.CompletionTokens,
+                            TotalTokens = data.Usage.TotalTokens
+                            };
+                        }
+
+                    return (translatedList, usage);
                     }
                 catch (JsonException ex)
                     {
@@ -160,10 +182,8 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
-
         public async Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {
-            // (此方法代码保持不变)
             const string modelListUrl = "https://api.siliconflow.cn/v1/models";
             try
                 {
@@ -199,7 +219,6 @@ namespace CADTranslator.Services.Translation
 
         public async Task<List<KeyValuePair<string, string>>> CheckBalanceAsync()
             {
-            // (此方法代码保持不变)
             const string userInfoUrl = "https://api.siliconflow.cn/v1/user/info";
             try
                 {
@@ -238,16 +257,14 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
-        public Task<int> CountTokensAsync(string textToCount)
+        public Task<int> CountTokensAsync(string textToCount, CancellationToken cancellationToken)
             {
-            throw new NotSupportedException("硅基流动服务不支持计算Token。");
+            // 对于支持本地计算的接口，这个方法可以不再被ViewModel调用，但保留以符合接口规范
+            throw new NotSupportedException("硅基流动服务应使用本地Token计算，不应调用此API方法。");
             }
-
         #endregion
 
         #region --- 私有辅助方法 ---
-
-        // (此方法代码保持不变)
         private async Task HandleApiError(HttpResponseMessage response)
             {
             string errorBody = await response.Content.ReadAsStringAsync();
@@ -280,7 +297,6 @@ namespace CADTranslator.Services.Translation
 
             throw new ApiException(ApiErrorType.ApiError, ServiceType, errorMessage, response.StatusCode, apiErrorCode);
             }
-
         #endregion
         }
     }

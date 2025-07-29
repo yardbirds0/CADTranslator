@@ -52,18 +52,19 @@ namespace CADTranslator.Services.Translation
         public bool IsApiUrlRequired => false;
         public bool IsModelRequired => true;
         public bool IsPromptSupported => true;
-        public bool IsModelFetchingSupported => false;
+        public bool IsModelFetchingSupported => true;
         public bool IsBalanceCheckSupported => false;
-        public bool IsTokenCountSupported => false;
+        public bool IsTokenCountSupported => true;
         public bool IsBatchTranslationSupported => false;
-
+        public bool IsLocalTokenCountSupported => true;
+        public BillingUnit UnitType => BillingUnit.Token;
         #endregion
 
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
 
         // ▼▼▼ 【方法重写】重写整个 TranslateAsync 方法以支持 CancellationToken ▼▼▼
         // ▼▼▼ 请用此方法完整替换旧的 TranslateAsync 方法 ▼▼▼
-        public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
@@ -99,7 +100,7 @@ namespace CADTranslator.Services.Translation
 
                 if (completion.Content != null && completion.Content.Any())
                     {
-                    return completion.Content[0].Text.Trim();
+                    return (completion.Content[0].Text.Trim(),null);
                     }
 
                 throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API未返回任何内容。完成原因: {completion.FinishReason}");
@@ -122,7 +123,7 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
-        public Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
             throw new NotSupportedException("当前OpenAI集成不支持批量翻译。");
             }
@@ -136,7 +137,7 @@ namespace CADTranslator.Services.Translation
             throw new NotSupportedException("OpenAI API 服务不支持在线查询余额。");
             }
 
-        public Task<int> CountTokensAsync(string textToCount)
+        public Task<int> CountTokensAsync(string textToCount, CancellationToken cancellationToken)
             {
             throw new NotSupportedException("当前OpenAI集成不支持计算Token。");
             }

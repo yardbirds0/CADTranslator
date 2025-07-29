@@ -18,6 +18,40 @@ namespace CADTranslator.Services.Translation
     {
     public class ChatAnywhereTranslator : ITranslator
         {
+        #region --- 内部数据模型 ---
+
+        // 用于反序列化 usage 字段
+        private class ChatAnywhereUsage
+            {
+            [JsonProperty("prompt_tokens")]
+            public long PromptTokens { get; set; }
+            [JsonProperty("completion_tokens")]
+            public long CompletionTokens { get; set; }
+            [JsonProperty("total_tokens")]
+            public long TotalTokens { get; set; }
+            }
+
+        // 用于反序列化完整的API响应
+        private class ChatAnywhereResponse
+            {
+            [JsonProperty("choices")]
+            public List<Choice> Choices { get; set; }
+            [JsonProperty("usage")]
+            public ChatAnywhereUsage Usage { get; set; }
+            }
+        private class Choice
+            {
+            [JsonProperty("message")]
+            public Message Message { get; set; }
+            }
+        private class Message
+            {
+            [JsonProperty("content")]
+            public string Content { get; set; }
+            }
+
+        #endregion
+
         #region --- 字段 ---
 
         private readonly Lazy<HttpClient> _lazyHttpClient;
@@ -33,7 +67,6 @@ namespace CADTranslator.Services.Translation
             {
             if (string.IsNullOrWhiteSpace(apiEndpoint))
                 throw new ApiException(ApiErrorType.ConfigurationError, ApiServiceType.ChatAnywhere, "API URL (终结点) 不能为空。");
-
             if (string.IsNullOrWhiteSpace(apiKey))
                 throw new ApiException(ApiErrorType.ConfigurationError, ApiServiceType.ChatAnywhere, "API 密钥不能为空。");
 
@@ -55,8 +88,7 @@ namespace CADTranslator.Services.Translation
 
         public ApiServiceType ServiceType => ApiServiceType.ChatAnywhere;
         public string DisplayName => "ChatAnywhere";
-        public string ApiDocumentationUrl => "https://api.chatanywhere.tech"; // 从服务器URL推断
-
+        public string ApiDocumentationUrl => "https://api.chatanywhere.tech";
         #endregion
 
         #region --- 2. 能力声明 (ITranslator 实现) ---
@@ -67,15 +99,16 @@ namespace CADTranslator.Services.Translation
         public bool IsModelRequired => true;
         public bool IsPromptSupported => true;
         public bool IsModelFetchingSupported => true;
-        public bool IsBalanceCheckSupported => true; // 文档中提供了用量查询接口
-        public bool IsTokenCountSupported => false; // 文档中未提及
+        public bool IsBalanceCheckSupported => true;
+        public bool IsTokenCountSupported => true;
+        public bool IsLocalTokenCountSupported => true;
         public bool IsBatchTranslationSupported => false;
-
+        public BillingUnit UnitType => BillingUnit.Token;
         #endregion
 
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
 
-        public async Task<string> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
@@ -107,12 +140,26 @@ namespace CADTranslator.Services.Translation
                 string jsonResponse = await response.Content.ReadAsStringAsync();
                 try
                     {
-                    var data = JObject.Parse(jsonResponse);
-                    var translatedText = data["choices"]?[0]?["message"]?["content"]?.ToString();
+                    // 反序列化为我们定义的完整响应模型
+                    var data = JsonConvert.DeserializeObject<ChatAnywhereResponse>(jsonResponse);
+                    var translatedText = data?.Choices?.FirstOrDefault()?.Message?.Content;
+
                     if (translatedText == null)
                         throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API响应中缺少有效的'content'字段。");
 
-                    return translatedText.Trim();
+                    // 创建并填充我们标准化的 TranslationUsage 对象
+                    TranslationUsage usage = null;
+                    if (data.Usage != null)
+                        {
+                        usage = new TranslationUsage
+                            {
+                            PromptTokens = data.Usage.PromptTokens,
+                            CompletionTokens = data.Usage.CompletionTokens,
+                            TotalTokens = data.Usage.TotalTokens
+                            };
+                        }
+
+                    return (translatedText.Trim(), usage);
                     }
                 catch (JsonException ex)
                     {
@@ -130,7 +177,7 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
-        public Task<List<string>> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
             {
             throw new NotSupportedException("ChatAnywhere 服务不支持批量翻译。");
             }
@@ -182,7 +229,7 @@ namespace CADTranslator.Services.Translation
                     var requestData = new
                         {
                         model = "%",
-                        hours = 24
+                        hours = 8760
                         };
 
                     string jsonPayload = JsonConvert.SerializeObject(requestData);
@@ -211,8 +258,8 @@ namespace CADTranslator.Services.Translation
 
                         var balanceInfo = new List<KeyValuePair<string, string>>
                         {
-                            new KeyValuePair<string, string>("查询范围", "过去24小时"),
-                            new KeyValuePair<string, string>("总成本(cost)", $"{totalCost:F4}"),
+                            new KeyValuePair<string, string>("查询范围", "过去1年"),
+                            new KeyValuePair<string, string>("消耗费用(cost)", $"{totalCost:F4}"),
                             new KeyValuePair<string, string>("总请求数(count)", totalRequests.ToString()),
                             new KeyValuePair<string, string>("总Tokens(totalTokens)", totalTokens.ToString()),
                             new KeyValuePair<string, string>("输入Tokens(promptTokens)", totalPromptTokens.ToString()),
@@ -236,7 +283,7 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
-        public Task<int> CountTokensAsync(string textToCount)
+        public Task<int> CountTokensAsync(string textToCount, CancellationToken cancellationToken)
             {
             throw new NotSupportedException("ChatAnywhere 服务不支持计算Token。");
             }
