@@ -104,11 +104,13 @@
             <StackPanel Orientation="Horizontal"
                         HorizontalAlignment="Right">
                 <ui:Button Content="保存"
-                           Click="SaveButton_Click"
+                           Command="{Binding SaveCommand}"
+                           CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}"
                            IsDefault="True"
                            Appearance="Primary" />
                 <ui:Button Content="取消"
-                           Click="CancelButton_Click"
+                           Command="{Binding CancelCommand}"
+                           CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}"
                            IsCancel="True"
                            Margin="10,0,0,0" />
             </StackPanel>

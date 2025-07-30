@@ -227,6 +227,7 @@
     <Compile Include="Services\Tokenization\GptTokenizationService.cs" />
     <Compile Include="Services\Tokenization\ITokenizationService.cs" />
     <Compile Include="Services\Translation\ChatAnywhereTranslator.cs" />
+    <Compile Include="Services\Translation\PromptTemplateManager.cs" />
     <Compile Include="Tools\Behaviors\EllipseProgressBehavior.cs" />
     <Compile Include="Tools\CAD\GeometryHelper.cs" />
     <Compile Include="Tools\CAD\Jigs\BreakLineJig.cs" />
@@ -282,6 +283,7 @@
     <Compile Include="ViewModels\ModelManagementViewModel.cs" />
     <Compile Include="ViewModels\ModelViewModel.cs" />
     <Compile Include="ViewModels\RelayCommand.cs" />
+    <Compile Include="ViewModels\TestResultViewModel.cs" />
     <Compile Include="ViewModels\TranslatorViewModel.cs" />
     <Compile Include="Models\CAD\ParagraphInfo.cs" />
     <Compile Include="Models\CAD\TextBlock.cs" />

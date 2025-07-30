@@ -71,7 +71,7 @@ namespace CADTranslator.Services.Translation
 
             _lazyHttpClient = new Lazy<HttpClient>(() =>
             {
-                var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                var client = new HttpClient { Timeout = TimeSpan.FromSeconds(180) };
                 client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
                 return client;
             });
@@ -97,41 +97,59 @@ namespace CADTranslator.Services.Translation
 
         #region --- 核心与扩展功能 ---
 
-        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
             {
-            // 单句翻译直接复用批量翻译逻辑，效率更高
-            var (translatedTexts, usage) = await TranslateBatchAsync(new List<string> { textToTranslate }, fromLanguage, toLanguage, cancellationToken);
+            // ▼▼▼ 【核心修改】在这里的调用中，传入 promptTemplate ▼▼▼
+            var (translatedTexts, usage) = await TranslateBatchAsync(new List<string> { textToTranslate }, fromLanguage, toLanguage, promptTemplate, cancellationToken);
+            // ▲▲▲ 修改结束 ▲▲▲
             return (translatedTexts.FirstOrDefault() ?? string.Empty, usage);
             }
 
-        public async Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
             if (textsToTranslate == null || !textsToTranslate.Any())
                 return (new List<string>(), null);
 
+            // 准备请求内容
+            string textsAsJsonArray = JsonConvert.SerializeObject(textsToTranslate);
+            string prompt = promptTemplate
+                .Replace("{fromLanguage}", fromLanguage)
+                .Replace("{toLanguage}", toLanguage)
+                .Replace(" just return the translated text.", " Your response MUST be a JSON array of strings, with each string being the translation of the corresponding string in the input array. Maintain the same order. Do not add any extra explanations or content outside of the JSON array.")
+                + $"\n\nInput JSON array:\n---\n{textsAsJsonArray}\n---";
+
+            var requestData = new
+                {
+                model = _model,
+                messages = new[] { new { role = "user", content = prompt } },
+                response_format = new { type = "json_object" },
+                stream = false
+                };
+
+            string jsonPayload = JsonConvert.SerializeObject(requestData);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            string requestUrl = $"{_endpoint}/chat/completions";
+
+            // 启动“主部队”翻译任务，它受180秒总超时和用户取消按钮的控制
+            var mainTranslationTask = _lazyHttpClient.Value.PostAsync(requestUrl, content, cancellationToken);
+
+            // 启动一个15秒的“连接超时闹钟”
+            var connectionTimeoutTask = Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
+
+            // 等待，看是“主部队”先完成，还是“闹钟”先响
+            var completedTask = await Task.WhenAny(mainTranslationTask, connectionTimeoutTask);
+
+            // 分析“赛跑”结果
+            if (completedTask == connectionTimeoutTask)
+                {
+                }
+
+            // 无论谁先完成，我们最终都必须等待“主部队”返回最终结果
             try
                 {
-                string textsAsJsonArray = JsonConvert.SerializeObject(textsToTranslate);
-                string prompt = $"You are a professional translator for Civil Engineering drawings. Your task is to translate a JSON array of strings from {fromLanguage} to {toLanguage}. Your response MUST be a JSON array of strings, with each string being the translation of the corresponding string in the input array. Maintain the same order. Do not add any extra explanations or content outside of the JSON array.\n\nInput JSON array:\n---\n{textsAsJsonArray}\n---";
-
-                var requestData = new
-                    {
-                    model = _model,
-                    messages = new[]
-                    {
-                        new { role = "user", content = prompt }
-                    },
-                    response_format = new { type = "json_object" },
-                    stream = false
-                    };
-
-                string jsonPayload = JsonConvert.SerializeObject(requestData);
-                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-                string requestUrl = $"{_endpoint}/chat/completions";
-
-                var response = await _lazyHttpClient.Value.PostAsync(requestUrl, content, cancellationToken);
+                var response = await mainTranslationTask;
 
                 if (!response.IsSuccessStatusCode)
                     {
@@ -139,46 +157,29 @@ namespace CADTranslator.Services.Translation
                     }
 
                 string jsonResponse = await response.Content.ReadAsStringAsync();
-                try
-                    {
-                    var data = JsonConvert.DeserializeObject<SiliconFlowResponse>(jsonResponse);
-                    var responseContent = data?.Choices?.FirstOrDefault()?.Message?.Content;
 
-                    if (responseContent == null)
-                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API响应中缺少有效的'content'字段。");
-
-                    var cleanedContent = responseContent.Trim().Trim('`').Replace("json", "").Trim();
-                    var translatedList = JsonConvert.DeserializeObject<List<string>>(cleanedContent);
-
-                    if (translatedList == null || translatedList.Count != textsToTranslate.Count)
-                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API返回的翻译结果数量 ({translatedList?.Count ?? 0}) 与原文数量 ({textsToTranslate.Count}) 不匹配。");
-
-                    TranslationUsage usage = null;
-                    if (data.Usage != null)
-                        {
-                        usage = new TranslationUsage
-                            {
-                            PromptTokens = data.Usage.PromptTokens,
-                            CompletionTokens = data.Usage.CompletionTokens,
-                            TotalTokens = data.Usage.TotalTokens
-                            };
-                        }
-
-                    return (translatedList, usage);
-                    }
-                catch (JsonException ex)
-                    {
-                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法将API返回的内容解析为JSON数组: {ex.Message}");
-                    }
+                var data = JsonConvert.DeserializeObject<SiliconFlowResponse>(jsonResponse);
+                var responseContent = data?.Choices?.FirstOrDefault()?.Message?.Content;
+                if (responseContent == null) throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API响应中缺少有效的'content'字段。");
+                var cleanedContent = responseContent.Trim().Trim('`').Replace("json", "").Trim();
+                var translatedList = JsonConvert.DeserializeObject<List<string>>(cleanedContent);
+                if (translatedList == null || translatedList.Count != textsToTranslate.Count) throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API返回的翻译结果数量 ({translatedList?.Count ?? 0}) 与原文数量 ({textsToTranslate.Count}) 不匹配。");
+                TranslationUsage usage = null;
+                if (data.Usage != null) { usage = new TranslationUsage { PromptTokens = data.Usage.PromptTokens, CompletionTokens = data.Usage.CompletionTokens, TotalTokens = data.Usage.TotalTokens }; }
+                return (translatedList, usage);
                 }
             catch (TaskCanceledException)
                 {
-                if (cancellationToken.IsCancellationRequested) throw;
-                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求超时。请检查网络连接或VPN设置。");
+                // 如果在这里捕获到取消异常，有两种可能：
+                // 1. connectionTimeoutTask 触发了外部 cancellationToken 的取消（用户点击了按钮）
+                // 2. mainTranslationTask 自身因180秒总超时而取消
+                if (cancellationToken.IsCancellationRequested) throw; // 用户取消
+                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求总超时 (超过180秒)。");
                 }
-            catch (HttpRequestException ex)
+            catch (Exception ex)
                 {
-                throw new ApiException(ApiErrorType.NetworkError, ServiceType, $"网络请求失败: {ex.Message}");
+                // 捕获其他网络或解析错误
+                throw new ApiException(ApiErrorType.ApiError, ServiceType, $"翻译过程中发生错误: {ex.Message}");
                 }
             }
 
@@ -187,29 +188,48 @@ namespace CADTranslator.Services.Translation
             const string modelListUrl = "https://api.siliconflow.cn/v1/models";
             try
                 {
-                var response = await _lazyHttpClient.Value.GetAsync(modelListUrl, cancellationToken);
-                if (!response.IsSuccessStatusCode)
+                using (var request = new HttpRequestMessage(HttpMethod.Get, modelListUrl))
                     {
-                    await HandleApiError(response);
-                    }
-                string jsonResponse = await response.Content.ReadAsStringAsync();
-                try
-                    {
-                    var responseObject = JObject.Parse(jsonResponse);
-                    var modelsArray = responseObject["data"] as JArray;
-                    if (modelsArray == null)
-                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "在模型列表API响应中未找到'data'数组。");
-                    return modelsArray.Select(m => m["id"]?.ToString() ?? string.Empty).ToList();
-                    }
-                catch (JsonException ex)
-                    {
-                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法解析模型列表API的响应: {ex.Message}");
+                    HttpResponseMessage response;
+                    using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                        {
+                        connectCts.CancelAfter(TimeSpan.FromSeconds(15));
+                        try
+                            {
+                            response = await _lazyHttpClient.Value.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, connectCts.Token);
+                            }
+                        catch (OperationCanceledException)
+                            {
+                            if (cancellationToken.IsCancellationRequested) throw;
+                            throw new ApiException(ApiErrorType.NetworkError, ServiceType, "获取模型列表连接超时 (超过15秒)。");
+                            }
+                        }
+
+                    if (!response.IsSuccessStatusCode)
+                        {
+                        await HandleApiError(response);
+                        }
+
+                    string jsonResponse = await response.Content.ReadAsStringAsync();
+
+                    try
+                        {
+                        var responseObject = JObject.Parse(jsonResponse);
+                        var modelsArray = responseObject["data"] as JArray;
+                        if (modelsArray == null)
+                            throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "在模型列表API响应中未找到'data'数组。");
+                        return modelsArray.Select(m => m["id"]?.ToString() ?? string.Empty).ToList();
+                        }
+                    catch (JsonException ex)
+                        {
+                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法解析模型列表API的响应: {ex.Message}");
+                        }
                     }
                 }
             catch (TaskCanceledException)
                 {
                 if (cancellationToken.IsCancellationRequested) throw;
-                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "获取模型列表请求超时。");
+                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "获取模型列表请求被取消或总超时 (超过180秒)。");
                 }
             catch (HttpRequestException ex)
                 {
@@ -222,34 +242,52 @@ namespace CADTranslator.Services.Translation
             const string userInfoUrl = "https://api.siliconflow.cn/v1/user/info";
             try
                 {
-                var response = await _lazyHttpClient.Value.GetAsync(userInfoUrl, CancellationToken.None);
-                if (!response.IsSuccessStatusCode)
+                using (var request = new HttpRequestMessage(HttpMethod.Get, userInfoUrl))
                     {
-                    await HandleApiError(response);
-                    }
-                string jsonResponse = await response.Content.ReadAsStringAsync();
-                try
-                    {
-                    var userData = JObject.Parse(jsonResponse)["data"] as JObject;
-                    if (userData == null)
-                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "在用户信息API响应中未找到'data'对象。");
-
-                    var balanceInfo = new List<KeyValuePair<string, string>>();
-                    foreach (var property in userData.Properties())
+                    HttpResponseMessage response;
+                    using (var connectCts = new CancellationTokenSource()) // CheckBalanceAsync没有外部Token
                         {
-                        string value = property.Name == "totalBalance" ? $"{property.Value} ¥" : property.Value.ToString();
-                        balanceInfo.Add(new KeyValuePair<string, string>(property.Name, value));
+                        connectCts.CancelAfter(TimeSpan.FromSeconds(15));
+                        try
+                            {
+                            response = await _lazyHttpClient.Value.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, connectCts.Token);
+                            }
+                        catch (OperationCanceledException)
+                            {
+                            throw new ApiException(ApiErrorType.NetworkError, ServiceType, "查询余额连接超时 (超过15秒)。");
+                            }
                         }
-                    return balanceInfo;
-                    }
-                catch (JsonException ex)
-                    {
-                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法解析用户信息API的响应: {ex.Message}");
+
+                    if (!response.IsSuccessStatusCode)
+                        {
+                        await HandleApiError(response);
+                        }
+
+                    string jsonResponse = await response.Content.ReadAsStringAsync();
+
+                    try
+                        {
+                        var userData = JObject.Parse(jsonResponse)["data"] as JObject;
+                        if (userData == null)
+                            throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "在用户信息API响应中未找到'data'对象。");
+
+                        var balanceInfo = new List<KeyValuePair<string, string>>();
+                        foreach (var property in userData.Properties())
+                            {
+                            string value = property.Name == "totalBalance" ? $"{property.Value} ¥" : property.Value.ToString();
+                            balanceInfo.Add(new KeyValuePair<string, string>(property.Name, value));
+                            }
+                        return balanceInfo;
+                        }
+                    catch (JsonException ex)
+                        {
+                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法解析用户信息API的响应: {ex.Message}");
+                        }
                     }
                 }
             catch (TaskCanceledException)
                 {
-                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "查询余额请求超时。");
+                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "查询余额请求被取消或总超时 (超过180秒)。");
                 }
             catch (HttpRequestException ex)
                 {

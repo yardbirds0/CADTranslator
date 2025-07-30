@@ -5,6 +5,7 @@ using CADTranslator.Models.CAD;
 using CADTranslator.Services.CAD;
 using CADTranslator.Services.Settings;
 using CADTranslator.Tools.CAD.Jigs;
+using CADTranslator.ViewModels;
 using NetTopologySuite.Index.Strtree;
 using System;
 using System.Collections.Generic;
@@ -21,66 +22,40 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using NtsGeometry = NetTopologySuite.Geometries.Geometry;
 using TextBlock = System.Windows.Controls.TextBlock;
 using WinPoint = System.Windows.Point;
 
 namespace CADTranslator.Views
     {
-    public partial class TestResultWindow : Window, INotifyPropertyChanged
+    public partial class TestResultWindow : Window
         {
         #region --- 字段与属性 ---
 
         private readonly Document _doc;
-        private readonly List<LayoutTask> _originalTargets;
-        private readonly List<Entity> _rawObstacles;
         private readonly List<Tuple<Extents3d, string>> _obstaclesForReport;
         private readonly List<NtsGeometry> _preciseObstacles;
         private readonly string _preciseReport;
         private readonly Dictionary<ObjectId, NtsGeometry> _obstacleIdMap;
         private readonly STRtree<NtsGeometry> _obstacleIndex = new STRtree<NtsGeometry>();
+        private readonly TestResultViewModel _viewModel;
+        private readonly List<LayoutTask> _originalTargets;
+        private readonly List<Entity> _rawObstacles;
 
         private readonly Dictionary<ObjectId, Size> _textSizeCache = new Dictionary<ObjectId, Size>();
         private readonly Dictionary<ObjectId, Size> _translatedSizeCache = new Dictionary<ObjectId, Size>();
 
-        private readonly SettingsService _settingsService = new SettingsService();
-        private AppSettings _settings;
+
 
         private Matrix _transformMatrix;
         private bool _isDrawing = false;
-        private bool _isRecalculating = false;
         private LayoutTask _draggedTask = null;
         private Path _highlightedObstaclePath = null;
-        private int _numberOfRounds;
-        private double _currentSearchRangeFactor;
         private WinPoint _lastMousePosition;
         private Matrix _canvasMatrix;
         private bool _isLoaded = false;
         private bool _canvasInitialized = false;
-
-        public ObservableCollection<int> RoundOptions { get; set; }
-        public ObservableCollection<double> SearchRangeOptions { get; set; }
-
-        public int NumberOfRounds
-            {
-            get => _numberOfRounds;
-            set { if (SetField(ref _numberOfRounds, value)) { if (_isLoaded) { SaveSettings(); } } }
-            }
-        public double CurrentSearchRangeFactor
-            {
-            get => _currentSearchRangeFactor;
-            set
-                {
-                if (SetField(ref _currentSearchRangeFactor, value))
-                    {
-                    SaveSettings();
-                    foreach (var task in _originalTargets)
-                        {
-                        task.SearchRangeFactor = _currentSearchRangeFactor;
-                        }
-                    }
-                }
-            }
         #endregion
 
         #region --- 构造函数与加载事件 ---
@@ -88,70 +63,40 @@ namespace CADTranslator.Views
         public TestResultWindow(List<LayoutTask> targets, List<Entity> rawObstacles, List<Tuple<Extents3d, string>> obstaclesForReport, List<NtsGeometry> preciseObstacles, string preciseReport, Dictionary<ObjectId, NtsGeometry> obstacleIdMap, (int rounds, double bestScore, double worstScore) summary)
             {
             InitializeComponent();
-            DataContext = this;
+            _viewModel = new TestResultViewModel(this, targets, rawObstacles, summary);
+            DataContext = _viewModel;
+
             _doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-
-            // 【修复BUG】在构造函数中，立刻将传入的译文，保存到我们新的“原始译文”属性中
-            _originalTargets = targets.Select(t =>
-            {
-                var newTask = new LayoutTask(t);
-                newTask.PristineTranslatedText = newTask.TranslatedText; // 保存原始译文
-                return newTask;
-            }).ToList();
-
-            _settings = _settingsService.LoadSettings();
-            NumberOfRounds = _settings.TestNumberOfRounds;
-            CurrentSearchRangeFactor = _settings.TestSearchRangeFactor;
-
+            _originalTargets = targets;
             _rawObstacles = rawObstacles;
             _obstaclesForReport = obstaclesForReport;
             _preciseReport = preciseReport;
             _preciseObstacles = preciseObstacles;
             _obstacleIdMap = obstacleIdMap;
 
-            SearchRangeOptions = new ObservableCollection<double> { 5.0, 8.0, 10.0, 15.0, 20.0 };
-            if (!SearchRangeOptions.Contains(CurrentSearchRangeFactor))
-                {
-                SearchRangeOptions.Add(CurrentSearchRangeFactor);
-                }
-            foreach (var task in _originalTargets)
-                {
-                task.SearchRangeFactor = CurrentSearchRangeFactor;
-                }
             foreach (var obstacle in _preciseObstacles)
                 {
                 _obstacleIndex.Insert(obstacle.EnvelopeInternal, obstacle);
                 }
 
-            RoundOptions = new ObservableCollection<int> { 10, 50, 100, 200, 500, 1000 };
-            if (NumberOfRounds < RoundsSlider.Minimum)
-                {
-                NumberOfRounds = (int)RoundsSlider.Minimum;
-                }
-
             this.Loaded += (s, e) => TestResultWindow_Loaded(s, e, summary);
             this.SizeChanged += (s, e) => DrawLayout();
+            this.ContentRendered += TestResultWindow_ContentRendered;
             }
+
 
         private void TestResultWindow_Loaded(object sender, RoutedEventArgs e, (int rounds, double bestScore, double worstScore) summary)
             {
             _canvasMatrix = CanvasTransform.Matrix;
             RoundsSlider.AddHandler(Thumb.DragCompletedEvent, new DragCompletedEventHandler(Slider_DragCompleted));
-            RoundsComboBox.LostFocus += RoundsComboBox_LostFocus;
-            SearchRangeComboBox.LostFocus += SearchRangeComboBox_LostFocus;
-            UpdateSummary(summary);
-            RoundsComboBox.Text = this.NumberOfRounds.ToString();
 
             var obstaclesReport = new StringBuilder();
+
             obstaclesReport.AppendLine($"共分析 {_obstaclesForReport.Count} 个初始障碍物 (基于边界框)：");
             obstaclesReport.AppendLine("========================================");
             _obstaclesForReport.ForEach(obs => obstaclesReport.AppendLine($"--- [类型: {obs.Item2}] Min: {obs.Item1.MinPoint}, Max: {obs.Item1.MaxPoint}"));
             ObstaclesTextBox.Text = obstaclesReport.ToString();
             PreciseObstaclesTextBox.Text = _preciseReport;
-
-            ReportListView.ItemsSource = _originalTargets;
-            RoundsSlider.Value = this.NumberOfRounds;
-            RoundsComboBox.Text = this.NumberOfRounds.ToString();
             _isLoaded = true;
 
             PreCacheAllTextSizes();
@@ -161,52 +106,19 @@ namespace CADTranslator.Views
         #endregion
 
         #region --- 核心重算逻辑
-        private async void RecalculateAndRedraw()
+        public void ForceRedraw()
             {
-            if (!this.IsLoaded || _isRecalculating) return;
-
-            _canvasInitialized = false; // 强制重绘
+            _canvasInitialized = false;
             DrawLayout();
-            _isRecalculating = false;
-            SummaryTextBlock.Text = $"正在使用 {NumberOfRounds} 轮次进行新一轮推演，请稍候...";
-
-            var newSummary = await Task.Run(() =>
-            {
-                foreach (var task in _originalTargets)
-                    {
-                    task.BestPosition = null;
-                    task.AlgorithmPosition = null;
-                    task.CurrentUserPosition = null;
-                    task.IsManuallyMoved = false;
-                    task.FailureReason = null;
-                    task.CollisionDetails.Clear();
-                    }
-
-                var calculator = new LayoutCalculator();
-                return calculator.CalculateLayouts(_originalTargets, _rawObstacles, NumberOfRounds);
-            });
-
-            UpdateSummary(newSummary);
-            ReportListView.ItemsSource = null;
-            ReportListView.ItemsSource = _originalTargets;
-            DrawLayout();
-
-            _isRecalculating = false;
             }
-
         private void Slider_DragCompleted(object sender, DragCompletedEventArgs e)
             {
-            RecalculateAndRedraw();
+            if (_viewModel.RecalculateLayoutCommand.CanExecute(null))
+                {
+                _viewModel.RecalculateLayoutCommand.Execute(null);
+                }
             }
 
-        private void UpdateSummary((int rounds, double bestScore, double worstScore) summary)
-            {
-            var summaryText = new StringBuilder();
-            summaryText.AppendLine($"总推演轮次: {summary.rounds} 轮");
-            summaryText.AppendLine($"最佳布局评分: {summary.bestScore:F2}");
-            summaryText.AppendLine($"最差布局评分: {summary.worstScore:F2}");
-            SummaryTextBlock.Text = summaryText.ToString();
-            }
         #endregion
 
         #region --- 核心绘图逻辑 ---
@@ -721,6 +633,8 @@ namespace CADTranslator.Views
             Canvas.SetLeft(containerGrid, positionInCanvas.X);
             Canvas.SetTop(containerGrid, positionInCanvas.Y);
             Panel.SetZIndex(containerGrid, 50);
+            containerGrid.Visibility = System.Windows.Visibility.Collapsed;
+            containerGrid.Visibility = System.Windows.Visibility.Visible;
 
             // 8. 返回这个复合控件
             return containerGrid;
@@ -967,81 +881,6 @@ namespace CADTranslator.Views
             }
         #endregion
 
-        #region --- INotifyPropertyChanged & Settings ---
-
-        public event PropertyChangedEventHandler PropertyChanged;
-        protected bool SetField<T>(ref T field, T value, [CallerMemberName] string propertyName = null)
-            {
-            if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-            field = value;
-            OnPropertyChanged(propertyName);
-            return true;
-            }
-        protected void OnPropertyChanged([CallerMemberName] string propertyName = null)
-            {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-            }
-
-        private void SaveSettings()
-            {
-            _settings.TestNumberOfRounds = this.NumberOfRounds;
-            _settings.TestSearchRangeFactor = this.CurrentSearchRangeFactor;
-            _settingsService.SaveSettings(_settings);
-            }
-
-        private void RoundsComboBox_LostFocus(object sender, RoutedEventArgs e)
-            {
-            if (sender is ComboBox comboBox)
-                {
-                if (int.TryParse(comboBox.Text, out int value))
-                    {
-                    int clampedValue = (int)Math.Max(RoundsSlider.Minimum, Math.Min(RoundsSlider.Maximum, value));
-                    if (this.NumberOfRounds != clampedValue)
-                        {
-                        this.NumberOfRounds = clampedValue;
-                        }
-                    comboBox.Text = this.NumberOfRounds.ToString();
-                    }
-                else
-                    {
-                    comboBox.Text = this.NumberOfRounds.ToString();
-                    }
-                }
-            }
-        private void SearchRangeComboBox_LostFocus(object sender, RoutedEventArgs e)
-            {
-            if (sender is ComboBox comboBox)
-                {
-                if (double.TryParse(comboBox.Text, out double value) && value > 0)
-                    {
-                    if (this.CurrentSearchRangeFactor != value)
-                        {
-                        this.CurrentSearchRangeFactor = value;
-                        }
-                    }
-                comboBox.Text = this.CurrentSearchRangeFactor.ToString("F1");
-                }
-            }
-        #endregion
-
-        #region --- 按钮点击事件 ---
-        private void RecalculateButton_Click(object sender, RoutedEventArgs e)
-            {
-            RecalculateAndRedraw();
-            }
-
-        private void ApplyButton_Click(object sender, RoutedEventArgs e)
-            {
-            var tasksToApply = _originalTargets;
-            CadBridgeService.LayoutTasksToApply = tasksToApply;
-            CadBridgeService.SendCommandToAutoCAD("TEST_APPLY\n");
-            this.Close();
-            }
-        #endregion
-        // <summary>
-        /// 【核心新增】一个专用于WPF预览的、轻量级的文本换行方法。
-        /// 它使用WPF的FormattedText进行近似测量，与AutoCAD完全无关，用于实现流畅的拖动预览。
-        /// </summary>
         private string GetWpfWrappedText(string text, double maxWidth, TextBlock textBlock)
             {
             var lines = new List<string>();
@@ -1081,6 +920,18 @@ namespace CADTranslator.Views
 
             return string.Join("\n", lines);
             }
+
+        private void TestResultWindow_ContentRendered(object sender, EventArgs e)
+            {
+            // 确保是在所有初始化完成后执行
+            if (!_isLoaded || !_canvasInitialized) return;
+
+            // 1. 强制画布和所有子元素重新计算布局
+            PreviewCanvas.UpdateLayout();
+
+            // 2. 通知WPF，整个画布的视觉呈现已失效，需要完全重绘
+            PreviewCanvas.InvalidateVisual();
+            }
         }
     }
 
@@ -1107,4 +958,3 @@ public static class LayoutTaskExtensionsForView
         return new Extents3d(minPoint, maxPoint);
         }
     }
-// ▲▲▲ 新增结束 ▲▲▲

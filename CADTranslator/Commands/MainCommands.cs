@@ -18,14 +18,19 @@ using CADTranslator.Services.Settings;
 using CADTranslator.Services.Translation;
 using CADTranslator.Tools.CAD.Jigs;
 using CADTranslator.Views;
+using CADTranslator.Services.UI;
+using CADTranslator.Services.Tokenization;
+using CADTranslator.ViewModels;
 using Exception = System.Exception;
 using NtsGeometry = NetTopologySuite.Geometries.Geometry;
+using System.Windows;
+using Application = Autodesk.AutoCAD.ApplicationServices.Application;
 
 
 namespace CADTranslator.AutoCAD.Commands
-{
-    public class MainCommands
     {
+    public class MainCommands
+        {
         private static TranslatorWindow translatorWindow;
 
         /// <summary>
@@ -33,9 +38,9 @@ namespace CADTranslator.AutoCAD.Commands
         ///     这是注册程序集解析事件的最佳位置。
         /// </summary>
         static MainCommands()
-        {
+            {
             AppDomain.CurrentDomain.AssemblyResolve += ResolveAssembly;
-        }
+            }
 
         #region 当.NET运行时找不到某个程序集时，会调用这个方法。用来解决没有app.config
 
@@ -96,24 +101,58 @@ namespace CADTranslator.AutoCAD.Commands
 
         [CommandMethod("GJX")]
         public void LaunchToolbox()
-        {
-            if (translatorWindow == null || !translatorWindow.IsLoaded)
             {
-                translatorWindow = new TranslatorWindow();
+            if (translatorWindow == null || !translatorWindow.IsLoaded)
+                {
+                // ▼▼▼ 【核心修改】将ViewModel的创建逻辑移到这里 ▼▼▼
+
+                // 1. 创建服务实例 (这些代码是从 TranslatorWindow.xaml.cs 移过来的)
+                // 注意：这里我们需要一个临时的 window 引用来创建 WindowService，
+                // 但我们不能在创建服务时就传入 translatorWindow，因为它还没被创建。
+                // 所以我们先创建一个临时的、不可见的窗口来初始化服务。
+                var tempOwnerForService = new Window();
+                IWindowService windowService = new WindowService(tempOwnerForService);
+
+                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                IAdvancedTextService advancedTextService = new AdvancedTextService(doc);
+                ICadLayoutService cadLayoutService = new CadLayoutService(doc);
+                ISettingsService settingsService = new SettingsService();
+                ApiRegistry apiRegistry = new ApiRegistry();
+                ITokenizationService tokenizationService = new GptTokenizationService();
+
+                // 2. 将所有创建好的服务，注入到ViewModel的构造函数中
+                var viewModel = new TranslatorViewModel(
+                    windowService,
+                    settingsService,
+                    advancedTextService,
+                    cadLayoutService,
+                    tokenizationService,
+                    apiRegistry
+                );
+
+                // 3. 创建真正的窗口实例，并将ViewModel注入
+                translatorWindow = new TranslatorWindow(viewModel);
+
+                // 4. 【重要】用真实的窗口实例，重新初始化 WindowService
+                // 这样，ViewModel 中持有的 windowService 才能正确地操作 translatorWindow
+                (windowService as WindowService)?.Initialize(translatorWindow);
+
+
+                // 5. 设置窗口所有者并显示 (这部分逻辑保持不变)
                 new WindowInteropHelper(translatorWindow).Owner = Application.MainWindow.Handle;
                 translatorWindow.Show();
-            }
+                }
             else
-            {
+                {
                 translatorWindow.Activate();
                 if (!translatorWindow.IsVisible)
                     translatorWindow.Show();
+                }
             }
-        }
 
         [CommandMethod("JDX")]
         public void DrawBreakLineCommand()
-        {
+            {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
             var db = doc.Database;
@@ -128,18 +167,18 @@ namespace CADTranslator.AutoCAD.Commands
 
             if (result.Status == PromptStatus.OK)
                 using (var tr = db.TransactionManager.StartTransaction())
-                {
+                    {
                     var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
                     var finalPolyline = jig.Polyline;
                     if (finalPolyline != null)
-                    {
+                        {
                         modelSpace.AppendEntity(finalPolyline);
                         tr.AddNewlyCreatedDBObject(finalPolyline, true);
-                    }
+                        }
 
                     tr.Commit();
-                }
-        }
+                    }
+            }
 
 
         // 文件路径: CADTranslator/Commands/MainCommands.cs
@@ -265,37 +304,37 @@ namespace CADTranslator.AutoCAD.Commands
             }
 
         private void SelOpts_KeywordInput(object sender, SelectionTextInputEventArgs e)
-        {
+            {
             throw new NotImplementedException();
-        }
+            }
 
         [CommandMethod("WZXHX")]
         public void AddUnderlineCommand()
-        {
+            {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
 
             try
-            {
+                {
                 // 1. 创建服务实例
                 var underlineService = new UnderlineService(doc);
                 // 2. 创建默认选项实例
                 var options = new UnderlineOptions();
                 // 3. 执行核心功能
                 underlineService.AddUnderlinesToSelectedText(options);
-            }
+                }
             catch (Exception ex)
-            {
+                {
                 doc.Editor.WriteMessage($"\n[ZJXHX] 命令执行时发生顶层错误: {ex.Message}");
+                }
             }
-        }
 
         /// <summary>
         ///     【这是新的核心逻辑方法】
         ///     一个可被外部直接调用的静态方法，负责执行应用翻译到图纸的完整逻辑。
         /// </summary>
         public static void ExecuteApplyLayoutLogic()
-        {
+            {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
             var editor = doc.Editor;
@@ -304,17 +343,17 @@ namespace CADTranslator.AutoCAD.Commands
             var textBlockList = CadBridgeService.TextBlocksToLayout;
 
             if (textBlockList == null || !textBlockList.Any())
-            {
+                {
                 // 如果没有数据，可能是异常情况，直接返回
                 // 并且重新显示WPF窗口，让用户可以继续操作
                 if (translatorWindow != null)
-                {
+                    {
                     translatorWindow.Show();
                     translatorWindow.Activate();
-                }
+                    }
 
                 return;
-            }
+                }
 
             // 2. 加载设置
             var settingsService = new SettingsService();
@@ -324,7 +363,7 @@ namespace CADTranslator.AutoCAD.Commands
 
             var success = false;
             try
-            {
+                {
                 // 3. 计算需要删除的原始实体ID列表
                 var idsToDelete = textBlockList.Where(item => !string.IsNullOrWhiteSpace(item.TranslatedText) && !item.TranslatedText.StartsWith("[")).SelectMany(item => item.SourceObjectIds)
                     .Distinct().ToList();
@@ -333,31 +372,31 @@ namespace CADTranslator.AutoCAD.Commands
                 var layoutService = new CadLayoutService(doc);
 
                 if (isLiveLayout)
-                {
+                    {
                     editor.WriteMessage("\n“实时排版”已启用，将执行智能布局...");
                     success = layoutService.ApplySmartLayoutToCad(textBlockList, idsToDelete, lineSpacing);
-                }
+                    }
                 else
-                {
+                    {
                     editor.WriteMessage("\n“实时排版”已关闭，将使用基本布局...");
                     success = layoutService.ApplyTranslationToCad(textBlockList, idsToDelete);
+                    }
                 }
-            }
             catch (Exception ex)
-            {
+                {
                 editor.WriteMessage($"\n[错误] 应用到CAD时发生意外异常: {ex.Message}");
                 success = false;
-            }
+                }
             finally
-            {
+                {
                 // 5. 【核心修改】根据操作结果决定是否重新显示WPF窗口
                 if (translatorWindow != null)
                     // 只有在操作失败时，才重新显示窗口，以便用户看到错误并进行下一步操作
                     if (!success)
-                    {
+                        {
                         translatorWindow.Show();
                         translatorWindow.Activate();
-                    }
+                        }
 
                 if (success)
                     editor.WriteMessage("\n成功将所有翻译应用到CAD图纸！现在可以查看效果。");
@@ -366,8 +405,8 @@ namespace CADTranslator.AutoCAD.Commands
 
                 // 6. 清理静态变量，避免内存泄漏
                 CadBridgeService.TextBlocksToLayout = null;
+                }
             }
-        }
 
         /// <summary>
         ///     【这是旧的命令入口，现在只负责调用核心逻辑】
@@ -375,14 +414,14 @@ namespace CADTranslator.AutoCAD.Commands
         /// </summary>
         [CommandMethod("WZPB_APPLY")]
         public void ApplyTranslationLayoutCommand()
-        {
+            {
             ExecuteApplyLayoutLogic();
-        }
+            }
 
 
         [CommandMethod("FYY")]
         public async void TranslateAndReplaceCommand()
-        {
+            {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
             var db = doc.Database;
@@ -395,23 +434,26 @@ namespace CADTranslator.AutoCAD.Commands
             var apiProfile = settings.ApiProfiles.FirstOrDefault(p => p.ServiceType == settings.LastSelectedApiService);
 
             if (apiProfile == null)
-            {
+                {
                 editor.WriteMessage("\n[错误] 未找到有效的API配置，请先运行 GJX 命令进行设置。");
                 return;
-            }
+                }
 
             // 创建翻译器实例
             ITranslator translator;
             var apiRegistry = new ApiRegistry();
             try
-            {
+                {
                 translator = apiRegistry.CreateProviderForProfile(apiProfile);
-            }
+                }
             catch (Exception ex)
-            {
+                {
                 editor.WriteMessage($"\n[错误] 创建翻译服务失败: {ex.Message}");
                 return;
-            }
+                }
+
+            // 【核心】从单一事实来源获取当前应使用的提示词
+            string promptTemplate = PromptTemplateManager.GetCurrentPrompt(settings);
 
             // --- 生成详细的启动提示信息 ---
             var info = new StringBuilder();
@@ -419,12 +461,12 @@ namespace CADTranslator.AutoCAD.Commands
 
             // 判断接口是否需要模型
             if (translator.IsModelRequired)
-            {
+                {
                 if (!string.IsNullOrWhiteSpace(apiProfile.LastSelectedModel))
                     info.AppendLine($"翻译模型: {apiProfile.LastSelectedModel}");
                 else
                     info.AppendLine("翻译模型: [未设置!] - 请先在GJX工具箱中选择模型。");
-            }
+                }
 
             // 显示并发设置状态
             if (settings.IsMultiThreadingEnabled)
@@ -442,10 +484,10 @@ namespace CADTranslator.AutoCAD.Commands
 
             var selectedIds = selRes.Value.GetObjectIds().ToList();
             if (selectedIds.Count == 0)
-            {
+                {
                 editor.WriteMessage("\n未选择任何有效的文字对象。");
                 return;
-            }
+                }
 
             editor.WriteMessage($"\n已选择 {selectedIds.Count} 个对象，开始翻译...");
             var successCount = 0;
@@ -454,11 +496,11 @@ namespace CADTranslator.AutoCAD.Commands
             // 3. --- 核心处理逻辑 ---
             var docLock = Application.DocumentManager.MdiActiveDocument.LockDocument();
             using (var tr = db.TransactionManager.StartTransaction())
-            {
+                {
                 var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForWrite);
 
                 foreach (var id in selectedIds)
-                {
+                    {
                     if (id.IsNull || id.IsErased) continue;
 
                     var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
@@ -470,33 +512,33 @@ namespace CADTranslator.AutoCAD.Commands
 
                     string translatedText = null;
                     try
-                    {
-                        // a. 调用翻译API
-                        var (translatedTextResult, usage) = await translator.TranslateAsync(originalText, settings.SourceLanguage, settings.TargetLanguage, CancellationToken.None);
+                        {
+                        // a. 调用翻译API (现在传入的是从设置中动态加载的promptTemplate)
+                        var (translatedTextResult, usage) = await translator.TranslateAsync(originalText, settings.SourceLanguage, settings.TargetLanguage, promptTemplate, CancellationToken.None);
                         translatedText = translatedTextResult;
                         }
                     catch (Exception ex)
-                    {
+                        {
                         failCount++;
                         editor.WriteMessage($"\n[翻译失败] 对象ID {id}: {ex.Message}");
                         continue; // 跳过此对象的替换
-                    }
+                        }
 
                     if (string.IsNullOrWhiteSpace(translatedText))
-                    {
+                        {
                         failCount++;
                         editor.WriteMessage($"\n[翻译失败] 对象ID {id}: API返回了空内容。");
                         continue;
-                    }
+                        }
 
                     // b. 创建并替换 (复用我们的“完美替换”逻辑)
                     using (var newText = new DBText())
-                    {
+                        {
                         newText.TextString = translatedText.Replace('\n', ' ').Replace('\r', ' ');
                         newText.SetPropertiesFrom(ent);
 
                         if (ent is DBText oldDbText)
-                        {
+                            {
                             newText.Height = oldDbText.Height;
                             newText.Rotation = oldDbText.Rotation;
                             newText.Oblique = oldDbText.Oblique;
@@ -507,29 +549,29 @@ namespace CADTranslator.AutoCAD.Commands
                             newText.Position = oldDbText.Position;
                             if (newText.HorizontalMode != TextHorizontalMode.TextLeft || newText.VerticalMode != TextVerticalMode.TextBase)
                                 newText.AlignmentPoint = oldDbText.AlignmentPoint;
-                        }
+                            }
                         else if (ent is MText oldMText)
-                        {
+                            {
                             newText.Height = oldMText.TextHeight;
                             newText.Rotation = oldMText.Rotation;
                             newText.TextStyleId = oldMText.TextStyleId;
                             newText.Position = oldMText.Location;
-                        }
+                            }
 
                         try
-                        {
+                            {
                             modelSpace.AppendEntity(newText);
                             tr.AddNewlyCreatedDBObject(newText, true);
-                        }
+                            }
                         catch (Exception ex)
-                        {
+                            {
                             editor.WriteMessage($"\n[尝试应用翻译失败]   出错信息: {ex.Message}");
-                        }
+                            }
 
 
                         if (newText.HorizontalMode != TextHorizontalMode.TextLeft || newText.VerticalMode != TextVerticalMode.TextBase)
                             newText.AdjustAlignment(db);
-                    }
+                        }
 
                     // c. 删除原始对象
                     var entToErase = tr.GetObject(id, OpenMode.ForWrite);
@@ -537,15 +579,15 @@ namespace CADTranslator.AutoCAD.Commands
 
                     successCount++;
                     editor.WriteMessage($"\r处理进度: {successCount + failCount} / {selectedIds.Count}");
-                }
+                    }
 
                 tr.Commit();
-            }
+                }
 
             docLock.Dispose();
 
             editor.WriteMessage($"\n\n翻译任务完成！成功: {successCount}，失败: {failCount}。");
-        }
+            }
 
 
         [CommandMethod("TEST")]
@@ -559,7 +601,6 @@ namespace CADTranslator.AutoCAD.Commands
             var settingsService = new SettingsService();
             var settings = settingsService.LoadSettings();
 
-            // 新增一个标志，用于决定是否执行翻译
             bool useTranslation = settings.TestModeUsesTranslation;
 
             while (true)
@@ -569,64 +610,133 @@ namespace CADTranslator.AutoCAD.Commands
                     var selOpts = new PromptSelectionOptions();
                     var translationStatus = useTranslation ? "翻译排版" : "原文排版";
                     selOpts.MessageForAdding = $"\n请选择要分析的对象 (当前模式: {translationStatus})";
-
                     selOpts.Keywords.Add("FY", "FY", "切换排版模式(FY)");
                     selOpts.MessageForAdding += selOpts.Keywords.GetDisplayString(true);
-
                     selOpts.KeywordInput += (s, args) => { throw new KeywordException(args.Input.ToUpper()); };
 
                     var selRes = editor.GetSelection(selOpts);
                     if (selRes.Status != PromptStatus.OK) return;
 
-                    var selectedIds = selRes.Value.GetObjectIds();
-
-                    // --- 数据采集 ---
+                    // --- 数据采集 (全新的安全模式) ---
                     var targets = new List<LayoutTask>();
                     var rawObstacles = new List<Entity>();
                     var obstacleReportData = new List<Tuple<Extents3d, string>>();
-                    var preciseObstacles = new List<NtsGeometry>();
-                    var obstacleIdMap = new Dictionary<ObjectId, NtsGeometry>();
+
+                    // 【核心】创建一个临时的实体列表，用于后续处理
+                    var entitiesToProcess = new List<Entity>();
 
                     using (var tr = db.TransactionManager.StartTransaction())
                         {
-                        foreach (var id in selectedIds)
+                        // 步骤 1: 将所有选中的实体加载到内存列表中
+                        foreach (var id in selRes.Value.GetObjectIds())
                             {
-                            if (id.IsNull || id.IsErased) continue;
-                            var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                            if (ent == null) continue;
-                            var entityType = id.ObjectClass.DxfName;
-
-                            if (ent is DBText dbText)
+                            if (tr.GetObject(id, OpenMode.ForRead) is Entity ent)
                                 {
-                                if (Regex.IsMatch(dbText.TextString, @"[\u4e00-\u9fa5]"))
-                                    targets.Add(LayoutTask.From(dbText, tr));
-                                rawObstacles.Add(ent);
-                                obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
-                                }
-                            else if (ent is MText mText)
-                                {
-                                if (Regex.IsMatch(mText.Text, @"[\u4e00-\u9fa5]"))
-                                    targets.Add(LayoutTask.From(mText));
-                                rawObstacles.Add(ent);
-                                obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
-                                }
-                            else if (ent is Hatch hatch)
-                                {
-                                if (hatch.ColorIndex != 251 && hatch.ColorIndex != 252 && hatch.ColorIndex != 253)
-                                    {
-                                    rawObstacles.Add(ent);
-                                    obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
-                                    }
-                                }
-                            else
-                                {
-                                rawObstacles.Add(ent);
-                                obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
+                                entitiesToProcess.Add(ent);
                                 }
                             }
+                        tr.Commit(); // 只读操作，可以安全提交
+                        }
 
+                    // 【核心】使用一个循环来处理分解，直到没有块可以再被分解为止
+                    bool blocksFound;
+                    do
+                        {
+                        blocksFound = false;
+                        var explodedEntities = new List<Entity>();
+                        var remainingEntities = new List<Entity>();
+
+                        foreach (var ent in entitiesToProcess)
+                            {
+                            // 【修改】将原来的 if...else... 结构，替换为下面这个 if...else if...else... 结构
+
+                            // 1. 保留原来可以正常工作的 BlockReference 处理逻辑
+                            if (ent is BlockReference blockRef)
+                                {
+                                blocksFound = true;
+                                var explodedCollection = new DBObjectCollection();
+                                try
+                                    {
+                                    blockRef.Explode(explodedCollection);
+                                    foreach (DBObject obj in explodedCollection)
+                                        {
+                                        if (obj is Entity explodedEnt)
+                                            {
+                                            explodedEntities.Add(explodedEnt);
+                                            }
+                                        }
+                                    }
+                                finally
+                                    {
+                                    explodedCollection.Dispose();
+                                    }
+                                }
+                            // 2. 【新增】按照您的建议，添加一个完全一样的逻辑块来处理 Dimension
+                            else if (ent is Dimension dimension)
+                                {
+                                blocksFound = true;
+                                var explodedCollection = new DBObjectCollection();
+                                try
+                                    {
+                                    dimension.Explode(explodedCollection);
+                                    foreach (DBObject obj in explodedCollection)
+                                        {
+                                        if (obj is Entity explodedEnt)
+                                            {
+                                            explodedEntities.Add(explodedEnt);
+                                            }
+                                        }
+                                    }
+                                finally
+                                    {
+                                    explodedCollection.Dispose();
+                                    }
+                                }
+                            // 3. 如果既不是块也不是标注，则保留它
+                            else
+                                {
+                                remainingEntities.Add(ent);
+                                }
+                            }
+                        entitiesToProcess = remainingEntities.Concat(explodedEntities).ToList();
+
+                        } while (blocksFound);
+
+                    // 步骤 2: 现在 entitiesToProcess 列表里全是“成品”基本图元了，可以安全地分析它们
+                    using (var tr = db.TransactionManager.StartTransaction())
+                            {
+                            foreach (var ent in entitiesToProcess)
+                                {
+                                // 安全性检查
+                                if (ent is AttributeDefinition || ent.Bounds == null || !ent.Bounds.HasValue)
+                                    {
+                                    continue;
+                                    }
+
+                                var entityType = ent.ObjectId.ObjectClass.DxfName;
+
+                                if (ent is DBText dbText && Regex.IsMatch(dbText.TextString, @"[\u4e00-\u9fa5]"))
+                                    {
+                                    targets.Add(LayoutTask.From(dbText, tr));
+                                    }
+                                else if (ent is MText mText && Regex.IsMatch(mText.Text, @"[\u4e00-\u9fa5]"))
+                                    {
+                                    targets.Add(LayoutTask.From(mText));
+                                    }
+
+                                rawObstacles.Add(ent);
+                                obstacleReportData.Add(new Tuple<Extents3d, string>(ent.GeometricExtents, entityType));
+                                }
+                            tr.Commit();
+                            }
+
+
+                        // --- 精确几何转换 ---
+                        var preciseObstacles = new List<NtsGeometry>();
+                        var obstacleIdMap = new Dictionary<ObjectId, NtsGeometry>();
                         foreach (var obstacleEntity in rawObstacles)
                             {
+                            // ... (这部分逻辑保持不变) ...
                             var ntsGeometries = GeometryConverter.ToNtsGeometry(obstacleEntity).ToList();
                             preciseObstacles.AddRange(ntsGeometries);
                             ntsGeometries.ForEach(g =>
@@ -635,34 +745,36 @@ namespace CADTranslator.AutoCAD.Commands
                                     obstacleIdMap[obstacleEntity.ObjectId] = g;
                             });
                             }
-                        }
+                        // --- 语义分析 ---
+                        editor.WriteMessage("\n数据采集完成，正在启动语义分析引擎...");
+                        var analyzer = new SemanticAnalyzer(targets, rawObstacles);
+                        var analyzedTargets = analyzer.AnalyzeAndGroup();
+                        editor.WriteMessage($"\n语义分析完成！识别出 {analyzedTargets.Count} 个独立的布局任务。");
 
-                    // --- 语义分析 ---
-                    editor.WriteMessage("\n数据采集完成，正在启动语义分析引擎...");
-                    var analyzer = new SemanticAnalyzer(targets, rawObstacles);
-                    var analyzedTargets = analyzer.AnalyzeAndGroup();
-                    editor.WriteMessage($"\n语义分析完成！识别出 {analyzedTargets.Count} 个独立的布局任务。");
-
-                    // --- 【核心新增】翻译流程 ---
-                    if (useTranslation)
-                        {
-                        editor.WriteMessage("\n翻译模式已激活，正在准备翻译...");
-                        var apiProfile = settings.ApiProfiles.FirstOrDefault(p => p.ServiceType == settings.LastSelectedApiService);
-                        if (apiProfile == null)
+                        // --- 【核心新增】翻译流程 ---
+                        if (useTranslation)
                             {
-                            editor.WriteMessage("\n[错误] 未找到有效的API配置，请先运行 GJX 命令进行设置。");
-                            continue;
-                            }
+                            editor.WriteMessage("\n翻译模式已激活，正在准备翻译...");
+                            var apiProfile = settings.ApiProfiles.FirstOrDefault(p => p.ServiceType == settings.LastSelectedApiService);
+                            if (apiProfile == null)
+                                {
+                                editor.WriteMessage("\n[错误] 未找到有效的API配置，请先运行 GJX 命令进行设置。");
+                                continue;
+                                }
 
-                        var apiRegistry = new ApiRegistry();
-                        ITranslator translator = apiRegistry.CreateProviderForProfile(apiProfile);
+                            var apiRegistry = new ApiRegistry();
+                            ITranslator translator = apiRegistry.CreateProviderForProfile(apiProfile);
+
+                        string promptTemplate = PromptTemplateManager.GetCurrentPrompt(settings);
 
                         editor.WriteMessage($"\n正在使用“{translator.DisplayName}”进行翻译，请稍候...");
                         var translationTasks = analyzedTargets.Select(async task =>
                         {
                             try
                                 {
-                                var (translatedText, usage) = await translator.TranslateAsync(task.OriginalText, settings.SourceLanguage, settings.TargetLanguage, CancellationToken.None);
+                                // ▼▼▼ 【核心修改】在这里的调用中，补上 promptTemplate 和 CancellationToken.None ▼▼▼
+                                var (translatedText, usage) = await translator.TranslateAsync(task.OriginalText, settings.SourceLanguage, settings.TargetLanguage, promptTemplate, CancellationToken.None);
+                                // ▲▲▲ 修改结束 ▲▲▲
                                 task.TranslatedText = translatedText;
                                 }
                             catch (Exception ex)
@@ -672,32 +784,32 @@ namespace CADTranslator.AutoCAD.Commands
                         }).ToList();
 
                         await System.Threading.Tasks.Task.WhenAll(translationTasks);
-                        editor.WriteMessage("\n翻译完成！");
+                            editor.WriteMessage("\n翻译完成！");
+                            }
+
+
+                        // --- 核心计算 ---
+                        editor.WriteMessage("\n正在启动核心计算引擎...");
+                        var calculator = new LayoutCalculator();
+                        var summary = calculator.CalculateLayouts(analyzedTargets, rawObstacles, settings.TestNumberOfRounds);
+                        editor.WriteMessage("\n计算完成！正在准备可视化报告...");
+
+                        var preciseReport = new StringBuilder();
+                        preciseReport.AppendLine($"成功提取 {preciseObstacles.Count} 个精确几何障碍物：");
+                        preciseReport.AppendLine("========================================");
+                        var preciseCount = 1;
+                        foreach (var geom in preciseObstacles)
+                            preciseReport.AppendLine($"--- 精确几何 #{preciseCount++} [类型: {geom.GeometryType}] ---");
+
+                        Application.DocumentManager.ExecuteInApplicationContext(state =>
+                        {
+                            var resultWindow = new TestResultWindow(analyzedTargets, rawObstacles, obstacleReportData, preciseObstacles, preciseReport.ToString(), obstacleIdMap, summary);
+                            new WindowInteropHelper(resultWindow).Owner = Application.MainWindow.Handle;
+                            resultWindow.Show();
+                        }, null);
+
+                        break; // 成功执行，跳出循环
                         }
-
-
-                    // --- 核心计算 ---
-                    editor.WriteMessage("\n正在启动核心计算引擎...");
-                    var calculator = new LayoutCalculator();
-                    var summary = calculator.CalculateLayouts(analyzedTargets, rawObstacles, settings.TestNumberOfRounds);
-                    editor.WriteMessage("\n计算完成！正在准备可视化报告...");
-
-                    var preciseReport = new StringBuilder();
-                    preciseReport.AppendLine($"成功提取 {preciseObstacles.Count} 个精确几何障碍物：");
-                    preciseReport.AppendLine("========================================");
-                    var preciseCount = 1;
-                    foreach (var geom in preciseObstacles)
-                        preciseReport.AppendLine($"--- 精确几何 #{preciseCount++} [类型: {geom.GeometryType}] ---");
-
-                    Application.DocumentManager.ExecuteInApplicationContext(state =>
-                    {
-                        var resultWindow = new TestResultWindow(analyzedTargets, rawObstacles, obstacleReportData, preciseObstacles, preciseReport.ToString(), obstacleIdMap, summary);
-                        new WindowInteropHelper(resultWindow).Owner = Application.MainWindow.Handle;
-                        resultWindow.Show();
-                    }, null);
-
-                    break; // 成功执行，跳出循环
-                    }
                 catch (KeywordException ex)
                     {
                     if (ex.Input == "FY")
@@ -732,6 +844,8 @@ namespace CADTranslator.AutoCAD.Commands
                     }
                 }
             }
+
+
 
         [CommandMethod("WZKD")]
         public void AdjustWidthFactorCommand()
@@ -873,14 +987,14 @@ namespace CADTranslator.AutoCAD.Commands
         #region 一个自定义异常类，专门用于在GetSelection的事件中传递关键字。
 
         public class KeywordException : Exception
-        {
-            public KeywordException(string input)
             {
+            public KeywordException(string input)
+                {
                 Input = input;
-            }
+                }
 
             public string Input { get; }
-        }
+            }
         [CommandMethod("TEST_APPLY")]
         public void ApplyTestLayoutCommand()
             {

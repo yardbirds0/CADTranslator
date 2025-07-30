@@ -7,6 +7,8 @@ using System.ComponentModel;
 using System.Data;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Windows.Input;
+using System.Windows;
 
 namespace CADTranslator.ViewModels
     {
@@ -26,6 +28,7 @@ namespace CADTranslator.ViewModels
 
         public DataTable HistoryDataTable { get; private set; }
         public RelayCommand DeleteCommand { get; }
+        public ICommand CloseCommand { get; }
 
         // 【新增】用于绑定ComboBox的数据源
         public List<ApiServiceType> AvailableApiServices { get; private set; }
@@ -54,6 +57,7 @@ namespace CADTranslator.ViewModels
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
 
             DeleteCommand = new RelayCommand(ExecuteDelete, CanExecuteDelete);
+            CloseCommand = new RelayCommand(ExecuteClose);
 
             // 【新增】从所有历史记录中，提炼出有哪些API服务，作为ComboBox的选项
             AvailableApiServices = _masterRecordList
@@ -102,6 +106,13 @@ namespace CADTranslator.ViewModels
             if (recordsToDelete.Any())
                 {
                 DeleteRequested?.Invoke(recordsToDelete);
+                }
+            }
+        private void ExecuteClose(object parameter)
+            {
+            if (parameter is Window window)
+                {
+                window.Close();
                 }
             }
 

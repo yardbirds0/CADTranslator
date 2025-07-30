@@ -16,14 +16,15 @@ namespace CADTranslator.Services.UI
     /// </summary>
     public class WindowService : IWindowService
         {
-        private readonly Window _owner;
+        private Window _owner;
 
-        /// <summary>
-        /// 构造函数，接收一个Window实例作为所有对话框的“父窗口”。
-        /// 这确保了新打开的窗口总是在主窗口的前面。
-        /// </summary>
-        /// <param name="owner">主窗口实例 (通常是TranslatorWindow)</param>
         public WindowService(Window owner)
+            {
+            _owner = owner;
+            }
+
+        // 【新增】实现接口中定义的新方法
+        public void Initialize(Window owner)
             {
             _owner = owner;
             }

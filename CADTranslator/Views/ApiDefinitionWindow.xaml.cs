@@ -1,45 +1,19 @@
-﻿// 文件路径: CADTranslator/UI/Views/ApiDefinitionWindow.xaml.cs
-
-using CADTranslator.ViewModels;
-using System.Windows;
+﻿using CADTranslator.ViewModels;
 using Wpf.Ui.Controls;
-using MessageBox = Wpf.Ui.Controls.MessageBox;
 
 namespace CADTranslator.Views
     {
     public partial class ApiDefinitionWindow : FluentWindow
         {
-        public ApiDefinitionViewModel ViewModel { get; }
+        // 【修改】保留 ViewModel 属性，但构造函数逻辑简化
+        public ApiDefinitionViewModel ViewModel => DataContext as ApiDefinitionViewModel;
 
         public ApiDefinitionWindow(ApiDefinitionViewModel viewModel)
             {
             InitializeComponent();
-            ViewModel = viewModel;
-            DataContext = ViewModel;
+            DataContext = viewModel;
             }
 
-        private void SaveButton_Click(object sender, RoutedEventArgs e)
-            {
-            // 验证逻辑可以放在这里
-            if (string.IsNullOrWhiteSpace(ViewModel.DisplayName))
-                {
-                // 使用WPF-UI的MessageBox
-                var mb = new MessageBox
-                    {
-                    Title = "验证失败",
-                    Content = "API显示名称不能为空。",
-                    CloseButtonText = "确定"
-                    };
-                mb.ShowDialogAsync();
-                return;
-                }
-
-            this.DialogResult = true;
-            }
-
-        private void CancelButton_Click(object sender, RoutedEventArgs e)
-            {
-            this.DialogResult = false;
-            }
+        // 【删除】移除 SaveButton_Click 和 CancelButton_Click 两个事件处理器方法
         }
     }

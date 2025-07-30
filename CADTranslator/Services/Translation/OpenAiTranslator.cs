@@ -1,5 +1,5 @@
 ﻿// 文件路径: CADTranslator/Services/Translation/OpenAiTranslator.cs
-// 【完整文件替换】
+// 【请用此代码完整替换】
 
 using CADTranslator.Models;
 using CADTranslator.Models.API;
@@ -7,7 +7,7 @@ using OpenAI.Chat;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading; // ◄◄◄ 【新增】引入 CancellationToken
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CADTranslator.Services.Translation
@@ -16,6 +16,7 @@ namespace CADTranslator.Services.Translation
         {
         #region --- 字段 ---
 
+        // 【恢复】使用您原来可以正常工作的 Lazy<ChatClient>
         private readonly Lazy<ChatClient> _lazyClient;
         private readonly string _model;
         private readonly string _apiKey;
@@ -32,6 +33,7 @@ namespace CADTranslator.Services.Translation
             _apiKey = apiKey;
             _model = model;
 
+            // 【恢复】使用您原来可以正常工作的初始化方式
             _lazyClient = new Lazy<ChatClient>(() => new ChatClient(_model, _apiKey));
             }
 
@@ -52,9 +54,9 @@ namespace CADTranslator.Services.Translation
         public bool IsApiUrlRequired => false;
         public bool IsModelRequired => true;
         public bool IsPromptSupported => true;
-        public bool IsModelFetchingSupported => true;
+        public bool IsModelFetchingSupported => false; // OpenAI 库的这个版本不直接支持模型列表
         public bool IsBalanceCheckSupported => false;
-        public bool IsTokenCountSupported => true;
+        public bool IsTokenCountSupported => false;   // OpenAI 库的这个版本不直接支持Token计数
         public bool IsBatchTranslationSupported => false;
         public bool IsLocalTokenCountSupported => true;
         public BillingUnit UnitType => BillingUnit.Token;
@@ -62,68 +64,61 @@ namespace CADTranslator.Services.Translation
 
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
 
-        // ▼▼▼ 【方法重写】重写整个 TranslateAsync 方法以支持 CancellationToken ▼▼▼
-        // ▼▼▼ 请用此方法完整替换旧的 TranslateAsync 方法 ▼▼▼
-        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
 
-            // 在发起API调用前，检查任务是否已被取消
-            cancellationToken.ThrowIfCancellationRequested();
-
-            try
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                 {
-                var messages = new List<ChatMessage>
-                {
-                    new SystemChatMessage($"You are a professional translator for Civil Engineering drawings. Your task is to translate the user's text from {fromLanguage} to {toLanguage}. Do not add any extra explanations, just return the translated text. If you encounter symbols, keep their original style."),
-                    new UserChatMessage(textToTranslate)
-                };
-
-                // 【核心修改】创建一个代表网络请求的任务
-                var translationTask = _lazyClient.Value.CompleteChatAsync(messages, cancellationToken: cancellationToken);
-
-                // 【核心修改】创建一个20秒的超时任务
-                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(20), cancellationToken);
-
-                // 【核心修改】让网络任务和超时任务进行“赛跑”
-                var completedTask = await Task.WhenAny(translationTask, timeoutTask);
-
-                if (completedTask == timeoutTask)
+                try
                     {
-                    // 如果是超时任务先完成，就抛出网络错误异常
-                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求超时 (超过20秒)。");
-                    }
+                    // 设置我们自己的、15秒的“连接超时闹钟”
+                    cts.CancelAfter(TimeSpan.FromSeconds(15));
 
-                // 如果是网络任务先完成，就获取它的结果
-                ChatCompletion completion = await translationTask;
+                    var finalPrompt = promptTemplate
+                        .Replace("{fromLanguage}", fromLanguage)
+                        .Replace("{toLanguage}", toLanguage);
 
-                if (completion.Content != null && completion.Content.Any())
+                    var messages = new List<ChatMessage>
                     {
-                    return (completion.Content[0].Text.Trim(),null);
-                    }
+                        new SystemChatMessage(finalPrompt),
+                        new UserChatMessage(textToTranslate)
+                    };
 
-                throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API未返回任何内容。完成原因: {completion.FinishReason}");
-                }
-            // 捕获由我们主动熔断（cancellationToken）引发的取消
-            catch (OperationCanceledException)
-                {
-                throw;
-                }
-            catch (Exception ex)
-                {
-                // 如果在捕获通用异常时，发现取消信号已经被触发了，那么也按“取消”处理
-                if (cancellationToken.IsCancellationRequested)
+                    // 【恢复】使用您原来可以正常工作的API调用方式
+                    var completionResponse = await _lazyClient.Value.CompleteChatAsync(messages, cancellationToken: cts.Token);
+
+                    // ▼▼▼ 【核心修正】从这里开始 ▼▼▼
+                    // 1. 直接从“信封”中取出“信件”（真正的ChatCompletion对象）
+                    ChatCompletion completion = completionResponse; // 这个库版本支持隐式转换
+
+                    // 2. 对“信件”进行判断
+                    if (completion.Content != null && completion.Content.Any())
+                        {
+                        return (completion.Content[0].Text.Trim(), null);
+                        }
+
+                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API未返回任何内容。完成原因: {completion.FinishReason}");
+                    // ▲▲▲ 修改结束 ▲▲▲
+                    }
+                catch (TaskCanceledException)
                     {
-                    throw new OperationCanceledException();
+                    if (cancellationToken.IsCancellationRequested) throw;
+                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, "连接超时 (超过15秒)，请检查网络或代理设置。");
                     }
-
-                // 其他所有情况，都视为API接口错误
-                throw new ApiException(ApiErrorType.ApiError, ServiceType, ex.Message);
+                catch (Exception ex)
+                    {
+                    if (cancellationToken.IsCancellationRequested)
+                        {
+                        throw new OperationCanceledException();
+                        }
+                    throw new ApiException(ApiErrorType.ApiError, ServiceType, ex.Message);
+                    }
                 }
             }
 
-        public Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
             {
             throw new NotSupportedException("当前OpenAI集成不支持批量翻译。");
             }

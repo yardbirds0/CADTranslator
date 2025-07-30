@@ -20,7 +20,7 @@ namespace CADTranslator.Services.Translation
         #region --- 字段与错误码字典 ---
         private readonly string _appId;
         private readonly string _appKey;
-        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        private readonly HttpClient _httpClient;
 
         private static readonly Dictionary<string, string> BaiduErrorMessages = new Dictionary<string, string>
         {
@@ -46,6 +46,7 @@ namespace CADTranslator.Services.Translation
             {
             _appId = appId;
             _appKey = appKey;
+            _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(180) };
             }
         #endregion
 
@@ -68,13 +69,14 @@ namespace CADTranslator.Services.Translation
 
         #region --- 核心与扩展功能 ---
 
-        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
             {
-            var (translatedTexts, usage) = await TranslateBatchAsync(new List<string> { textToTranslate }, fromLanguage, toLanguage, cancellationToken);
+            // 方法签名增加了 promptTemplate, 但内部逻辑不变
+            var (translatedTexts, usage) = await TranslateBatchAsync(new List<string> { textToTranslate }, fromLanguage, toLanguage, promptTemplate, cancellationToken);
             return (translatedTexts.FirstOrDefault() ?? string.Empty, usage);
             }
 
-        public async Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_appId) || string.IsNullOrWhiteSpace(_appKey))
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "App ID 或 App Key 不能为空。");
@@ -90,61 +92,83 @@ namespace CADTranslator.Services.Translation
                 string baseUrl = "http://api.fanyi.baidu.com/api/trans/vip/translate";
 
                 var queryParams = new Dictionary<string, string>
-                {
-                    { "q", queryText }, { "from", fromLanguage }, { "to", toLanguage },
-                    { "appid", _appId }, { "salt", salt }, { "sign", sign },
-                    { "need_intervene", "1" }
-                };
+        {
+            { "q", queryText }, { "from", fromLanguage }, { "to", toLanguage },
+            { "appid", _appId }, { "salt", salt }, { "sign", sign },
+            { "need_intervene", "1" }
+        };
 
                 string queryString = string.Join("&", queryParams.Select(kvp => $"{kvp.Key}={Uri.EscapeDataString(kvp.Value)}"));
                 string fullUrl = $"{baseUrl}?{queryString}";
 
-                var response = await _httpClient.GetAsync(fullUrl, cancellationToken);
-                response.EnsureSuccessStatusCode();
-
-                string jsonResponse = await response.Content.ReadAsStringAsync();
-                var result = JsonConvert.DeserializeObject<BaiduTranslationResult>(jsonResponse);
-
-                if (!string.IsNullOrEmpty(result?.ErrorCode) && result.ErrorCode != "52000")
+                // 准备一个HttpRequestMessage
+                using (var request = new HttpRequestMessage(HttpMethod.Get, fullUrl))
                     {
-                    string friendlyMessage;
-                    if (BaiduErrorMessages.TryGetValue(result.ErrorCode, out var message))
+                    // 阶段一：尝试连接并获取响应头（短时闹钟）
+                    HttpResponseMessage response;
+                    using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                         {
-                        friendlyMessage = $"错误码: {result.ErrorCode} - {message}";
+                        connectCts.CancelAfter(TimeSpan.FromSeconds(15));
+                        try
+                            {
+                            // 使用 SendAsync 并指定只读取响应头
+                            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, connectCts.Token);
+                            }
+                        catch (OperationCanceledException)
+                            {
+                            if (cancellationToken.IsCancellationRequested) throw;
+                            throw new ApiException(ApiErrorType.NetworkError, ServiceType, "连接超时 (超过15秒)，请检查网络或代理设置。");
+                            }
                         }
-                    else
+
+                    response.EnsureSuccessStatusCode();
+
+                    // 阶段二：读取响应内容（长时闹钟 + 手动取消）
+                    string jsonResponse = await response.Content.ReadAsStringAsync();
+
+                    var result = JsonConvert.DeserializeObject<BaiduTranslationResult>(jsonResponse);
+
+                    if (!string.IsNullOrEmpty(result?.ErrorCode) && result.ErrorCode != "52000")
                         {
-                        friendlyMessage = $"错误码: {result.ErrorCode}, {result.ErrorMessage?.Replace('\t', ' ')} (未知错误)";
+                        string friendlyMessage;
+                        if (BaiduErrorMessages.TryGetValue(result.ErrorCode, out var message))
+                            {
+                            friendlyMessage = $"错误码: {result.ErrorCode} - {message}";
+                            }
+                        else
+                            {
+                            friendlyMessage = $"错误码: {result.ErrorCode}, {result.ErrorMessage?.Replace('\t', ' ')} (未知错误)";
+                            }
+                        throw new ApiException(ApiErrorType.ApiError, ServiceType, friendlyMessage, response.StatusCode, result.ErrorCode);
                         }
-                    throw new ApiException(ApiErrorType.ApiError, ServiceType, friendlyMessage, response.StatusCode, result.ErrorCode);
+
+                    if (result?.TransResult != null && result.TransResult.Any())
+                        {
+                        if (result.TransResult.Count != textsToTranslate.Count)
+                            {
+                            throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API返回的翻译结果数量 ({result.TransResult.Count}) 与原文数量 ({textsToTranslate.Count}) 不匹配。");
+                            }
+
+                        var translatedList = result.TransResult.Select(p => p.Dst).ToList();
+                        string allTranslatedText = string.Join("", translatedList);
+
+                        var usage = new TranslationUsage
+                            {
+                            PromptTokens = queryText.Length,
+                            CompletionTokens = allTranslatedText.Length,
+                            TotalTokens = queryText.Length + allTranslatedText.Length
+                            };
+
+                        return (translatedList, usage);
+                        }
+
+                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API未返回有效或可解析的结果。");
                     }
-
-                if (result?.TransResult != null && result.TransResult.Any())
-                    {
-                    if (result.TransResult.Count != textsToTranslate.Count)
-                        {
-                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API返回的翻译结果数量 ({result.TransResult.Count}) 与原文数量 ({textsToTranslate.Count}) 不匹配。");
-                        }
-
-                    var translatedList = result.TransResult.Select(p => p.Dst).ToList();
-                    string allTranslatedText = string.Join("", translatedList);
-
-                    var usage = new TranslationUsage
-                        {
-                        PromptTokens = queryText.Length,
-                        CompletionTokens = allTranslatedText.Length,
-                        TotalTokens = queryText.Length + allTranslatedText.Length
-                        };
-
-                    return (translatedList, usage);
-                    }
-
-                throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API未返回有效或可解析的结果。");
                 }
             catch (TaskCanceledException)
                 {
                 if (cancellationToken.IsCancellationRequested) throw;
-                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求超时。请检查您的网络连接或VPN设置。");
+                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求被取消或总超时 (超过180秒)。");
                 }
             catch (HttpRequestException ex)
                 {

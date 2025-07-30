@@ -288,57 +288,37 @@
                                            Margin="8,0,0,0" />
                             </Grid>
 
-                            <TextBlock Text="用户 ID"
-                                       Margin="0,10,0,5"
-                                       Opacity="0.8" />
-                            <Grid>
-                                <TextBox Text="{Binding CurrentProfile.UserId, UpdateSourceTrigger=PropertyChanged}"
-                                         IsEnabled="{Binding IsUserIdEnabled}" />
-                                <TextBlock Text="当前API无需设置该内容"
-                                           Foreground="LightGray"
-                                           FontStyle="Italic"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           Visibility="{Binding IsUserIdEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                           IsHitTestVisible="False" />
-                            </Grid>
+                            <StackPanel Margin="0,10,0,0"
+                                        Visibility="{Binding IsUserIdEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="用户 ID"
+                                           Opacity="0.8"
+                                           Margin="0,0,0,5" />
+                                <TextBox Text="{Binding CurrentProfile.UserId, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
 
-                            <TextBlock Text="API 密钥"
-                                       Margin="0,10,0,5"
-                                       Opacity="0.8" />
-                            <Grid>
-                                <TextBox Text="{Binding CurrentProfile.ApiKey, UpdateSourceTrigger=PropertyChanged}"
-                                         IsEnabled="{Binding IsApiKeyEnabled}" />
-                                <TextBlock Text="当前API无需设置该内容"
-                                           Foreground="LightGray"
-                                           FontStyle="Italic"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           Visibility="{Binding IsApiKeyEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                           IsHitTestVisible="False" />
-                            </Grid>
+                            <StackPanel Margin="0,10,0,0"
+                                        Visibility="{Binding IsApiKeyEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="API 密钥"
+                                           Margin="0,0,0,5"
+                                           Opacity="0.8" />
+                                <TextBox Text="{Binding CurrentProfile.ApiKey, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
 
-                            <TextBlock Text="API URL"
-                                       Margin="0,10,0,5"
-                                       Opacity="0.8" />
-                            <Grid>
-                                <TextBox Text="{Binding CurrentProfile.ApiEndpoint, UpdateSourceTrigger=PropertyChanged}"
-                                         IsEnabled="{Binding IsApiUrlEnabled}" />
-                                <TextBlock Text="当前API无需设置该内容"
-                                           Foreground="LightGray"
-                                           FontStyle="Italic"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           Visibility="{Binding IsApiUrlEnabled, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
-                                           IsHitTestVisible="False" />
-                            </Grid>
+                            <StackPanel Margin="0,10,0,0"
+                                        Visibility="{Binding IsApiUrlEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="API URL"
+                                           Margin="0,0,0,5"
+                                           Opacity="0.8" />
+                                <TextBox Text="{Binding CurrentProfile.ApiEndpoint, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
 
                             <Border Background="{DynamicResource SystemAccentColorLight3Brush}"
                                     BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                     BorderThickness="1"
                                     CornerRadius="4"
                                     Padding="10,8"
-                                    Margin="0,10,0,0">
+                                    Margin="0,10,0,0"
+                                    Visibility="{Binding IsModelListEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <StackPanel>
                                     <TextBlock Text="模型列表"
                                                FontWeight="Bold"
@@ -405,7 +385,8 @@
                                     BorderThickness="1"
                                     CornerRadius="4"
                                     Padding="10,8"
-                                    Margin="0,10,0,0">
+                                    Margin="0,10,0,0"
+                                    Visibility="{Binding IsBalanceFeatureEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <StackPanel>
                                     <TextBlock Text="API 余额"
                                                FontWeight="Bold"
@@ -466,7 +447,7 @@
                                     CornerRadius="4"
                                     Padding="10,8"
                                     Margin="0,10,0,0"
-                                    IsEnabled="{Binding CurrentProvider.IsPromptSupported}">
+                                    Visibility="{Binding IsPromptSupported, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <StackPanel>
                                     <TextBlock Text="提示词"
                                                FontWeight="Bold"
@@ -1043,7 +1024,17 @@
                                    Margin="10,0,10,0"
                                    Icon="{ui:SymbolIcon Symbol=BookSearch24,Filled=True}"
                                    Appearance="Caution"
-                                   Command="{Binding TranslateCommand}" />
+                                   
+                                   Command="{Binding TranslateCommand}"
+                                   Visibility="{Binding IsTranslating, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+
+                        <ui:Button Content="取消翻译"
+                                   Margin="10,0,10,0"
+                                   d:Visibility="Collapsed"
+                                   Icon="{ui:SymbolIcon Symbol=DismissCircle24,Filled=True}"
+                                   Appearance="Danger"
+                                   Command="{Binding CancelTranslationCommand}"
+                                   Visibility="{Binding IsTranslating, Converter={StaticResource BooleanToVisibilityConverter}}" />
                         <ui:Button Content="应用翻译"
                                    Icon="{ui:SymbolIcon Symbol=Pen32,Filled=False}"
                                    Appearance="Success"

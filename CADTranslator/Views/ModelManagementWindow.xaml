@@ -135,15 +135,18 @@
                         Orientation="Horizontal"
                         HorizontalAlignment="Right">
                 <ui:Button Content="保存"
-                           Click="SaveButton_Click"
+                           Command="{Binding SaveCommand}"
+                           CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}"
                            Appearance="Primary" />
                 <ui:Button Content="应用选择模型"
-                           Click="ApplyButton_Click"
+                           Command="{Binding ApplyCommand}"
+                           CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}"
                            Margin="10,0,0,0"
                            Appearance="Caution"
                            IsDefault="True" />
                 <ui:Button Content="取消"
-                           Click="CancelButton_Click"
+                           Command="{Binding CancelCommand}"
+                           CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}"
                            Margin="10,0,0,0" />
             </StackPanel>
         </Grid>

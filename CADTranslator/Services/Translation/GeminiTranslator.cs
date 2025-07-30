@@ -97,86 +97,41 @@ namespace CADTranslator.Services.Translation
 
         #region --- 核心与扩展功能 ---
 
-        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            try
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                 {
-                var generativeModel = _lazyGoogleAI.Value.GenerativeModel(model: _model);
-                string prompt = $"You are a professional translator for Civil Engineering drawings. Your task is to translate the user's text from {fromLanguage} to {toLanguage}. Do not add any extra explanations, just return the translated text. If you encounter symbols, keep their original style.\n\nText to translate:\n---\n{textToTranslate}\n---";
-
-                var translationTask = generativeModel.GenerateContent(prompt, cancellationToken: cancellationToken);
-                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(20), cancellationToken);
-                var completedTask = await Task.WhenAny(translationTask, timeoutTask);
-
-                if (completedTask == timeoutTask)
-                    {
-                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求超时 (超过20秒)。");
-                    }
-
-                var response = await translationTask;
-                if (response?.Text == null)
-                    {
-                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API返回了空或无效的响应内容。");
-                    }
-
-                // 解析UsageMetadata并创建标准化的TranslationUsage对象
-                TranslationUsage usage = null;
-                if (response.UsageMetadata != null)
-                    {
-                    usage = new TranslationUsage
-                        {
-                        PromptTokens = response.UsageMetadata.PromptTokenCount,
-                        CompletionTokens = response.UsageMetadata.CandidatesTokenCount,
-                        TotalTokens = response.UsageMetadata.TotalTokenCount
-                        };
-                    }
-
-                return (response.Text.Trim(), usage);
-                }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-                {
-                throw ParseAndCreateApiException(ex, cancellationToken);
-                }
-            }
-
-        public async Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
-            {
-            if (string.IsNullOrWhiteSpace(_model))
-                throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
-            if (textsToTranslate == null || !textsToTranslate.Any())
-                return (new List<string>(), null);
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            try
-                {
-                string textsAsJsonArray = JsonConvert.SerializeObject(textsToTranslate);
-                string prompt = $"You are a professional translator for Civil Engineering drawings. Your task is to translate a JSON array of strings from {fromLanguage} to {toLanguage}. Your response MUST be a valid JSON array of strings, with each string being the translation of the corresponding string in the input array. Maintain the same order. Do not add any extra explanations or content outside of the JSON array.\n\nInput JSON array:\n---\n{textsAsJsonArray}\n---";
-                var generativeModel = _lazyGoogleAI.Value.GenerativeModel(model: _model);
-                var generationConfig = new GenerationConfig() { ResponseMimeType = "application/json", };
-                var translationTask = generativeModel.GenerateContent(prompt, generationConfig, cancellationToken: cancellationToken);
-                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(20), cancellationToken);
-                var completedTask = await Task.WhenAny(translationTask, timeoutTask);
-                if (completedTask == timeoutTask)
-                    {
-                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, "批量翻译请求超时 (超过20秒)。");
-                    }
-                var response = await translationTask;
-                var responseContent = response?.Text;
-                if (string.IsNullOrWhiteSpace(responseContent))
-                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API响应中缺少有效的'content'字段。");
                 try
                     {
-                    var translatedList = JsonConvert.DeserializeObject<List<string>>(responseContent);
-                    if (translatedList == null || translatedList.Count != textsToTranslate.Count)
-                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API返回的翻译结果数量 ({translatedList?.Count ?? 0}) 与原文数量 ({textsToTranslate.Count}) 不匹配。");
+                    cts.CancelAfter(TimeSpan.FromSeconds(15));
+                    var generativeModel = _lazyGoogleAI.Value.GenerativeModel(model: _model);
+                    // ▼▼▼ 【核心修改】使用传入的 promptTemplate 来构建最终的 prompt ▼▼▼
+                    string prompt = promptTemplate
+                        .Replace("{fromLanguage}", fromLanguage)
+                        .Replace("{toLanguage}", toLanguage)
+                        + $"\n\nText to translate:\n---\n{textToTranslate}\n---";
+                    var translationTask = generativeModel.GenerateContent(prompt, cancellationToken: cancellationToken);
+                    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(20), cancellationToken);
+                    var completedTask = await Task.WhenAny(translationTask, timeoutTask);
 
+                    if (completedTask == timeoutTask)
+                        {
+                        throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求超时 (超过20秒)。");
+                        }
+
+                    var response = await generativeModel.GenerateContent(prompt, cancellationToken: cts.Token);
+
+                    if (response?.Text == null)
+                        {
+                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API返回了空或无效的响应内容。");
+                        }
+
+                    // 解析UsageMetadata并创建标准化的TranslationUsage对象
                     TranslationUsage usage = null;
                     if (response.UsageMetadata != null)
                         {
@@ -188,36 +143,123 @@ namespace CADTranslator.Services.Translation
                             };
                         }
 
-                    return (translatedList, usage);
+                    return (response.Text.Trim(), usage);
                     }
-                catch (JsonException ex)
+                catch (TaskCanceledException)
                     {
-                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法将API返回的内容解析为JSON数组: {ex.Message}");
+                    if (cancellationToken.IsCancellationRequested) throw;
+                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, "连接超时 (超过15秒)，请检查网络或代理设置。");
+                    }
+                catch (Exception ex)
+                    {
+                    throw ParseAndCreateApiException(ex, cancellationToken);
                     }
                 }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
+            }
+
+        public async Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
+            {
+            // 【修改】添加手动连接超时逻辑，与 TranslateAsync 完全相同
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                 {
-                throw ParseAndCreateApiException(ex, cancellationToken);
+                try
+                    {
+                    cts.CancelAfter(TimeSpan.FromSeconds(15));
+                    if (string.IsNullOrWhiteSpace(_model))
+                        throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
+                    if (textsToTranslate == null || !textsToTranslate.Any())
+                        return (new List<string>(), null);
+
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    try
+                        {
+                        string textsAsJsonArray = JsonConvert.SerializeObject(textsToTranslate);
+                        string prompt = promptTemplate
+                            .Replace("{fromLanguage}", fromLanguage)
+                            .Replace("{toLanguage}", toLanguage)
+                            .Replace(" just return the translated text.", " Your response MUST be a valid JSON array of strings, with each string being the translation of the corresponding string in the input array. Maintain the same order. Do not add any extra explanations or content outside of the JSON array.")
+                             + $"\n\nInput JSON array:\n---\n{textsAsJsonArray}\n---";
+                        var generativeModel = _lazyGoogleAI.Value.GenerativeModel(model: _model);
+                        var generationConfig = new GenerationConfig() { ResponseMimeType = "application/json", };
+                        var translationTask = generativeModel.GenerateContent(prompt, generationConfig, cancellationToken: cancellationToken);
+                        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(20), cancellationToken);
+                        var completedTask = await Task.WhenAny(translationTask, timeoutTask);
+                        if (completedTask == timeoutTask)
+                            {
+                            throw new ApiException(ApiErrorType.NetworkError, ServiceType, "批量翻译请求超时 (超过20秒)。");
+                            }
+                        var response = await generativeModel.GenerateContent(prompt, generationConfig, cancellationToken: cts.Token);
+                        var responseContent = response?.Text;
+                        if (string.IsNullOrWhiteSpace(responseContent))
+                            throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API响应中缺少有效的'content'字段。");
+                        try
+                            {
+                            var translatedList = JsonConvert.DeserializeObject<List<string>>(responseContent);
+                            if (translatedList == null || translatedList.Count != textsToTranslate.Count)
+                                throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"API返回的翻译结果数量 ({translatedList?.Count ?? 0}) 与原文数量 ({textsToTranslate.Count}) 不匹配。");
+
+                            TranslationUsage usage = null;
+                            if (response.UsageMetadata != null)
+                                {
+                                usage = new TranslationUsage
+                                    {
+                                    PromptTokens = response.UsageMetadata.PromptTokenCount,
+                                    CompletionTokens = response.UsageMetadata.CandidatesTokenCount,
+                                    TotalTokens = response.UsageMetadata.TotalTokenCount
+                                    };
+                                }
+
+                            return (translatedList, usage);
+                            }
+                        catch (JsonException ex)
+                            {
+                            throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法将API返回的内容解析为JSON数组: {ex.Message}");
+                            }
+                        }
+                    catch (TaskCanceledException)
+                        {
+                        if (cancellationToken.IsCancellationRequested) throw;
+                        throw new ApiException(ApiErrorType.NetworkError, ServiceType, "连接超时 (超过15秒)，请检查网络或代理设置。");
+                        }
+                    catch (Exception ex)
+                        {
+                        throw ParseAndCreateApiException(ex, cancellationToken);
+                        }
+                    }
+                catch (TaskCanceledException)
+                    {
+                    if (cancellationToken.IsCancellationRequested) throw;
+                    throw new ApiException(ApiErrorType.NetworkError, ServiceType, "连接超时 (超过15秒)，请检查网络或代理设置。");
+                    }
+                catch (Exception ex)
+                    {
+                    throw ParseAndCreateApiException(ex, cancellationToken);
+                    }
                 }
             }
 
         public async Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
             {
-            try
+            // 【修改】添加手动连接超时逻辑，与 TranslateAsync 完全相同
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                 {
-                var generativeModel = _lazyGoogleAI.Value.GenerativeModel();
-                var models = await generativeModel.ListModels(cancellationToken: cancellationToken);
-                if (models == null || !models.Any()) return new List<string>();
-                return models
-                       .Where(m => m.SupportedGenerationMethods.Contains("generateContent"))
-                       .Select(m => m.Name.Replace("models/", ""))
-                       .ToList();
-                }
-            catch (TaskCanceledException) { throw; }
-            catch (Exception ex)
-                {
-                throw ParseAndCreateApiException(ex, cancellationToken);
+                try
+                    {
+                    cts.CancelAfter(TimeSpan.FromSeconds(15));
+                    var generativeModel = _lazyGoogleAI.Value.GenerativeModel();
+                    var models = await generativeModel.ListModels(cancellationToken: cts.Token);
+                    if (models == null || !models.Any()) return new List<string>();
+                    return models
+                           .Where(m => m.SupportedGenerationMethods.Contains("generateContent"))
+                           .Select(m => m.Name.Replace("models/", ""))
+                           .ToList();
+                    }
+                catch (TaskCanceledException) { throw; }
+                catch (Exception ex)
+                    {
+                    throw ParseAndCreateApiException(ex, cancellationToken);
+                    }
                 }
             }
 
@@ -228,21 +270,21 @@ namespace CADTranslator.Services.Translation
 
         public async Task<int> CountTokensAsync(string textToCount, CancellationToken cancellationToken)
             {
-            if (string.IsNullOrWhiteSpace(_model))
-                throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
-            if (string.IsNullOrEmpty(textToCount))
-                return 0;
-
-            try
+            // 【修改】添加手动连接超时逻辑，与 TranslateAsync 完全相同
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                 {
-                var generativeModel = _lazyGoogleAI.Value.GenerativeModel(model: _model);
-                var response = await generativeModel.CountTokens(textToCount, cancellationToken: cancellationToken);
-                return response.TotalTokens;
-                }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-                {
-                throw ParseAndCreateApiException(ex, cancellationToken);
+                try
+                    {
+                    cts.CancelAfter(TimeSpan.FromSeconds(15));
+                    var generativeModel = _lazyGoogleAI.Value.GenerativeModel(model: _model);
+                    var response = await generativeModel.CountTokens(textToCount, cancellationToken: cts.Token);
+                    return response.TotalTokens;
+                    }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                    {
+                    throw ParseAndCreateApiException(ex, cancellationToken);
+                    }
                 }
             }
         #endregion

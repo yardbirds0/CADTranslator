@@ -95,15 +95,15 @@ namespace CADTranslator.Services.Translation
         #endregion
 
         #region --- 3. 核心与扩展功能 ---
-
         /// <summary>
         /// (核心功能) 异步翻译一段文本。
         /// </summary>
         /// <param name="textToTranslate">待翻译的文本</param>
         /// <param name="fromLanguage">源语言代码</param>
         /// <param name="toLanguage">目标语言代码</param>
+        /// <param name="promptTemplate">【新增】用户选择或输入的提示词模板。</param>
         /// <returns>翻译后的文本</returns>
-        Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken); // <-- 修改返回类型
+        Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken);
 
 
         /// <summary>
@@ -112,9 +112,10 @@ namespace CADTranslator.Services.Translation
         /// <param name="textsToTranslate">待翻译的文本列表</param>
         /// <param name="fromLanguage">源语言代码</param>
         /// <param name="toLanguage">目标语言代码</param>
+        /// <param name="promptTemplate">【新增】用户选择或输入的提示词模板。</param>
         /// <param name="cancellationToken">用于取消操作的令牌。</param>
         /// <returns>一个与输入列表顺序对应的翻译结果列表。</returns>
-        Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken); // <-- 修改返回类型
+        Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken);
 
         /// <summary>
         /// (扩展功能) 异步获取此服务可用的模型列表。

@@ -64,14 +64,14 @@ namespace CADTranslator.Services.CAD
 
             if (bestLayout != null)
                 {
-                var bestLayoutMap = bestLayout.ToDictionary(t => t.ObjectId);
+                // 【核心修改】使用绝对唯一的 UniqueId 作为字典的键，而不是不靠谱的 ObjectId
+                var bestLayoutMap = bestLayout.ToDictionary(t => t.UniqueId);
                 foreach (var originalTask in targets)
                     {
-                    if (bestLayoutMap.TryGetValue(originalTask.ObjectId, out var bestResultTask))
+                    // 【核心修改】同样使用 UniqueId 来匹配原始任务和计算后的结果
+                    if (bestLayoutMap.TryGetValue(originalTask.UniqueId, out var bestResultTask))
                         {
                         originalTask.BestPosition = bestResultTask.BestPosition;
-
-                        // ▼▼▼【核心修正】将计算出的“左下角”点位转换为“左上角”点位再存储 ▼▼▼
                         if (bestResultTask.BestPosition.HasValue)
                             {
                             var bottomLeft = bestResultTask.BestPosition.Value;

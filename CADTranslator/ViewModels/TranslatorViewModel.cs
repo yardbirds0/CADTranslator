@@ -41,6 +41,9 @@ namespace CADTranslator.ViewModels
         private bool _isTokenCountAvailable = false;
         private CancellationTokenSource _translationCts;
         private readonly ITokenizationService _tokenizationService;
+        // 【新增】用于控制UI状态的字段
+        private bool _isTranslating = false;
+
 
 
         // 【新增】用于管理背景色的画刷
@@ -66,10 +69,9 @@ namespace CADTranslator.ViewModels
             (Brush)new BrushConverter().ConvertFromString("#6741D9")
         };
         private int _brushIndex = 0;
-        private Dictionary<PromptTemplateType, string> _promptTemplates;
         private string _customPrompt; // 用于保存“自定义”模板的内容
+        public Dictionary<PromptTemplateType, string> PromptTemplateDisplayNames => PromptTemplateManager.DisplayNames;
 
-        public Dictionary<PromptTemplateType, string> PromptTemplateDisplayNames { get; private set; }
         public List<PromptTemplateType> PromptTemplateOptions { get; } = Enum.GetValues(typeof(PromptTemplateType)).Cast<PromptTemplateType>().ToList();
 
         public PromptTemplateType SelectedPromptTemplate
@@ -147,9 +149,24 @@ namespace CADTranslator.ViewModels
                 if (SetField(ref _isBusy, value))
                     {
                     OnPropertyChanged(nameof(IsUiEnabled));
-                    RetranslateFailedCommand.RaiseCanExecuteChanged();
                     TranslateCommand.RaiseCanExecuteChanged();
-                    SelectTextCommand.RaiseCanExecuteChanged(); // 【新增】选择按钮在忙时也应禁用
+                    CancelTranslationCommand.RaiseCanExecuteChanged();
+                    RetranslateFailedCommand.RaiseCanExecuteChanged();
+                    SelectTextCommand.RaiseCanExecuteChanged();
+                    }
+                }
+            }
+
+        public bool IsTranslating
+            {
+            get => _isTranslating;
+            set
+                {
+                if (SetField(ref _isTranslating, value))
+                    {
+                    // 当翻译状态变化时，通知相关命令刷新其可用状态
+                    TranslateCommand.RaiseCanExecuteChanged();
+                    CancelTranslationCommand.RaiseCanExecuteChanged();
                     }
                 }
             }
@@ -442,6 +459,7 @@ namespace CADTranslator.ViewModels
         #region --- 命令 ---
         public RelayCommand SelectTextCommand { get; }
         public RelayCommand TranslateCommand { get; }
+        public RelayCommand CancelTranslationCommand { get; }
         public RelayCommand ApplyToCadCommand { get; }
         public RelayCommand MergeCommand { get; }
         public RelayCommand SplitCommand { get; }
@@ -492,7 +510,8 @@ namespace CADTranslator.ViewModels
             ApiServiceOptions = _apiRegistry.Providers;
 
             SelectTextCommand = new RelayCommand(OnSelectText, p => !IsBusy); // 【修改】增加CanExecute
-            TranslateCommand = new RelayCommand(OnTranslate, p => TextBlockList.Any() && !IsBusy);
+            TranslateCommand = new RelayCommand(OnTranslate, p => TextBlockList.Any() && !IsBusy && !IsTranslating);
+            CancelTranslationCommand = new RelayCommand(OnCancelTranslation, p => IsBusy && IsTranslating);
             ApplyToCadCommand = new RelayCommand(OnApplyToCad, p => TextBlockList.Any(i => !string.IsNullOrWhiteSpace(i.TranslatedText) && !i.TranslatedText.StartsWith("[")));
             MergeCommand = new RelayCommand(OnMerge, p => p is IList<object> list && list.Count > 1);
             DeleteCommand = new RelayCommand(OnDelete, p => p is IList<object> list && list.Count > 0);
@@ -510,7 +529,6 @@ namespace CADTranslator.ViewModels
             ViewApiDocumentationCommand = new RelayCommand(p => OnViewApiDocumentation(), p => !string.IsNullOrWhiteSpace(CurrentProvider?.ApiDocumentationUrl));
 
             LoadSettings();
-            InitializePromptTemplates();
             _customPrompt = _currentSettings.CustomPrompt;
             UpdateDisplayedPrompt();
             Log("欢迎使用CAD翻译工具箱。");
@@ -668,6 +686,7 @@ namespace CADTranslator.ViewModels
                 }
 
             IsBusy = true;
+            IsTranslating = true;
             IsProgressIndeterminate = true;
             ClearAllRowHighlights();
             var totalStopwatch = new System.Diagnostics.Stopwatch();
@@ -719,6 +738,7 @@ namespace CADTranslator.ViewModels
                 if (totalItems > 0 && !_failedItems.Any()) { UpdateUsageStatistics(itemsToTranslate.Count, itemsToTranslate.Sum(i => i.OriginalText.Length), totalStopwatch.Elapsed.TotalSeconds); }
 
                 IsBusy = false;
+                IsTranslating = false;
                 IsProgressIndeterminate = false;
                 _translationCts?.Dispose();
                 _translationCts = null;
@@ -733,12 +753,10 @@ namespace CADTranslator.ViewModels
             TranslationUsage accumulatedUsage = new TranslationUsage();
             List<List<TextBlockViewModel>> allChunks;
 
-            // 步骤 1: 聚合策略日志
             string unitName = translator.UnitType == BillingUnit.Character ? "字符" : "Token";
             int limit = translator.UnitType == BillingUnit.Character ? MaxCharsPerBatch : MaxTokensPerBatch;
             Log($"采用[多句话合并为一次请求]模式，当前接口按[{unitName}]计费，最大[{unitName}数]为[{limit}]", clearPrevious: true);
 
-            // 步骤 2: 智能分块
             if (translator.UnitType == BillingUnit.Character)
                 {
                 allChunks = new List<List<TextBlockViewModel>>();
@@ -845,7 +863,7 @@ namespace CADTranslator.ViewModels
                         });
 
                         var originalTexts = chunk.Select(i => i.OriginalText).ToList();
-                        var (translatedTexts, usage) = await translator.TranslateBatchAsync(originalTexts, SourceLanguage, TargetLanguage, cancellationToken);
+                        var (translatedTexts, usage) = await translator.TranslateBatchAsync(originalTexts, SourceLanguage, TargetLanguage, this.DisplayedPrompt, cancellationToken);
 
                         lock (accumulatedUsage) { accumulatedUsage.Add(usage); }
 
@@ -966,7 +984,7 @@ namespace CADTranslator.ViewModels
                                 });
                                 // ▲▲▲ 修改结束 ▲▲▲
 
-                                var (result, usage) = await translator.TranslateAsync(item.OriginalText, SourceLanguage, TargetLanguage, cancellationToken);
+                                var (result, usage) = await translator.TranslateAsync(item.OriginalText, SourceLanguage, TargetLanguage, this.DisplayedPrompt, cancellationToken);
 
                                 // 累加用量
                                 lock (accumulatedUsage) { accumulatedUsage.Add(usage); }
@@ -1045,7 +1063,7 @@ namespace CADTranslator.ViewModels
 
                         try
                             {
-                            var (result, usage) = await translator.TranslateAsync(item.OriginalText, SourceLanguage, TargetLanguage, cancellationToken);
+                            var (result, usage) = await translator.TranslateAsync(item.OriginalText, SourceLanguage, TargetLanguage, this.DisplayedPrompt, cancellationToken);
 
                             // 累加用量
                             accumulatedUsage.Add(usage);
@@ -1177,6 +1195,12 @@ namespace CADTranslator.ViewModels
                 }
             }
 
+        private void OnCancelTranslation(object parameter)
+            {
+            _translationCts?.Cancel();
+            Log("正在取消翻译任务...");
+            }
+
         private async void OnManageModels(object parameter)
             {
             if (CurrentProfile == null)
@@ -1184,7 +1208,7 @@ namespace CADTranslator.ViewModels
                 await _windowService.ShowInformationDialogAsync("操作无效", "请先选择一个API配置。");
                 return;
                 }
-            var modelManagementVM = new ModelManagementViewModel(CurrentProfile.ProfileName, new List<string>(CurrentProfile.Models), new List<string>(CurrentProfile.FavoriteModels));
+            var modelManagementVM = new ModelManagementViewModel(CurrentProfile.ProfileName, new List<string>(CurrentProfile.Models), new List<string>(CurrentProfile.FavoriteModels), _windowService);
 
             var dialogResult = _windowService.ShowModelManagementDialog(modelManagementVM);
 
@@ -1211,7 +1235,8 @@ namespace CADTranslator.ViewModels
 
         private async void OnManageApiDefinitions(object parameter)
             {
-            var vm = new ApiDefinitionViewModel();
+            // 【修改】在创建 ApiDefinitionViewModel 时，将 _windowService 传进去
+            var vm = new ApiDefinitionViewModel(null, _windowService);
             var window = new ApiDefinitionWindow(vm);
 
             if (window.ShowDialog() == true)
@@ -1866,31 +1891,7 @@ namespace CADTranslator.ViewModels
         #endregion
 
         #region --- 提示词辅助方法 ---
-        private void InitializePromptTemplates()
-            {
-            PromptTemplateDisplayNames = new Dictionary<PromptTemplateType, string>
-                {
-                [PromptTemplateType.Custom] = "自定义",
-                [PromptTemplateType.Structure] = "结构专业",
-                [PromptTemplateType.Architecture] = "建筑专业",
-                [PromptTemplateType.HVAC] = "暖通专业",
-                [PromptTemplateType.Electrical] = "电气专业",
-                [PromptTemplateType.Plumbing] = "给排水专业",
-                [PromptTemplateType.Process] = "工艺专业",
-                [PromptTemplateType.Thermal] = "热力专业"
-                };
 
-            _promptTemplates = new Dictionary<PromptTemplateType, string>
-                {
-                [PromptTemplateType.Structure] = "你是一个专业的结构专业图纸翻译家。你的任务是把用户的文本从 {fromLanguage} 翻译成 {toLanguage}. 不要添加任何额外的解释，只返回翻译好的文本。遇到符号则保留原来的样式。",
-                [PromptTemplateType.Architecture] = "你是一个专业的建筑专业图纸翻译家...",
-                [PromptTemplateType.HVAC] = "你是一个专业的暖通专业图纸翻译家...",
-                [PromptTemplateType.Electrical] = "你是一个专业的电气专业图纸翻译家...",
-                [PromptTemplateType.Plumbing] = "你是一个专业的给排水专业图纸翻译家...",
-                [PromptTemplateType.Process] = "你是一个专业的工艺专业图纸翻译家...",
-                [PromptTemplateType.Thermal] = "你是一个专业的热力专业图纸翻译家..."
-                };
-            }
 
         private void UpdateDisplayedPrompt()
             {
@@ -1900,9 +1901,8 @@ namespace CADTranslator.ViewModels
                 }
             else
                 {
-                DisplayedPrompt = _promptTemplates.ContainsKey(SelectedPromptTemplate)
-                                ? _promptTemplates[SelectedPromptTemplate]
-                                : string.Empty;
+                // 【修改】从“专家”那里获取模板
+                DisplayedPrompt = PromptTemplateManager.GetCurrentPrompt(_currentSettings);
                 }
             }
         #endregion

@@ -13,11 +13,24 @@ namespace CADTranslator.Services.CAD
 
         public static IEnumerable<Geometry> ToNtsGeometry(Entity entity)
             {
-            if (entity.Bounds == null || !entity.Bounds.HasValue)
+            try
                 {
+                if (entity is AttributeDefinition)
+                    {
+                    yield break;
+                    }
+                // 首先检查实体和它的边界框是否有效
+                if (entity == null || entity.Bounds == null || !entity.Bounds.HasValue)
+                    {
+                    yield break;
+                    }
+                }
+            catch (System.Exception) // 【修改】捕获通用的 System.Exception，确保万无一失
+                {
+                // 如果在尝试访问 .Bounds 属性时发生任何错误（包括NullReferenceException），
+                // 就安全地跳过这个有问题的实体，不让程序崩溃。
                 yield break;
                 }
-
             if (entity is DBText || entity is MText)
                 {
                 yield return ToNtsPolygon(entity.GeometricExtents);
@@ -58,7 +71,7 @@ namespace CADTranslator.Services.CAD
                     }
                 yield break;
                 }
-
+            /*
             if (entity is Polyline || entity is Polyline2d || entity is Polyline3d || entity is Autodesk.AutoCAD.DatabaseServices.Dimension || entity is BlockReference)
                 {
                 var explodedObjects = new DBObjectCollection();
@@ -83,6 +96,7 @@ namespace CADTranslator.Services.CAD
                     }
                 yield break;
                 }
+              */
 
             Geometry geometry = null;
             if (entity is Line line)

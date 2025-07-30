@@ -2,6 +2,7 @@
 using CADTranslator.ViewModels;
 using System;
 using System.Threading.Tasks;
+using System.Windows;
 using Wpf.Ui.Controls; // 确保引入WPF-UI库的命名空间
 
 namespace CADTranslator.Services.UI
@@ -25,7 +26,7 @@ namespace CADTranslator.Services.UI
         /// (保持不变) 显示一个需要用户做出选择的确认对话框。
         /// </summary>
         /// <returns>用户的选择结果</returns>
-        Task<MessageBoxResult> ShowConfirmationDialogAsync(string title, string content, string primaryButtonText, string closeButtonText = "取消");
+        Task<Wpf.Ui.Controls.MessageBoxResult> ShowConfirmationDialogAsync(string title, string content, string primaryButtonText, string closeButtonText = "取消");
 
         /// <summary>
         /// 显示“模型管理”对话框。
@@ -52,5 +53,6 @@ namespace CADTranslator.Services.UI
         void ActivateMainWindow();
         void InvokeOnUIThread(Action action);
         void ScrollToGridItem(object item);
+        void Initialize(Window owner);
         }
     }

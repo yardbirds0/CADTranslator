@@ -524,7 +524,7 @@ namespace CADTranslator.Services.CAD
         private double CalculateStructuralSimilarity(string s1, string s2)
             {
             if (string.IsNullOrEmpty(s1) || string.IsNullOrEmpty(s2)) return 0.0;
-            var tokenizer = new Regex(@"[a-zA-Z0-9\.-]+|%%[a-zA-Z0-9@]+|[^\s]");
+            var tokenizer = new Regex(@"\([^)]+\)|[a-zA-Z0-9\.-]+|%%[a-zA-Z0-9@]+|[^\s]");
             var tokens1 = tokenizer.Matches(s1).Cast<Match>().Select(m => m.Value).ToList();
             var tokens2 = tokenizer.Matches(s2).Cast<Match>().Select(m => m.Value).ToList();
             if (tokens1.Count == 0 || tokens2.Count == 0) return 0.0;

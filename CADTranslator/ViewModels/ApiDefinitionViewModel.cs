@@ -2,8 +2,11 @@
 
 using CADTranslator.Models;
 using CADTranslator.Models.API;
+using CADTranslator.Services.UI;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Windows;
+using System.Windows.Input;
 
 namespace CADTranslator.ViewModels
     {
@@ -12,10 +15,18 @@ namespace CADTranslator.ViewModels
         private ApiDefinition _apiDefinition;
         public ApiDefinition ApiDef => _apiDefinition;
 
-        public ApiDefinitionViewModel(ApiDefinition apiDefinition = null)
+
+        private readonly IWindowService _windowService;
+
+        // 【修改】更新构造函数以接收 IWindowService
+        public ApiDefinitionViewModel(ApiDefinition apiDefinition = null, IWindowService windowService = null)
             {
-            // 如果传入了现有的definition，则编辑它；否则，创建一个全新的。
             _apiDefinition = apiDefinition ?? new ApiDefinition();
+            _windowService = windowService; // 保存服务实例
+
+            // 初始化命令
+            SaveCommand = new RelayCommand(ExecuteSave, CanExecuteSave);
+            CancelCommand = new RelayCommand(ExecuteCancel);
             }
 
         #region --- 绑定属性 ---
@@ -25,7 +36,16 @@ namespace CADTranslator.ViewModels
         public string DisplayName
             {
             get => _apiDefinition.DisplayName;
-            set { if (_apiDefinition.DisplayName != value) { _apiDefinition.DisplayName = value; OnPropertyChanged(); } }
+            set
+                {
+                if (_apiDefinition.DisplayName != value)
+                    {
+                    _apiDefinition.DisplayName = value;
+                    OnPropertyChanged();
+                    // 当DisplayName变化时，通知SaveCommand重新评估其可用性
+                    SaveCommand.RaiseCanExecuteChanged();
+                    }
+                }
             }
 
         public string ApiDocumentationUrl
@@ -80,6 +100,41 @@ namespace CADTranslator.ViewModels
             }
 
         #endregion
+
+        #region --- 命令 ---
+
+        public RelayCommand SaveCommand { get; }
+        public ICommand CancelCommand { get; }
+
+        private bool CanExecuteSave(object parameter)
+            {
+            // 只有当DisplayName不为空时，保存按钮才可用
+            return !string.IsNullOrWhiteSpace(DisplayName);
+            }
+
+        private void ExecuteSave(object parameter)
+            {
+            // 这是原来 SaveButton_Click 中的逻辑
+            // 注意：现在我们通过 IWindowService 来关闭窗口
+            if (parameter is Window window)
+                {
+                window.DialogResult = true;
+                window.Close();
+                }
+            }
+
+        private void ExecuteCancel(object parameter)
+            {
+            // 这是原来 CancelButton_Click 中的逻辑
+            if (parameter is Window window)
+                {
+                window.DialogResult = false;
+                window.Close();
+                }
+            }
+
+        #endregion
+
 
         #region --- INotifyPropertyChanged 实现 ---
         public event PropertyChangedEventHandler PropertyChanged;

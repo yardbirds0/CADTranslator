@@ -124,7 +124,8 @@
                                Appearance="Danger"
                                Icon="Delete24" />
                     <ui:Button Content="关闭"
-                               Click="CloseButton_Click"
+                               Command="{Binding CloseCommand}"
+                               CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}"
                                Margin="10,0,0,0"
                                IsCancel="True" />
                 </StackPanel>

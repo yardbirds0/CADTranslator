@@ -27,7 +27,6 @@ namespace CADTranslator.Services.Translation
         #endregion
 
         #region --- 构造函数 ---
-
         public CustomTranslator(string apiEndpoint, string apiKey, string model)
             {
             if (string.IsNullOrWhiteSpace(apiEndpoint))
@@ -37,9 +36,10 @@ namespace CADTranslator.Services.Translation
             _apiKey = apiKey;
             _model = model;
 
+            // 【修改】更新 HttpClient 的初始化逻辑
             _lazyHttpClient = new Lazy<HttpClient>(() =>
             {
-                var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                var client = new HttpClient { Timeout = TimeSpan.FromSeconds(180) };
                 if (!string.IsNullOrWhiteSpace(_apiKey))
                     {
                     client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
@@ -47,7 +47,6 @@ namespace CADTranslator.Services.Translation
                 return client;
             });
             }
-
         #endregion
 
         #region --- 1. 身份标识 (ITranslator 实现) ---
@@ -75,22 +74,25 @@ namespace CADTranslator.Services.Translation
 
         #region --- 3. 核心与扩展功能 (ITranslator 实现) ---
 
-        // ▼▼▼ 【方法重写】重写整个 TranslateAsync 方法以支持 CancellationToken ▼▼▼
-        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
             {
             if (string.IsNullOrWhiteSpace(_model))
                 throw new ApiException(ApiErrorType.ConfigurationError, ServiceType, "模型名称不能为空。");
 
             try
                 {
+                var finalPrompt = promptTemplate
+                    .Replace("{fromLanguage}", fromLanguage)
+                    .Replace("{toLanguage}", toLanguage);
+
                 var requestData = new
                     {
                     model = _model,
                     messages = new[]
                     {
-                        new { role = "system", content = $"You are a professional translator for Civil Engineering drawings. Your task is to translate the user's text from {fromLanguage} to {toLanguage}. Do not add any extra explanations, just return the translated text. If you encounter symbols, keep their original style." },
-                        new { role = "user", content = textToTranslate }
-                    },
+                new { role = "system", content = finalPrompt },
+                new { role = "user", content = textToTranslate }
+            },
                     stream = false
                     };
 
@@ -98,34 +100,50 @@ namespace CADTranslator.Services.Translation
                 var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
                 string requestUrl = $"{_endpoint}/chat/completions";
 
-                // 【核心修改】将 cancellationToken 传递给 PostAsync
-                var response = await _lazyHttpClient.Value.PostAsync(requestUrl, content, cancellationToken);
-
-                if (!response.IsSuccessStatusCode)
+                using (var request = new HttpRequestMessage(HttpMethod.Post, requestUrl) { Content = content })
                     {
-                    await HandleApiError(response);
-                    }
+                    HttpResponseMessage response;
+                    using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                        {
+                        connectCts.CancelAfter(TimeSpan.FromSeconds(15));
+                        try
+                            {
+                            response = await _lazyHttpClient.Value.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, connectCts.Token);
+                            }
+                        catch (OperationCanceledException)
+                            {
+                            if (cancellationToken.IsCancellationRequested) throw;
+                            throw new ApiException(ApiErrorType.NetworkError, ServiceType, "连接超时 (超过15秒)，请检查网络或代理设置。");
+                            }
+                        }
 
-                string jsonResponse = await response.Content.ReadAsStringAsync();
-                try
-                    {
-                    var data = JObject.Parse(jsonResponse);
-                    var translatedText = data["choices"]?[0]?["message"]?["content"]?.ToString();
+                    if (!response.IsSuccessStatusCode)
+                        {
+                        await HandleApiError(response);
+                        }
 
-                    if (translatedText == null)
-                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API响应中缺少有效的'content'字段。");
+                    string jsonResponse = await response.Content.ReadAsStringAsync();
 
-                    return (translatedText.Trim(),null);
-                    }
-                catch (JsonException ex)
-                    {
-                    throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法解析API返回的成功响应: {ex.Message}");
+                    try
+                        {
+                        var data = JObject.Parse(jsonResponse);
+                        var translatedText = data["choices"]?[0]?["message"]?["content"]?.ToString();
+
+                        if (translatedText == null)
+                            throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, "API响应中缺少有效的'content'字段。");
+
+                        return (translatedText.Trim(), null);
+                        }
+                    catch (JsonException ex)
+                        {
+                        throw new ApiException(ApiErrorType.InvalidResponse, ServiceType, $"无法解析API返回的成功响应: {ex.Message}");
+                        }
                     }
                 }
             catch (TaskCanceledException)
                 {
                 if (cancellationToken.IsCancellationRequested) throw;
-                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求超时。请检查网络连接或VPN设置。");
+                throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求被取消或总超时 (超过180秒)。");
                 }
             catch (HttpRequestException ex)
                 {
@@ -137,7 +155,7 @@ namespace CADTranslator.Services.Translation
                 }
             }
 
-        public Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, CancellationToken cancellationToken)
+        public Task<(List<string> TranslatedTexts, TranslationUsage Usage)> TranslateBatchAsync(List<string> textsToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
             {
             throw new NotSupportedException("自定义接口服务不支持批量翻译。");
             }

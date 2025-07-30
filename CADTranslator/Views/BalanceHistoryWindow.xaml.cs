@@ -28,6 +28,7 @@ namespace CADTranslator.Views
 
         private void DataGrid_AutoGeneratingColumn(object sender, DataGridAutoGeneratingColumnEventArgs e)
             {
+            // (这个方法保持不变)
             string originalColumnName = e.PropertyName;
 
             var mappingEntry = _appSettings.FriendlyNameMappings
@@ -49,12 +50,5 @@ namespace CADTranslator.Views
             e.Column.MinWidth = 80;
             }
 
-        /// <summary>
-        /// 【新增】关闭按钮的点击事件处理器
-        /// </summary>
-        private void CloseButton_Click(object sender, RoutedEventArgs e)
-            {
-            this.Close();
-            }
         }
     }

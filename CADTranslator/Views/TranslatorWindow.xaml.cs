@@ -19,44 +19,19 @@ namespace CADTranslator.Views
     {
     public partial class TranslatorWindow : FluentWindow
         {
-        public TranslatorWindow()
+        public TranslatorWindow(TranslatorViewModel viewModel)
             {
             InitializeComponent();
 
-            // ▼▼▼ 【核心修改】在这里创建所有服务实例 ▼▼▼
-            // 1. 创建UI服务
-            IWindowService windowService = new WindowService(this);
-
-            // 2. 创建与CAD环境相关的服务
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            IAdvancedTextService advancedTextService = new AdvancedTextService(doc);
-            ICadLayoutService cadLayoutService = new CadLayoutService(doc);
-
-            // 3. 创建与数据和逻辑相关的服务
-            ISettingsService settingsService = new SettingsService();
-            ApiRegistry apiRegistry = new ApiRegistry();
-            ITokenizationService tokenizationService = new GptTokenizationService();
-
-            // 4. 将所有创建好的服务，注入到ViewModel的构造函数中
-            var viewModel = new TranslatorViewModel(
-                windowService,
-                settingsService,
-                advancedTextService,
-                cadLayoutService,               
-                tokenizationService,
-                apiRegistry
-            );
-
-            // 5. 设置数据上下文
+            // 步骤 1. 直接将传入的 viewModel 设置为 DataContext
             this.DataContext = viewModel;
 
-            // (下面的代码保持不变)
+            // 步骤 2. 保持事件订阅逻辑不变
             if (viewModel.StatusLog is INotifyCollectionChanged collection)
                 {
                 collection.CollectionChanged += LogItems_CollectionChanged;
                 }
             }
-
         // (所有事件处理器，如DataGrid_MouseDoubleClick等，保持不变)
         private void DataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
             {

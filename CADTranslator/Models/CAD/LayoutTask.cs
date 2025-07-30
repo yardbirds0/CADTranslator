@@ -1,6 +1,7 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using CADTranslator.Models.CAD;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -10,7 +11,7 @@ namespace CADTranslator.Models.CAD
     public class LayoutTask
         {
         #region --- 核心属性 ---
-
+        public Guid UniqueId { get; } = Guid.NewGuid();
         public ObjectId ObjectId { get; }
         public string OriginalText { get; }
 
@@ -131,6 +132,7 @@ namespace CADTranslator.Models.CAD
         // 拷贝构造函数，确保所有新属性都被正确复制
         public LayoutTask(LayoutTask other)
             {
+            UniqueId = other.UniqueId;
             ObjectId = other.ObjectId;
             OriginalText = other.OriginalText;
             PristineTranslatedText = other.PristineTranslatedText; // 复制新属性

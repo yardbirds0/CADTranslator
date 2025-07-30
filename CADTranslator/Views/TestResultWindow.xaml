@@ -33,11 +33,13 @@
                     Padding="8"
                     Margin="0,0,0,10">
                 <TextBlock x:Name="SummaryTextBlock"
+                           Text="{Binding SummaryText}"
                            TextWrapping="Wrap"
                            LineHeight="20" />
             </Border>
             <ListView Grid.Row="2"
                       x:Name="ReportListView"
+                      ItemsSource="{Binding ReportItems}"
                       SelectionChanged="ReportListView_SelectionChanged">
                 <ListView.ItemTemplate>
                     <DataTemplate>
@@ -77,7 +79,7 @@
                         Name="RecalculateButton"
                         Content="重新计算布局"
                         Margin="0,0,5,0"
-                        Click="RecalculateButton_Click" />
+                        Command="{Binding RecalculateLayoutCommand}" />
 
                 <Button Grid.Column="1"
                         Name="ApplyButton"
@@ -86,7 +88,7 @@
                         FontWeight="Bold"
                         Foreground="White"
                         Background="#28A745"
-                        Click="ApplyButton_Click" />
+                        Command="{Binding ApplyLayoutCommand}" />
             </Grid>
             <Button Grid.Row="4"
                     Name="ResetButton"
@@ -145,12 +147,11 @@
                 <ComboBox Grid.Column="2"
                           Name="RoundsComboBox"
                           ItemsSource="{Binding RoundOptions}"
-                          Text="{Binding Path=NumberOfRounds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                          Text="{Binding Path=NumberOfRounds, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                           IsEditable="True"
                           Width="70"
                           Margin="10,0,0,0"
-                          VerticalContentAlignment="Center"
-                          LostFocus="RoundsComboBox_LostFocus" />
+                          VerticalContentAlignment="Center" />
                 <TextBlock Grid.Column="3"
                            Text="搜索范围:"
                            VerticalAlignment="Center"
@@ -159,11 +160,10 @@
                 <ComboBox Grid.Column="4"
                           Name="SearchRangeComboBox"
                           ItemsSource="{Binding SearchRangeOptions}"
-                          Text="{Binding Path=CurrentSearchRangeFactor, Mode=OneWay}"
+                          Text="{Binding Path=CurrentSearchRangeFactor, Mode=TwoWay, StringFormat=F1, UpdateSourceTrigger=LostFocus}"
                           IsEditable="True"
                           Width="70"
-                          VerticalContentAlignment="Center"
-                          LostFocus="SearchRangeComboBox_LostFocus" />
+                          VerticalContentAlignment="Center" />
             </Grid>
 
             <TabControl Grid.Row="1">

@@ -457,7 +457,7 @@ namespace CADTranslator.Services.CAD
 
             // 步骤 1: 分词 (Tokenization)
             // 这个正则表达式会把连续的字母/数字/特定符号视为一个词，其他所有字符（汉字、标点）都单个作为词。
-            var tokenizer = new Regex(@"[a-zA-Z0-9\.-]+|%%[a-zA-Z0-9@]+|[^\s]");
+            var tokenizer = new Regex(@"\([^)]+\)|[a-zA-Z0-9\.-]+|%%[a-zA-Z0-9@]+|[^\s]");
             var tokens1 = tokenizer.Matches(s1).Cast<Match>().Select(m => m.Value).ToList();
             var tokens2 = tokenizer.Matches(s2).Cast<Match>().Select(m => m.Value).ToList();
 
