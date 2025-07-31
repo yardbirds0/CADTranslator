@@ -481,7 +481,9 @@ namespace CADTranslator.Views
 
             var border = new Border { Child = textBlock, Background = Brushes.Transparent };
             var viewbox = new Viewbox { Child = border, DataContext = task, IsHitTestVisible = false };
-
+            viewbox.RenderTransformOrigin = new Point(0.5, 0.5); // 1. 设置旋转中心为控件中心
+            var rotation = -task.Rotation * 180 / Math.PI;       // 2. 获取CAD角度并翻转方向
+            viewbox.RenderTransform = new RotateTransform(rotation); // 3. 应用旋转
             // ▼▼▼ 【核心修改】创建原文框时，也使用我们缓存的精确尺寸 ▼▼▼
             if (!_textSizeCache.TryGetValue(task.ObjectId, out var size))
                 {
@@ -499,9 +501,9 @@ namespace CADTranslator.Views
             viewbox.Width = Math.Abs(screenP2.X - screenP1.X);
             viewbox.Height = Math.Abs(screenP2.Y - screenP1.Y);
 
-            Canvas.SetLeft(viewbox, Math.Min(screenP1.X, screenP2.X));
-            Canvas.SetTop(viewbox, Math.Min(screenP1.Y, screenP2.Y));
-            Panel.SetZIndex(viewbox, 20);
+            var centerPoint = _transformMatrix.Transform(new WinPoint(task.Bounds.GetCenter().X, task.Bounds.GetCenter().Y));
+            Canvas.SetLeft(viewbox, centerPoint.X - viewbox.Width / 2);
+            Canvas.SetTop(viewbox, centerPoint.Y - viewbox.Height / 2);
 
             return viewbox;
             }
@@ -629,10 +631,17 @@ namespace CADTranslator.Views
             containerGrid.Width = Math.Abs(p2.X - p1.X);
             containerGrid.Height = Math.Abs(p2.Y - p1.Y);
 
-            var positionInCanvas = _transformMatrix.Transform(new WinPoint(bounds.MinPoint.X, bounds.MaxPoint.Y));
-            Canvas.SetLeft(containerGrid, positionInCanvas.X);
-            Canvas.SetTop(containerGrid, positionInCanvas.Y);
+            containerGrid.RenderTransformOrigin = new Point(0.5, 0.5);
+            var rotation = -task.Rotation * 180 / Math.PI;
+            containerGrid.RenderTransform = new RotateTransform(rotation);
+
+            // 2. 基于中心点进行精确定位
+            var centerPoint = _transformMatrix.Transform(new WinPoint(bounds.GetCenter().X, bounds.GetCenter().Y));
+            Canvas.SetLeft(containerGrid, centerPoint.X - containerGrid.Width / 2);
+            Canvas.SetTop(containerGrid, centerPoint.Y - containerGrid.Height / 2);
+
             Panel.SetZIndex(containerGrid, 50);
+
             containerGrid.Visibility = System.Windows.Visibility.Collapsed;
             containerGrid.Visibility = System.Windows.Visibility.Visible;
 

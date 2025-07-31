@@ -212,16 +212,33 @@ namespace CADTranslator.Services.CAD
         private LayoutTask MergeTasks(List<LayoutTask> tasks, string groupType, Line leaderLine = null)
             {
             if (tasks == null || !tasks.Any()) return null;
-            var sortedTasks = tasks.OrderByDescending(t => _targetBounds[t].MinPoint.Y).ThenBy(t => _targetBounds[t].MinPoint.X).ToList();
+
+            // 步骤 1: 从任务组中确定一个主导旋转角度
+            double dominantRotation = tasks.First().Rotation;
+            var wcsToUcs = Matrix3d.Rotation(-dominantRotation, Vector3d.ZAxis, Point3d.Origin);
+
+            // 步骤 2: 在旋转后的坐标系(UCS)中对任务进行排序，确保阅读顺序正确
+            var sortedTasks = tasks
+                .OrderByDescending(t => (_targetBounds[t].MinPoint + (_targetBounds[t].MaxPoint - _targetBounds[t].MinPoint) / 2).TransformBy(wcsToUcs).Y)
+                .ThenBy(t => (_targetBounds[t].MinPoint + (_targetBounds[t].MaxPoint - _targetBounds[t].MinPoint) / 2).TransformBy(wcsToUcs).X)
+                .ToList();
+
+            // (后续的合并逻辑保持不变)
             var mergedText = new StringBuilder();
             foreach (var task in sortedTasks) { mergedText.Append(task.OriginalText.Trim() + " "); }
+
             var mergedBounds = new Extents3d();
             foreach (var task in sortedTasks) { mergedBounds.AddExtents(_targetBounds[task]); }
+
             var templateTask = sortedTasks.First();
             var mergedTask = new LayoutTask(templateTask, mergedText.ToString().Trim(), mergedBounds);
             mergedTask.SemanticType = groupType;
-            // 【核心修改】保存关联的索引线
             mergedTask.AssociatedLeader = leaderLine;
+
+            // 【核心修正】将所有源对象的ID都合并进来，这对于后续的删除操作至关重要
+            mergedTask.SourceObjectIds.Clear();
+            tasks.ForEach(t => mergedTask.SourceObjectIds.AddRange(t.SourceObjectIds));
+
             return mergedTask;
             }
         }

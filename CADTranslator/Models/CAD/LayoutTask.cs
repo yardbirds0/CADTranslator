@@ -124,12 +124,14 @@ namespace CADTranslator.Models.CAD
             TextStyleId = template.TextStyleId;
             HorizontalMode = template.HorizontalMode;
             VerticalMode = template.VerticalMode;
+            // 【核心修正】确保合并任务时，也聚合所有源ID
+            SourceObjectIds = new List<ObjectId>();
+            SourceObjectIds.AddRange(template.SourceObjectIds);
 
             OriginalText = mergedText;
             PristineTranslatedText = mergedText;
             TranslatedText = mergedText;
             Bounds = mergedBounds;
-            SourceObjectIds = new List<ObjectId>(template.SourceObjectIds);
             }
 
         // 拷贝构造函数，确保所有新属性都被正确复制
@@ -143,6 +145,7 @@ namespace CADTranslator.Models.CAD
             Bounds = other.Bounds;
             Position = other.Position;
             AlignmentPoint = other.AlignmentPoint;
+            OriginalAlignmentPoint = other.OriginalAlignmentPoint;
             Rotation = other.Rotation;
             Oblique = other.Oblique;
             Height = other.Height;
@@ -152,6 +155,7 @@ namespace CADTranslator.Models.CAD
             VerticalMode = other.VerticalMode;
             SemanticType = other.SemanticType;
             SearchRangeFactor = other.SearchRangeFactor;
+            AssociatedLeader = other.AssociatedLeader;
             AlgorithmPosition = other.AlgorithmPosition;
             CurrentUserPosition = other.CurrentUserPosition;
             IsManuallyMoved = other.IsManuallyMoved;

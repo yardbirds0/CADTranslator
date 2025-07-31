@@ -72,6 +72,7 @@ namespace CADTranslator.Services.CAD
                     if (bestLayoutMap.TryGetValue(originalTask.UniqueId, out var bestResultTask))
                         {
                         originalTask.BestPosition = bestResultTask.BestPosition;
+                        // ▼▼▼ 【核心修正】计算并存储用于UI显示的“左上角”坐标 ▼▼▼
                         if (bestResultTask.BestPosition.HasValue)
                             {
                             var bottomLeft = bestResultTask.BestPosition.Value;
