@@ -433,7 +433,7 @@ namespace CADTranslator.Services.CAD
             var textBlocks = new List<TextBlock>();
             if (sortedEntities.Count == 0) return textBlocks;
 
-            var titleMarkers = new Regex(@"(说明|注意|技术要求|参数|示例|NOTES|SPECIFICATION|LEGEND|DESCRIPTION)[\s:：]*$|:$", RegexOptions.IgnoreCase);
+            var titleMarkers = new Regex(@"(说明|注意|技术要求|参数|示例|NOTE|NOTES|SPECIFICATION|LEGEND|DESCRIPTION)[\s:：]*$|:$", RegexOptions.IgnoreCase);
             var paragraphMarkers = new Regex(@"^\s*(?:[<(（【〔](?:\d+|[a-zA-Z])[>)）】〕]|\d+[、.]|[\u25A0\u25CF\u25B2\u25B6]|[a-zA-Z][、.])");
 
             var firstEntity = sortedEntities.First();

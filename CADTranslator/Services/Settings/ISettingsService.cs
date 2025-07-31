@@ -1,5 +1,7 @@
 ﻿// 文件路径: CADTranslator/Services/ISettingsService.cs
 using CADTranslator.Models;
+using CADTranslator.Models.API;
+using System.Collections.Generic;
 
 namespace CADTranslator.Services.Settings
     {
@@ -20,5 +22,16 @@ namespace CADTranslator.Services.Settings
         /// </summary>
         /// <param name="settings">要保存的设置对象。</param>
         void SaveSettings(AppSettings settings);
+
+        /// <summary>
+        /// 从独立的JSON文件加载翻译历史记录。
+        /// </summary>
+        List<TranslationRecord> LoadTranslationHistory();
+
+        /// <summary>
+        /// 将翻译历史记录保存到独立的JSON文件。
+        /// </summary>
+        void SaveTranslationHistory(List<TranslationRecord> history);
+
         }
     }

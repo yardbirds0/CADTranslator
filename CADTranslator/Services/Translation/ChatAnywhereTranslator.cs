@@ -337,6 +337,16 @@ namespace CADTranslator.Services.Translation
             throw new NotSupportedException("ChatAnywhere 服务不支持计算Token。");
             }
 
+        public Task PerformPreflightCheckAsync(CancellationToken cancellationToken)
+            {
+            // 对于ChatAnywhere，同样调用GetModelsAsync并附加一个短超时来探测网络。
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                cts.CancelAfter(TimeSpan.FromSeconds(15));
+                return GetModelsAsync(cts.Token);
+                }
+            }
+
         #endregion
 
         #region --- 私有辅助方法 ---

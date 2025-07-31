@@ -41,12 +41,10 @@ namespace CADTranslator.ViewModels
         private bool _isTokenCountAvailable = false;
         private CancellationTokenSource _translationCts;
         private readonly ITokenizationService _tokenizationService;
-        // 【新增】用于控制UI状态的字段
         private bool _isTranslating = false;
+        public ObservableCollection<TranslationRecord> TranslationHistory { get; set; }
 
 
-
-        // 【新增】用于管理背景色的画刷
         private readonly Brush _translatingBrush = new SolidColorBrush(Color.FromArgb(128, 255, 236, 179)); // 淡黄色
         private readonly Brush _successBrush = new SolidColorBrush(Color.FromArgb(128, 200, 230, 201));     // 淡绿色
         private readonly Brush _failedBrush = new SolidColorBrush(Color.FromArgb(128, 255, 205, 210));      // 淡红色
@@ -475,6 +473,9 @@ namespace CADTranslator.ViewModels
         public RelayCommand DeleteConcurrencyOptionCommand { get; }
         public RelayCommand ManageApiDefinitionsCommand { get; }
         public RelayCommand ViewApiDocumentationCommand { get; }
+        public RelayCommand ViewUsageHistoryCommand { get; }
+        public RelayCommand ImportSettingsCommand { get; }
+        public RelayCommand ExportSettingsCommand { get; }
         #endregion
 
         #region --- 构造函数 ---
@@ -506,7 +507,7 @@ namespace CADTranslator.ViewModels
             LineSpacingOptions = new ObservableCollection<string>();
             BalanceHistory = new ObservableCollection<BalanceRecord>();
             ConcurrencyLevelOptions = new ObservableCollection<string>();
-
+            TranslationHistory = new ObservableCollection<TranslationRecord>();
             ApiServiceOptions = _apiRegistry.Providers;
 
             SelectTextCommand = new RelayCommand(OnSelectText, p => !IsBusy); // 【修改】增加CanExecute
@@ -527,6 +528,9 @@ namespace CADTranslator.ViewModels
             DeleteConcurrencyOptionCommand = new RelayCommand(OnDeleteConcurrencyOption, p => p is string option && option != "2");
             ManageApiDefinitionsCommand = new RelayCommand(OnManageApiDefinitions);
             ViewApiDocumentationCommand = new RelayCommand(p => OnViewApiDocumentation(), p => !string.IsNullOrWhiteSpace(CurrentProvider?.ApiDocumentationUrl));
+            ViewUsageHistoryCommand = new RelayCommand(OnViewUsageHistory);
+            ImportSettingsCommand = new RelayCommand(OnImportSettings);
+            ExportSettingsCommand = new RelayCommand(OnExportSettings);
 
             LoadSettings();
             _customPrompt = _currentSettings.CustomPrompt;
@@ -704,6 +708,9 @@ namespace CADTranslator.ViewModels
             try
                 {
                 ITranslator translator = _apiRegistry.CreateProviderForProfile(CurrentProfile);
+                Log($"正在检查与 {translator.DisplayName} 服务器的网络连接...");
+                await translator.PerformPreflightCheckAsync(_translationCts.Token);
+                Log($"与 {translator.DisplayName} 服务器连接成功，正在开始翻译...");
 
                 if (SendingMode == PromptSendingMode.Once && translator.IsBatchTranslationSupported)
                     {
@@ -723,11 +730,70 @@ namespace CADTranslator.ViewModels
             finally
                 {
                 totalStopwatch.Stop();
-                if (_translationCts != null && _translationCts.IsCancellationRequested) { Log("任务被用户取消。"); }
+                // 步骤 1: 创建一条新的历史记录
+                var record = new TranslationRecord
+                    {
+                    Timestamp = DateTime.Now.Subtract(totalStopwatch.Elapsed), // 任务开始的时间
+                    ServiceType = CurrentProvider.ServiceType,
+                    ModelName = IsModelRequired ? CurrentProfile.LastSelectedModel : "N/A",
+                    DurationInSeconds = totalStopwatch.Elapsed.TotalSeconds,
+                    SourceLanguage = this.SourceLanguage,
+                    TargetLanguage = this.TargetLanguage,
+                    SendingMode = this.SendingMode,
+                    PromptTemplateUsed = this.SelectedPromptTemplate,
+                    IsLiveLayoutEnabled = this.IsLiveLayoutEnabled,
+                    ConcurrencyLevel = this.IsMultiThreadingEnabled ? this.CurrentConcurrencyLevelInput : "关闭",
+                    WasCancelled = _translationCts != null && _translationCts.IsCancellationRequested,
+                    FailureCount = _failedItems.Count
+                    };
+
+                // 步骤 2: 计算成功项目的统计数据
+                var successfulItems = itemsToTranslate.Except(_failedItems).ToList();
+                record.ParagraphCount = successfulItems.Count;
+                if (successfulItems.Any())
+                    {
+                    record.SourceCharacterCount = successfulItems.Sum(i => (long)i.OriginalText.Length);
+                    record.TranslatedCharacterCount = successfulItems.Sum(i => (long)i.TranslatedText.Length);
+                    }
+
+                // 步骤 3: 处理Token用量 (精确或估算)
+                if (totalUsage.TotalTokens > 0)
+                    {
+                    record.Usage = totalUsage; // 使用API返回的精确值
+                    }
+                else if (successfulItems.Any())
+                    {
+                    // 为不支持Token的接口进行估算
+                    var sourceTextForTokenizing = string.Join("\n", successfulItems.Select(i => i.OriginalText));
+                    var translatedTextForTokenizing = string.Join("\n", successfulItems.Select(i => i.TranslatedText));
+
+                    var (promptTokens, _) = _tokenizationService.CountTokens(sourceTextForTokenizing, "gpt-3.5-turbo");
+                    var (completionTokens, _) = _tokenizationService.CountTokens(translatedTextForTokenizing, "gpt-3.5-turbo");
+
+                    record.Usage = new TranslationUsage
+                        {
+                        PromptTokens = promptTokens,
+                        CompletionTokens = completionTokens,
+                        TotalTokens = promptTokens + completionTokens
+                        };
+                    }
+
+                // 步骤 4: 记录失败信息
+                if (_failedItems.Any())
+                    {
+                    record.FailureMessages = _failedItems.Select(i => i.TranslatedText).Distinct().ToList();
+                    }
+
+                // 步骤 5: 将新记录添加到历史列表并保存
+                TranslationHistory.Add(record);
+                _settingsService.SaveTranslationHistory(TranslationHistory.ToList());
+
+
+                // 步骤 6: (保留原有的日志和状态更新逻辑)
+                if (record.WasCancelled) { Log("任务被用户取消。"); }
 
                 if (totalUsage.TotalTokens > 0)
                     {
-                    // 根据计费单位决定日志文本
                     string unitName = CurrentProvider.UnitType == BillingUnit.Character ? "字符" : "Token";
                     Log($"本次总{unitName}用量为 {totalUsage.TotalTokens}，其中输入{unitName}用量 {totalUsage.PromptTokens}，输出{unitName}用量 {totalUsage.CompletionTokens}");
                     }
@@ -735,7 +801,7 @@ namespace CADTranslator.ViewModels
                 if (_failedItems.Any()) { Log($"任务完成，有 {_failedItems.Count} 个项目失败或被取消。总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒"); }
                 else { Log($"全部翻译任务成功完成！总用时 {totalStopwatch.Elapsed.TotalSeconds:F1} 秒"); }
 
-                if (totalItems > 0 && !_failedItems.Any()) { UpdateUsageStatistics(itemsToTranslate.Count, itemsToTranslate.Sum(i => i.OriginalText.Length), totalStopwatch.Elapsed.TotalSeconds); }
+                if (totalItems > 0 && !_failedItems.Any()) { UpdateUsageStatistics(itemsToTranslate.Count, record.SourceCharacterCount, totalStopwatch.Elapsed.TotalSeconds); }
 
                 IsBusy = false;
                 IsTranslating = false;
@@ -755,7 +821,7 @@ namespace CADTranslator.ViewModels
 
             string unitName = translator.UnitType == BillingUnit.Character ? "字符" : "Token";
             int limit = translator.UnitType == BillingUnit.Character ? MaxCharsPerBatch : MaxTokensPerBatch;
-            Log($"采用[多句话合并为一次请求]模式，当前接口按[{unitName}]计费，最大[{unitName}数]为[{limit}]", clearPrevious: true);
+            Log($"采用[多句话合并为一次请求]模式，当前接口按[{unitName}]计费，最大[{unitName}数]为[{limit}]", clearPrevious: false);
 
             if (translator.UnitType == BillingUnit.Character)
                 {
@@ -1292,6 +1358,10 @@ namespace CADTranslator.ViewModels
 
             BalanceHistory.Clear();
             _currentSettings.BalanceHistory.OrderByDescending(r => r.Timestamp).ToList().ForEach(r => BalanceHistory.Add(r));
+            TranslationHistory.Clear();
+            var loadedHistory = _settingsService.LoadTranslationHistory();
+            loadedHistory.ForEach(r => TranslationHistory.Add(r));
+
             UpdateBalanceDisplayForCurrentProvider();
 
             IsMultiThreadingEnabled = _currentSettings.IsMultiThreadingEnabled;
@@ -1777,6 +1847,83 @@ namespace CADTranslator.ViewModels
 
             _windowService.ShowBalanceHistoryDialog(historyViewModel);
             }
+
+
+        private void OnViewUsageHistory(object parameter)
+            {
+            var historyViewModel = new UsageHistoryViewModel(this.TranslationHistory);
+            _windowService.ShowUsageHistoryDialog(historyViewModel);
+            }
+
+        private async void OnExportSettings(object parameter)
+            {
+            try
+                {
+                var saveFileDialog = new Microsoft.Win32.SaveFileDialog
+                    {
+                    Filter = "JSON 文件 (*.json)|*.json",
+                    Title = "导出设置文件",
+                    FileName = $"CADTranslator_Settings_Backup_{DateTime.Now:yyyyMMdd}.json"
+                    };
+
+                if (saveFileDialog.ShowDialog() == true)
+                    {
+                    // 确保保存的是最新的内存中的设置
+                    SaveSettings();
+                    // 从服务中重新加载一次以获取最完整的设置对象
+                    var settingsToExport = _settingsService.LoadSettings();
+                    string json = Newtonsoft.Json.JsonConvert.SerializeObject(settingsToExport, Newtonsoft.Json.Formatting.Indented);
+                    System.IO.File.WriteAllText(saveFileDialog.FileName, json);
+                    Log("设置已成功导出！");
+                    await _windowService.ShowInformationDialogAsync("导出成功", $"设置已成功导出到:\n{saveFileDialog.FileName}");
+                    }
+                }
+            catch (Exception ex)
+                {
+                Log($"[错误] 导出设置时失败: {ex.Message}", isError: true);
+                await _windowService.ShowInformationDialogAsync("导出失败", $"导出设置时发生错误:\n\n{ex.Message}");
+                }
+            }
+
+        private async void OnImportSettings(object parameter)
+            {
+            try
+                {
+                var openFileDialog = new Microsoft.Win32.OpenFileDialog
+                    {
+                    Filter = "JSON 文件 (*.json)|*.json",
+                    Title = "导入设置文件"
+                    };
+
+                if (openFileDialog.ShowDialog() == true)
+                    {
+                    string json = System.IO.File.ReadAllText(openFileDialog.FileName);
+                    var importedSettings = Newtonsoft.Json.JsonConvert.DeserializeObject<AppSettings>(json);
+
+                    if (importedSettings != null)
+                        {
+                        // 使用服务将新设置写入标准配置文件
+                        _settingsService.SaveSettings(importedSettings);
+
+                        // 重新加载设置以刷新整个UI
+                        LoadSettings();
+
+                        Log("设置已成功导入并应用！");
+                        await _windowService.ShowInformationDialogAsync("导入成功", "设置已成功导入并刷新！");
+                        }
+                    else
+                        {
+                        throw new Exception("文件内容无效或无法解析为设置对象。");
+                        }
+                    }
+                }
+            catch (Exception ex)
+                {
+                Log($"[错误] 导入设置时失败: {ex.Message}", isError: true);
+                await _windowService.ShowInformationDialogAsync("导入失败", $"导入设置时发生错误:\n\n{ex.Message}");
+                }
+            }
+
 
         public void LoadTextBlocks(List<TextBlockViewModel> blocks)
             {

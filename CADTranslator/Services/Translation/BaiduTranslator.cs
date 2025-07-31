@@ -194,6 +194,13 @@ namespace CADTranslator.Services.Translation
             {
             return Task.FromResult(string.IsNullOrEmpty(textToCount) ? 0 : textToCount.Length);
             }
+
+        public Task PerformPreflightCheckAsync(CancellationToken cancellationToken)
+            {
+            // 对于百度翻译，我们信任其网络稳定性，不执行任何实际的检查。
+            // 直接返回一个已完成的任务。
+            return Task.CompletedTask;
+            }
         #endregion
 
         #region --- 私有辅助方法 ---

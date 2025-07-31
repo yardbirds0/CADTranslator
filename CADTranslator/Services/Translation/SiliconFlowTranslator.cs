@@ -99,9 +99,7 @@ namespace CADTranslator.Services.Translation
 
         public async Task<(string TranslatedText, TranslationUsage Usage)> TranslateAsync(string textToTranslate, string fromLanguage, string toLanguage, string promptTemplate, CancellationToken cancellationToken)
             {
-            // ▼▼▼ 【核心修改】在这里的调用中，传入 promptTemplate ▼▼▼
             var (translatedTexts, usage) = await TranslateBatchAsync(new List<string> { textToTranslate }, fromLanguage, toLanguage, promptTemplate, cancellationToken);
-            // ▲▲▲ 修改结束 ▲▲▲
             return (translatedTexts.FirstOrDefault() ?? string.Empty, usage);
             }
 
@@ -112,7 +110,12 @@ namespace CADTranslator.Services.Translation
             if (textsToTranslate == null || !textsToTranslate.Any())
                 return (new List<string>(), null);
 
-            // 准备请求内容
+            // ▼▼▼ 【核心修改】步骤 1: 执行“火力侦察” ▼▼▼
+            // 这里我们 `await` 它，如果侦察失败，它会直接抛出异常，中断后续流程
+            await PerformPreflightCheckAsync(cancellationToken);
+            // ▲▲▲ 修改结束 ▲▲▲
+
+            // 准备请求内容 (逻辑不变)
             string textsAsJsonArray = JsonConvert.SerializeObject(textsToTranslate);
             string prompt = promptTemplate
                 .Replace("{fromLanguage}", fromLanguage)
@@ -132,24 +135,10 @@ namespace CADTranslator.Services.Translation
             var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
             string requestUrl = $"{_endpoint}/chat/completions";
 
-            // 启动“主部队”翻译任务，它受180秒总超时和用户取消按钮的控制
-            var mainTranslationTask = _lazyHttpClient.Value.PostAsync(requestUrl, content, cancellationToken);
-
-            // 启动一个15秒的“连接超时闹钟”
-            var connectionTimeoutTask = Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
-
-            // 等待，看是“主部队”先完成，还是“闹钟”先响
-            var completedTask = await Task.WhenAny(mainTranslationTask, connectionTimeoutTask);
-
-            // 分析“赛跑”结果
-            if (completedTask == connectionTimeoutTask)
-                {
-                }
-
-            // 无论谁先完成，我们最终都必须等待“主部队”返回最终结果
             try
                 {
-                var response = await mainTranslationTask;
+                // ▼▼▼ 【核心修改】步骤 2: 发起主请求，使用常规的 PostAsync，只受180秒总超时控制 ▼▼▼
+                var response = await _lazyHttpClient.Value.PostAsync(requestUrl, content, cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                     {
@@ -170,17 +159,14 @@ namespace CADTranslator.Services.Translation
                 }
             catch (TaskCanceledException)
                 {
-                // 如果在这里捕获到取消异常，有两种可能：
-                // 1. connectionTimeoutTask 触发了外部 cancellationToken 的取消（用户点击了按钮）
-                // 2. mainTranslationTask 自身因180秒总超时而取消
-                if (cancellationToken.IsCancellationRequested) throw; // 用户取消
+                if (cancellationToken.IsCancellationRequested) throw; // 用户主动取消
                 throw new ApiException(ApiErrorType.NetworkError, ServiceType, "请求总超时 (超过180秒)。");
                 }
-            catch (Exception ex)
+            catch (HttpRequestException ex)
                 {
-                // 捕获其他网络或解析错误
-                throw new ApiException(ApiErrorType.ApiError, ServiceType, $"翻译过程中发生错误: {ex.Message}");
+                throw new ApiException(ApiErrorType.NetworkError, ServiceType, $"网络请求失败: {ex.Message}");
                 }
+            // ▲▲▲ 修改结束 ▲▲▲
             }
 
         public async Task<List<string>> GetModelsAsync(CancellationToken cancellationToken)
@@ -190,6 +176,7 @@ namespace CADTranslator.Services.Translation
                 {
                 using (var request = new HttpRequestMessage(HttpMethod.Get, modelListUrl))
                     {
+                    // 【优化】同样为这个请求加上15秒的连接超时判断，使其更健壮
                     HttpResponseMessage response;
                     using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                         {
@@ -245,7 +232,7 @@ namespace CADTranslator.Services.Translation
                 using (var request = new HttpRequestMessage(HttpMethod.Get, userInfoUrl))
                     {
                     HttpResponseMessage response;
-                    using (var connectCts = new CancellationTokenSource()) // CheckBalanceAsync没有外部Token
+                    using (var connectCts = new CancellationTokenSource())
                         {
                         connectCts.CancelAfter(TimeSpan.FromSeconds(15));
                         try
@@ -297,12 +284,24 @@ namespace CADTranslator.Services.Translation
 
         public Task<int> CountTokensAsync(string textToCount, CancellationToken cancellationToken)
             {
-            // 对于支持本地计算的接口，这个方法可以不再被ViewModel调用，但保留以符合接口规范
             throw new NotSupportedException("硅基流动服务应使用本地Token计算，不应调用此API方法。");
+            }
+
+        public Task PerformPreflightCheckAsync(CancellationToken cancellationToken)
+            {
+            // 对于硅基流动，我们调用GetModelsAsync并附加一个短超时来探测网络。
+            // 我们不关心其返回结果，只关心它是否因网络问题而抛出异常。
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                cts.CancelAfter(TimeSpan.FromSeconds(15));
+                return GetModelsAsync(cts.Token);
+                }
             }
         #endregion
 
         #region --- 私有辅助方法 ---
+
+       
         private async Task HandleApiError(HttpResponseMessage response)
             {
             string errorBody = await response.Content.ReadAsStringAsync();

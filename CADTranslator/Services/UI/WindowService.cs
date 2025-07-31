@@ -131,5 +131,12 @@ namespace CADTranslator.Services.UI
                     }
             });
             }
+
+        public void ShowUsageHistoryDialog(UsageHistoryViewModel viewModel)
+            {
+            var window = new UsageHistoryWindow(viewModel) { Owner = _owner };
+            window.ShowDialog();
+            }
+
         }
     }

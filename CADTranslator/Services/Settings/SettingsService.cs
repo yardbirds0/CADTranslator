@@ -68,14 +68,16 @@ namespace CADTranslator.Services.Settings
     public class SettingsService : ISettingsService
         {
         private readonly string _settingsFilePath;
+        private readonly string _historyFilePath;
         private const string SettingsFileName = "cad_translator_settings.json";
-
+        private const string HistoryFileName = "translation_history.json";
         public SettingsService()
             {
             string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             string appFolderPath = Path.Combine(appDataPath, "CADTranslator");
             Directory.CreateDirectory(appFolderPath);
             _settingsFilePath = Path.Combine(appFolderPath, SettingsFileName);
+            _historyFilePath = Path.Combine(appFolderPath, HistoryFileName);
             }
 
         /// <summary>
@@ -141,7 +143,39 @@ namespace CADTranslator.Services.Settings
                 };
             }
 
+        public List<TranslationRecord> LoadTranslationHistory()
+            {
+            if (!File.Exists(_historyFilePath))
+                {
+                return new List<TranslationRecord>();
+                }
+            try
+                {
+                string json = File.ReadAllText(_historyFilePath);
+                return JsonConvert.DeserializeObject<List<TranslationRecord>>(json) ?? new List<TranslationRecord>();
+                }
+            catch
+                {
+                return new List<TranslationRecord>(); // 如果文件损坏，返回空列表
+                }
+            }
 
+        /// <summary>
+        /// 将翻译历史记录保存到独立的JSON文件。
+        /// </summary>
+        public void SaveTranslationHistory(List<TranslationRecord> history)
+            {
+            if (history == null) return;
+            try
+                {
+                string json = JsonConvert.SerializeObject(history, Formatting.Indented);
+                File.WriteAllText(_historyFilePath, json);
+                }
+            catch (Exception)
+                {
+                // 在实际应用中，这里应该记录错误日志
+                }
+            }
 
         /// <summary>
         /// 获取我们预定义的友好名称映射规则

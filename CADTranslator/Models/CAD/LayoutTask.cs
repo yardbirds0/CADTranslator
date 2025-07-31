@@ -33,7 +33,8 @@ namespace CADTranslator.Models.CAD
 
         public Extents3d Bounds { get; private set; }
         public Point3d Position { get; }
-        public Point3d AlignmentPoint { get; }
+        public Point3d AlignmentPoint { get; set; } // 修改：允许设置
+        public Point3d OriginalAlignmentPoint { get; } // 新增：只读
         public double Rotation { get; }
         public double Oblique { get; }
         public double Height { get; }
@@ -74,6 +75,7 @@ namespace CADTranslator.Models.CAD
                 TranslatedText = dbText.TextString;         // 初始时，显示文本等于原文
                 Position = dbText.Position;
                 AlignmentPoint = dbText.AlignmentPoint;
+                OriginalAlignmentPoint = dbText.AlignmentPoint; // 记录原始点
                 Rotation = dbText.Rotation;
                 Oblique = dbText.Oblique;
                 Height = dbText.Height;
@@ -96,6 +98,7 @@ namespace CADTranslator.Models.CAD
                 TranslatedText = mText.Text;
                 Position = mText.Location;
                 AlignmentPoint = mText.Location;
+                OriginalAlignmentPoint = mText.Location; // 记录原始点
                 Rotation = mText.Rotation;
                 Oblique = 0;
                 Height = mText.TextHeight;

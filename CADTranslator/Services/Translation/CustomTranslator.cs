@@ -175,6 +175,16 @@ namespace CADTranslator.Services.Translation
             throw new NotSupportedException("自定义接口服务不支持计算Token。");
             }
 
+        public Task PerformPreflightCheckAsync(CancellationToken cancellationToken)
+            {
+            // 对于自定义接口，同样使用发送“空”请求的策略来探测网络。
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                cts.CancelAfter(TimeSpan.FromSeconds(15));
+                return TranslateAsync(string.Empty, "auto", "en", string.Empty, cts.Token);
+                }
+            }
+
         #endregion
 
         #region --- 私有辅助方法 ---

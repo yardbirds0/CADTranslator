@@ -18,7 +18,7 @@
                  Width="1080"
                  WindowStartupLocation="CenterScreen"
                  WindowBackdropType="Mica"
-                 d:DesignHeight="1800"
+                 d:DesignHeight="2000"
                  Loaded="TranslatorWindow_Loaded"
                  ExtendsContentIntoTitleBar="True">
 
@@ -85,7 +85,7 @@
                         <ControlTemplate TargetType="{x:Type controls:WaveProgressBar}">
                             <Viewbox x:Name="Root"
                                      Stretch="Uniform">
-                                
+
                                 <Path Width="100"
                                       Height="100"
                                       Fill="{TemplateBinding Background}">
@@ -113,6 +113,273 @@
                 </Setter>
             </Style>
 
+            <Style x:Key="RainbowButtonStyle"
+                   TargetType="{x:Type Button}">
+                <Setter Property="HorizontalContentAlignment"
+                        Value="Center" />
+                <Setter Property="VerticalContentAlignment"
+                        Value="Center" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type Button}">
+                            <Border x:Name="border"
+                                    Padding="{TemplateBinding Padding}"
+                                    Background="Transparent"
+                                    SnapsToDevicePixels="true"
+                                    Width="80"
+                                    HorizontalAlignment="Left"
+                                    BorderThickness="2"
+                                    CornerRadius="4"
+                                    BorderBrush="{Binding ElementName=textBlock, Path=Foreground}">
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal">
+                                            <Storyboard>
+                                                <PointAnimation Storyboard.TargetName="RainbowBrush"
+                                                                Storyboard.TargetProperty="StartPoint"
+                                                                To="0,0.5"
+                                                                Duration="0:0:0.5">
+                                                    <PointAnimation.EasingFunction>
+                                                        <QuarticEase EasingMode="EaseOut" />
+                                                    </PointAnimation.EasingFunction>
+                                                </PointAnimation>
+                                                <PointAnimation Storyboard.TargetName="RainbowBrush"
+                                                                Storyboard.TargetProperty="EndPoint"
+                                                                To="1,0.5"
+                                                                Duration="0:0:0.5">
+                                                    <PointAnimation.EasingFunction>
+                                                        <QuarticEase EasingMode="EaseOut" />
+                                                    </PointAnimation.EasingFunction>
+                                                </PointAnimation>
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="MouseOver">
+                                            <Storyboard>
+                                                <PointAnimation Storyboard.TargetName="RainbowBrush"
+                                                                Storyboard.TargetProperty="StartPoint"
+                                                                To="0.5,0"
+                                                                Duration="0:0:0.5">
+                                                    <PointAnimation.EasingFunction>
+                                                        <QuarticEase EasingMode="EaseOut" />
+                                                    </PointAnimation.EasingFunction>
+                                                </PointAnimation>
+                                                <PointAnimation Storyboard.TargetName="RainbowBrush"
+                                                                Storyboard.TargetProperty="EndPoint"
+                                                                To=".5,1"
+                                                                Duration="0:0:0.5">
+                                                    <PointAnimation.EasingFunction>
+                                                        <QuarticEase EasingMode="EaseOut" />
+                                                    </PointAnimation.EasingFunction>
+                                                </PointAnimation>
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <Storyboard SpeedRatio="3">
+                                                <PointAnimation Storyboard.TargetName="RainbowBrush"
+                                                                Storyboard.TargetProperty="StartPoint"
+                                                                To="0.5,0" />
+                                                <PointAnimation Storyboard.TargetName="RainbowBrush"
+                                                                Storyboard.TargetProperty="EndPoint"
+                                                                To=".5,1" />
+                                                <DoubleAnimation Storyboard.TargetName="G2"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="0" />
+                                                <DoubleAnimation Storyboard.TargetName="G3"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="0" />
+                                                <DoubleAnimation Storyboard.TargetName="G4"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="0" />
+                                                <DoubleAnimation Storyboard.TargetName="G5"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="0" />
+                                                <DoubleAnimation Storyboard.TargetName="G6"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="0" />
+                                                <DoubleAnimation Storyboard.TargetName="G7"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="0" />
+                                                <DoubleAnimation Storyboard.TargetName="G8"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="1" />
+                                                <DoubleAnimation Storyboard.TargetName="G9"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="1" />
+                                                <DoubleAnimation Storyboard.TargetName="G10"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="1" />
+                                                <DoubleAnimation Storyboard.TargetName="G11"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="1" />
+                                                <DoubleAnimation Storyboard.TargetName="G12"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="1" />
+                                                <DoubleAnimation Storyboard.TargetName="G13"
+                                                                 Storyboard.TargetProperty="Offset"
+                                                                 To="1" />
+                                            </Storyboard>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                                <Grid>
+                                    <TextBlock Foreground="{Binding ElementName=textBlock, Path=Foreground}"
+                                               Text="{TemplateBinding Content}"
+                                               FontWeight="{TemplateBinding FontWeight}"
+                                               FontSize="{TemplateBinding FontSize}">
+                                        <TextBlock.Effect>
+                                            <BlurEffect Radius="15"
+                                                        RenderingBias="Quality" />
+                                        </TextBlock.Effect>
+                                    </TextBlock>
+                                    <TextBlock x:Name="textBlock"
+                                               Text="{TemplateBinding Content}"
+                                               FontWeight="{TemplateBinding FontWeight}"
+                                               FontSize="{TemplateBinding FontSize}">
+                                        <TextBlock.Foreground>
+                                            <LinearGradientBrush x:Name="RainbowBrush"
+                                                                 StartPoint="0,0.5"
+                                                                 EndPoint="1,.5">
+                                                <GradientStop x:Name="G1"
+                                                              Offset="0"
+                                                              Color="#65b849" />
+                                                <GradientStop x:Name="G2"
+                                                              Offset=".166"
+                                                              Color="#65b849" />
+                                                <GradientStop x:Name="G3"
+                                                              Offset=".166"
+                                                              Color="#f7b423" />
+                                                <GradientStop x:Name="G4"
+                                                              Offset=".3333"
+                                                              Color="#f7b423" />
+                                                <GradientStop x:Name="G5"
+                                                              Offset="0.3333"
+                                                              Color="#f58122" />
+                                                <GradientStop x:Name="G6"
+                                                              Offset="0.5"
+                                                              Color="#f58122" />
+                                                <GradientStop x:Name="G7"
+                                                              Offset="0.5"
+                                                              Color=" #f8f8f8" />
+                                                <GradientStop x:Name="G8"
+                                                              Offset="0.5"
+                                                              Color=" #f8f8f8" />
+                                                <GradientStop x:Name="G9"
+                                                              Offset="0.50"
+                                                              Color="#de3a3c" />
+                                                <GradientStop x:Name="G10"
+                                                              Offset="0.666"
+                                                              Color="#de3a3c" />
+                                                <GradientStop x:Name="G11"
+                                                              Offset="0.666"
+                                                              Color="#943f96" />
+                                                <GradientStop x:Name="G12"
+                                                              Offset="0.8633"
+                                                              Color="#943f96" />
+                                                <GradientStop x:Name="G13"
+                                                              Offset="0.8633"
+                                                              Color="#009fd9" />
+                                                <GradientStop x:Name="G14"
+                                                              Offset="01"
+                                                              Color="#009fd9" />
+                                            </LinearGradientBrush>
+                                        </TextBlock.Foreground>
+                                    </TextBlock>
+                                </Grid>
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="EllipseStyle"
+                   TargetType="Button">
+                <Setter Property="Padding"
+                        Value="8,4,8,4" />
+                <Setter Property="HorizontalAlignment"
+                        Value="Center" />
+                <Setter Property="VerticalAlignment"
+                        Value="Center" />
+                <Setter Property="FontWeight"
+                        Value="Normal" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Grid x:Name="RootGrid">
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualStateGroup.Transitions>
+                                            <VisualTransition GeneratedDuration="0:0:1"
+                                                              To="Normal">
+                                                <Storyboard>
+                                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="EllipseProgressBehavior"
+                                                                                   Storyboard.TargetProperty="Progress">
+                                                        <EasingDoubleKeyFrame KeyTime="0:0:1"
+                                                                              Value="0">
+                                                            <EasingDoubleKeyFrame.EasingFunction>
+                                                                <QuinticEase EasingMode="EaseOut" />
+                                                            </EasingDoubleKeyFrame.EasingFunction>
+                                                        </EasingDoubleKeyFrame>
+                                                    </DoubleAnimationUsingKeyFrames>
+                                                </Storyboard>
+                                            </VisualTransition>
+                                            <VisualTransition GeneratedDuration="0:0:1"
+                                                              To="MouseOver">
+                                                <Storyboard>
+                                                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="EllipseProgressBehavior"
+                                                                                   Storyboard.TargetProperty="Progress">
+                                                        <EasingDoubleKeyFrame KeyTime="0:0:1"
+                                                                              Value="100">
+                                                            <EasingDoubleKeyFrame.EasingFunction>
+                                                                <QuinticEase EasingMode="EaseOut" />
+                                                            </EasingDoubleKeyFrame.EasingFunction>
+                                                        </EasingDoubleKeyFrame>
+                                                    </DoubleAnimationUsingKeyFrames>
+                                                </Storyboard>
+                                            </VisualTransition>
+
+                                        </VisualStateGroup.Transitions>
+                                        <VisualState x:Name="Normal" />
+
+                                        <VisualState x:Name="MouseOver">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="EllipseProgressBehavior"
+                                                                 Storyboard.TargetProperty="Progress"
+                                                                 To="100" />
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <Storyboard>
+                                                <ColorAnimation Storyboard.TargetName="PART_Ellipse"
+                                                                Storyboard.TargetProperty="(Shape.Fill).(SolidColorBrush.Color)"
+                                                                To="#90B0E0E6"
+                                                                Duration="0:0:0.1"
+                                                                AutoReverse="False" />
+                                            </Storyboard>
+                                        </VisualState>
+
+                                        <VisualState x:Name="Disabled" />
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                                <ContentPresenter x:Name="ContentPresenter"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                  Content="{TemplateBinding Content}"
+                                                  ContentTemplate="{TemplateBinding ContentTemplate}" />
+
+                                <Ellipse x:Name="PART_Ellipse"
+                                         Fill="Transparent"
+                                         Stroke="{TemplateBinding BorderBrush}"
+                                         StrokeThickness="2">
+                                    <interactivity:Interaction.Behaviors>
+                                        <behaviors:ChangeAngleToEnterPointerBehavior />
+                                        <behaviors:ProgressToEllipseBehavior x:Name="EllipseProgressBehavior" />
+                                    </interactivity:Interaction.Behaviors>
+                                </Ellipse>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
         </ResourceDictionary>
     </Window.Resources>
 
@@ -189,13 +456,15 @@
                                            HorizontalAlignment="Center"
                                            VerticalAlignment="Top"
                                            Margin="0,0,0,5"
-                                           Opacity="0.8" />
+                                           Foreground="Black"
+                                           Opacity="1" />
                                 <TextBlock Grid.Column="1"
                                            Text="目标语言"
+                                           Foreground="Black"
                                            HorizontalAlignment="Center"
                                            VerticalAlignment="Top"
                                            Margin="0,0,0,5"
-                                           Opacity="0.8" />
+                                           Opacity="1" />
                             </Grid>
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -236,7 +505,8 @@
                                     PreviewMouseDown="SettingsPanel_PreviewMouseDown">
                             <TextBlock Text="API 服务"
                                        Margin="0,0,0,5"
-                                       Opacity="0.8" />
+                                       Foreground="Black"
+                                       Opacity="1" />
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -299,8 +569,9 @@
                             <StackPanel Margin="0,10,0,0"
                                         Visibility="{Binding IsApiKeyEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <TextBlock Text="API 密钥"
+                                           Foreground="Black"
                                            Margin="0,0,0,5"
-                                           Opacity="0.8" />
+                                           Opacity="1" />
                                 <TextBox Text="{Binding CurrentProfile.ApiKey, UpdateSourceTrigger=PropertyChanged}" />
                             </StackPanel>
 
@@ -308,7 +579,8 @@
                                         Visibility="{Binding IsApiUrlEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <TextBlock Text="API URL"
                                            Margin="0,0,0,5"
-                                           Opacity="0.8" />
+                                           Foreground="Black"
+                                           Opacity="1" />
                                 <TextBox Text="{Binding CurrentProfile.ApiEndpoint, UpdateSourceTrigger=PropertyChanged}" />
                             </StackPanel>
 
@@ -322,14 +594,16 @@
                                 <StackPanel>
                                     <TextBlock Text="模型列表"
                                                FontWeight="Bold"
-                                               FontSize="14"
-                                               HorizontalAlignment="Left"
+                                               Foreground="Black"
+                                               FontSize="14"        
+                                               HorizontalAlignment="Center"
                                                Margin="0,0,0,8" />
 
                                     <Grid>
                                         <ComboBox ItemsSource="{Binding ModelList}"
                                                   SelectedItem="{Binding SelectedModel}"
                                                   TextSearch.TextPath="Name"
+                                                  FontSize="13"
                                                   Text="{Binding CurrentModelInput, UpdateSourceTrigger=PropertyChanged}"
                                                   IsEditable="True"
                                                   IsEnabled="{Binding IsModelListEnabled}">
@@ -368,6 +642,7 @@
                                         <ui:Button Grid.Column="0"
                                                    Content="管理模型列表"
                                                    Appearance="Dark"
+                                                   Foreground="AliceBlue"
                                                    Margin="0,0,4,0"
                                                    Command="{Binding ManageModelsCommand}"
                                                    IsEnabled="{Binding IsModelListEnabled}" />
@@ -389,9 +664,10 @@
                                     Visibility="{Binding IsBalanceFeatureEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <StackPanel>
                                     <TextBlock Text="API 余额"
+                                               Foreground="Black"
                                                FontWeight="Bold"
                                                FontSize="14"
-                                               HorizontalAlignment="Left"
+                                               HorizontalAlignment="Center"
                                                Margin="0,0,0,8" />
 
                                     <Grid>
@@ -428,14 +704,15 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <ui:Button Grid.Column="0"
-                                                   Content="历史记录"
+                                                   Content="用户历史信息"
                                                    Margin="0,0,4,0"
                                                    Appearance="Dark"
+                                                   Foreground="AliceBlue"
                                                    Command="{Binding ViewHistoryCommand}"
                                                    IsEnabled="{Binding IsBalanceFeatureEnabled}" />
                                         <ui:Button Grid.Column="1"
-                                                   Content="获取余额"
-                                                   Margin="4,0,0,0"
+                                                   Content="获取用户信息"
+                                                   Margin="5,0,0,0"
                                                    Command="{Binding GetBalanceCommand}"
                                                    IsEnabled="{Binding IsBalanceFeatureEnabled}" />
                                     </Grid>
@@ -452,7 +729,8 @@
                                     <TextBlock Text="提示词"
                                                FontWeight="Bold"
                                                FontSize="14"
-                                               HorizontalAlignment="Left"
+                                               Foreground="Black"
+                                               HorizontalAlignment="Center"
                                                Margin="0,0,0,8" />
 
                                     <Grid>
@@ -466,10 +744,11 @@
                                                    VerticalAlignment="Center"
                                                    Margin="0,0,10,0" />
                                         <ComboBox Grid.Column="1"
-                                                     ItemsSource="{Binding PromptTemplateDisplayNames}"
-                                                     DisplayMemberPath="Value"
-                                                     SelectedValuePath="Key"
-                                                     SelectedValue="{Binding SelectedPromptTemplate}" />
+                                                  ItemsSource="{Binding PromptTemplateDisplayNames}"
+                                                  DisplayMemberPath="Value"
+                                                  FontWeight="Regular"
+                                                  SelectedValuePath="Key"
+                                                  SelectedValue="{Binding SelectedPromptTemplate}" />
                                     </Grid>
 
                                     <Grid Margin="0,8,0,0">
@@ -477,6 +756,7 @@
                                                     IsReadOnly="{Binding IsPromptBoxReadOnly}"
                                                     TextWrapping="Wrap"
                                                     AcceptsReturn="True"
+                                                    FontWeight="Regular"
                                                     VerticalScrollBarVisibility="Auto"
                                                     MinHeight="120" />
                                         <TextBlock Text="此接口为专业翻译接口，无需提示词"
@@ -518,6 +798,7 @@
                                 <StackPanel>
                                     <TextBlock Text="实时排版功能"
                                                FontWeight="Bold"
+                                               Foreground="Black"
                                                FontSize="14"
                                                HorizontalAlignment="Center" />
                                     <Grid Margin="0,8,0,0">
@@ -625,6 +906,7 @@
                                     Margin="0,15,0,0">
                                 <StackPanel>
                                     <TextBlock Text="原文发送模式"
+                                               Foreground="Black"
                                                FontWeight="Bold"
                                                FontSize="14"
                                                HorizontalAlignment="Center"
@@ -721,6 +1003,7 @@
                                                     VerticalAlignment="Center">
                                             <TextBlock Text="段落合并相似度阈值"
                                                        FontWeight="Bold"
+                                                       Foreground="Black"
                                                        FontSize="14"
                                                        HorizontalAlignment="Center" />
 
@@ -775,6 +1058,7 @@
                                 <StackPanel>
                                     <TextBlock Text="多线程并发翻译"
                                                FontWeight="Bold"
+                                               Foreground="Black"
                                                FontSize="14"
                                                HorizontalAlignment="Center" />
                                     <Grid Margin="0,8,0,0">
@@ -865,7 +1149,77 @@
                                     </Grid>
                                 </StackPanel>
                             </Border>
+                            <Border Background="{DynamicResource SystemAccentColorLight3Brush}"
+                                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="0,10"
+                                    Margin="0,15,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="用户配置"
+                                               FontWeight="Bold"
+                                               Foreground="Black"
+                                               FontSize="14"
+                                               HorizontalAlignment="Center"
+                                               Margin="0,0,0,8" />
+                                    
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <ui:Button Content="使用记录"
+                                                   Grid.Column="0"
+                                                   Command="{Binding ViewUsageHistoryCommand}"
+                                                   Style="{StaticResource RainbowButtonStyle}"
+                                                   FontSize="14"
+                                                   Margin="1,0,5,0"
+                                                   FontWeight="Bold"
+                                                   Padding="10,5" />
+                                        <ui:Button Content="导出设置"
+                                                   Grid.Column="1"
+                                                   Command="{Binding ExportSettingsCommand}"
+                                                   Style="{StaticResource RainbowButtonStyle}"
+                                                   FontSize="14"
+                                                   Margin="0,0,0,0"
+                                                   FontWeight="Bold"
+                                                   Padding="10,5" />
+                                        <ui:Button Content="导入设置"
+                                                   Grid.Column="2"
+                                                   Command="{Binding ImportSettingsCommand}"
+                                                   Style="{StaticResource RainbowButtonStyle}"
+                                                   FontSize="14"
+                                                   Margin="5,0,-5,0"
+                                                   FontWeight="Bold"
+                                                   Padding="10,5" />
+                                        <!--ui:Button Content="导入"
+                                                   Grid.Column="0"
+                                                   Style="{StaticResource EllipseStyle}"
+                                                   FontSize="14"
+                                                   Command="{Binding ImportSettingsCommand}"
+                                                   BorderBrush="LightSeaGreen"
+                                                   Width="50"
+                                                   Height="50"
+                                                   FontWeight="Bold"
+                                                   Padding="10,5"
+                                                   Margin="0,10,0,0" /-->
+                                        <!--ui:Button Content="导出"
+                                                   Style="{StaticResource EllipseStyle}"
+                                                   FontSize="14"
+                                                   Grid.Column="1"
+                                                   Command="{Binding ExportSettingsCommand}"
+                                                   BorderBrush="LightSeaGreen"
+                                                   Width="50"
+                                                   Height="50"
+                                                   FontWeight="Bold"
+                                                   Padding="10,5"
+                                                   Margin="0,10,0,0" /-->
+                                    </Grid>
+                                   
 
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
                     </ui:NavigationViewItem.MenuItems>
                 </ui:NavigationViewItem>
@@ -1024,7 +1378,6 @@
                                    Margin="10,0,10,0"
                                    Icon="{ui:SymbolIcon Symbol=BookSearch24,Filled=True}"
                                    Appearance="Caution"
-                                   
                                    Command="{Binding TranslateCommand}"
                                    Visibility="{Binding IsTranslating, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
 

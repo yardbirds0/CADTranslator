@@ -287,6 +287,16 @@ namespace CADTranslator.Services.Translation
                     }
                 }
             }
+
+        public Task PerformPreflightCheckAsync(CancellationToken cancellationToken)
+            {
+            // 对于Gemini，我们调用其自身的GetModelsAsync并附加一个短超时来探测网络。
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                cts.CancelAfter(TimeSpan.FromSeconds(15));
+                return GetModelsAsync(cts.Token);
+                }
+            } 
         #endregion
 
         #region --- 私有辅助方法 ---

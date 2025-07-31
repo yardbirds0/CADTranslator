@@ -136,6 +136,19 @@ namespace CADTranslator.Services.Translation
             {
             throw new NotSupportedException("当前OpenAI集成不支持计算Token。");
             }
+
+        public Task PerformPreflightCheckAsync(CancellationToken cancellationToken)
+            {
+            // 执行一个超轻量级的“空”翻译请求来探测网络。
+            // 我们不关心结果，只关心它是否会因为网络问题而抛出异常。
+            // 使用一个极短的超时来确保快速失败。
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                cts.CancelAfter(TimeSpan.FromSeconds(15));
+                // 注意：这里我们传入了空字符串作为翻译内容，并且promptTemplate也为空
+                return TranslateAsync(string.Empty, "auto", "en", string.Empty, cts.Token);
+                }
+            }
         #endregion
         }
     }

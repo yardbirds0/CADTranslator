@@ -54,5 +54,6 @@ namespace CADTranslator.Services.UI
         void InvokeOnUIThread(Action action);
         void ScrollToGridItem(object item);
         void Initialize(Window owner);
+        void ShowUsageHistoryDialog(UsageHistoryViewModel viewModel);
         }
     }

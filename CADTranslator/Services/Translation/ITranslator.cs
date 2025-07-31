@@ -140,6 +140,8 @@ namespace CADTranslator.Services.Translation
         /// <returns>一个包含Token数量的整数。</returns>
         Task<int> CountTokensAsync(string textToCount, CancellationToken cancellationToken); // <-- 在这里增加参数
 
+        Task PerformPreflightCheckAsync(CancellationToken cancellationToken);
+
         #endregion
         }
     }
