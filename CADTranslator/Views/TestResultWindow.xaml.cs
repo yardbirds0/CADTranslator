@@ -330,53 +330,56 @@ namespace CADTranslator.Views
             {
             if (sender is Thumb resizeThumb && VisualTreeHelper.GetParent(resizeThumb) is Grid containerGrid && containerGrid.DataContext is LayoutTask task)
                 {
-                // 步骤 1: 获取最终的WPF像素宽度
+                // 步骤 1: 【新增】在所有计算开始前，先“记住”当前控件视觉左上角的CAD世界坐标
+                var currentCadTopLeft = GetCadTopLeftFromCurrentUserPosition(task);
+
+                // 步骤 2: 获取最终的WPF像素宽度 (逻辑不变)
                 double finalWpfWidth = containerGrid.Width;
 
-                // 步骤 2: 创建一个从WPF像素到CAD图形单位的转换矩阵
+                // 步骤 3: 将WPF宽度转换为CAD世界单位下的宽度 (逻辑不变)
                 var inverseTransform = _transformMatrix;
-                inverseTransform.Invert(); // Invert()会修改矩阵自身，现在它可以将WPF点转换为CAD点
-
-                // 步骤 3: 计算出新的最大宽度（in CAD units）
-                // 我们通过转换一个宽度向量来获得纯粹的缩放比例，避免位移影响
+                inverseTransform.Invert();
                 var cadWidthVector = inverseTransform.Transform(new Vector(finalWpfWidth, 0));
                 double newMaxWidthInCadUnits = cadWidthVector.Length;
 
-                // 步骤 4: 使用正确的CAD单位宽度，调用后台进行文本重排和精确测量
+                // 步骤 4: 使用CAD单位宽度，进行文本重排和精确尺寸测量 (逻辑不变)
                 ReflowAndRemeasureTask(task, newMaxWidthInCadUnits);
 
-                // 步骤 5: 从缓存中获取最新的、精确的CAD尺寸
+                // 步骤 5: 从缓存中获取最新的、精确的CAD尺寸 (逻辑不变)
                 Size newAccurateCadSize = _translatedSizeCache[task.ObjectId];
 
-                // 步骤 6: 【核心修复】使用原始的、正向的变换矩阵，将精确的CAD尺寸转换回WPF像素尺寸，并更新UI
-                // 注意：我们不再使用已经Invert过的矩阵，而是用原始的_transformMatrix的属性
-                double scaleX = _transformMatrix.M11;
-                double scaleY = Math.Abs(_transformMatrix.M22); // Y轴是反的，取绝对值
+                // 步骤 6: 【核心】根据“不变的左上角”和“新的尺寸”，反算出正确的几何锚点，并更新它
+                task.CurrentUserPosition = GetNewAnchorPointFromTopLeft(
+                    currentCadTopLeft,
+                    newAccurateCadSize, // 传递包含新宽度和高度的完整尺寸
+                    task.HorizontalMode,
+                    task.VerticalMode,
+                    task.Rotation
+                );
+                task.IsManuallyMoved = true; // 标记为手动修改
 
+                // 步骤 7: 使用新的CAD尺寸，更新WPF控件的像素尺寸 (逻辑不变)
+                double scaleX = _transformMatrix.M11;
+                double scaleY = Math.Abs(_transformMatrix.M22);
                 containerGrid.Width = newAccurateCadSize.Width * scaleX;
                 containerGrid.Height = newAccurateCadSize.Height * scaleY;
 
-                // 步骤 7: 更新文本框中的换行，以匹配最终的计算结果
+                // 步骤 8: 更新文本框中的换行，以匹配最终的计算结果 (逻辑不变)
                 if (containerGrid.Children.OfType<Thumb>().FirstOrDefault(t => t.Name == "MoveThumb") is Thumb moveThumb && moveThumb.Template.FindName("ThumbBorder", moveThumb) is Border border)
                     {
                     if (border.Child is Viewbox viewbox && viewbox.Child is TextBlock textBlock)
                         {
-                        textBlock.Text = task.TranslatedText; // task.TranslatedText 已在ReflowAndRemeasureTask中被更新
+                        textBlock.Text = task.TranslatedText;
                         }
                     }
-                // 步骤 8: 获取这个任务在CAD世界中的、100%正确的锚点
+
+                // 步骤 9: 【关键】使用我们刚刚计算出的、100%正确的几何锚点，来重新定位UI控件
                 var cadAnchorPoint = task.CurrentUserPosition.Value;
-
-                // 步骤 9: 将这个CAD锚点，转换到WPF的屏幕坐标
                 var screenAnchorPoint = _transformMatrix.Transform(new WinPoint(cadAnchorPoint.X, cadAnchorPoint.Y));
-
-                // 步骤 10: 根据CAD的对齐模式，获取WPF中对应的旋转/变换中心
                 var wpfRenderOrigin = GetRenderTransformOriginFromAlignment(task.HorizontalMode, task.VerticalMode);
 
-                // 步骤 11: 【关键】根据屏幕锚点、新的控件尺寸、以及旋转中心，重新计算并设置Canvas.Left和Canvas.Top
                 Canvas.SetLeft(containerGrid, screenAnchorPoint.X - containerGrid.Width * wpfRenderOrigin.X);
                 Canvas.SetTop(containerGrid, screenAnchorPoint.Y - containerGrid.Height * wpfRenderOrigin.Y);
-
                 }
             }
 
@@ -1000,11 +1003,109 @@ namespace CADTranslator.Views
 
             return new Point(x, y);
             }
+        /// <summary>
+        /// 【新增的辅助方法】根据当前的几何锚点、尺寸和对齐方式，计算出文本框视觉左上角的CAD世界坐标。
+        /// </summary>
+        /// <summary>
+        /// 【新增的辅助方法】根据当前的几何锚点、尺寸和对齐方式，计算出文本框视觉左上角的CAD世界坐标。
+        /// </summary>
+        private Point3d GetCadTopLeftFromCurrentUserPosition(LayoutTask task)
+            {
+            var anchor = task.CurrentUserPosition.Value;
+            // 【修正】确保使用最新的精确尺寸
+            if (!_translatedSizeCache.TryGetValue(task.ObjectId, out var size))
+                {
+                size = new Size(task.Bounds.Width(), task.Bounds.Height());
+                }
+            double width = size.Width;
+            double height = size.Height;
+
+            double offsetX = 0;
+            double offsetY = 0;
+
+            // --- 水平偏移 ---
+            switch (task.HorizontalMode)
+                {
+                case TextHorizontalMode.TextCenter:
+                case TextHorizontalMode.TextAlign:
+                case TextHorizontalMode.TextMid:
+                    offsetX = -width / 2.0;
+                    break;
+                case TextHorizontalMode.TextRight:
+                case TextHorizontalMode.TextFit:
+                    offsetX = -width;
+                    break;
+                }
+
+            // --- 垂直偏移 ---
+            switch (task.VerticalMode)
+                {
+                case TextVerticalMode.TextBase:
+                case TextVerticalMode.TextBottom:
+                    offsetY = height;
+                    break;
+                case TextVerticalMode.TextVerticalMid:
+                    offsetY = height / 2.0;
+                    break;
+                }
+
+            var offsetVector = new Vector3d(offsetX, offsetY, 0);
+            // 将偏移向量旋转到与文字相同的角度
+            var rotatedOffset = offsetVector.TransformBy(Matrix3d.Rotation(task.Rotation, Vector3d.ZAxis, Point3d.Origin));
+
+            // 最终的左上角位置 = 锚点 + 旋转后的偏移向量
+            return anchor + rotatedOffset;
+            }
+
+        /// <summary>
+        /// 【新增的辅助方法】根据“固定”的左上角位置、新的尺寸和对齐方式，反向计算出新的几何锚点。
+        /// </summary>
+        private Point3d GetNewAnchorPointFromTopLeft(Point3d topLeft, Size newSize, TextHorizontalMode hMode, TextVerticalMode vMode, double rotation)
+            {
+            // 这个逻辑与 GetCadTopLeftFromCurrentUserPosition 完全相反
+            double newWidth = newSize.Width;
+            double newHeight = newSize.Height;
+
+            double offsetX = 0;
+            double offsetY = 0;
+
+            // 水平偏移现在使用新的宽度
+            switch (hMode)
+                {
+                case TextHorizontalMode.TextCenter:
+                case TextHorizontalMode.TextAlign:
+                case TextHorizontalMode.TextMid:
+                    offsetX = -newWidth / 2.0;
+                    break;
+                case TextHorizontalMode.TextRight:
+                case TextHorizontalMode.TextFit:
+                    offsetX = -newWidth;
+                    break;
+                }
+
+            // 垂直偏移现在使用新的高度
+            switch (vMode)
+                {
+                case TextVerticalMode.TextBase:
+                case TextVerticalMode.TextBottom:
+                    offsetY = newHeight;
+                    break;
+                case TextVerticalMode.TextVerticalMid:
+                    offsetY = newHeight / 2.0;
+                    break;
+                }
+
+            var offsetVector = new Vector3d(offsetX, offsetY, 0);
+            var rotatedOffset = offsetVector.TransformBy(Matrix3d.Rotation(rotation, Vector3d.ZAxis, Point3d.Origin));
+
+            // 新的锚点 = 左上角 - 旋转后的偏移向量
+            return topLeft - rotatedOffset;
+            }
+
 
         }
+
     }
-
-
 
 public static class LayoutTaskExtensionsForView
     {
