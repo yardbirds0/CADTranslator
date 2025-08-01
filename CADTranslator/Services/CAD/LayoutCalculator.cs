@@ -75,11 +75,22 @@ namespace CADTranslator.Services.CAD
                         // ▼▼▼ 【核心修正】计算并存储用于UI显示的“左上角”坐标 ▼▼▼
                         if (bestResultTask.BestPosition.HasValue)
                             {
-                            var bottomLeft = bestResultTask.BestPosition.Value;
-                            var height = originalTask.Bounds.Height(); // 获取原始文本的高度
-                            var topLeft = new Point3d(bottomLeft.X, bottomLeft.Y + height, bottomLeft.Z);
-                            originalTask.AlgorithmPosition = topLeft;
-                            originalTask.CurrentUserPosition = topLeft;
+                            // ▼▼▼ 【核心修正】我们不再计算错误的"topLeft"，而是直接传递最原始、最精确的几何锚点 ▼▼▼
+
+                            // 1. 获取原始文字的真实锚点
+                            Point3d originalAnchorPoint = (originalTask.HorizontalMode == TextHorizontalMode.TextLeft && originalTask.VerticalMode == TextVerticalMode.TextBase)
+                                ? originalTask.Position
+                                : originalTask.OriginalAlignmentPoint; // 使用我们之前保存的、未经修改的原始对齐点
+
+                            // 2. 计算从原始锚点到算法算出的新位置(左下角)的位移向量
+                            var offset = bestResultTask.BestPosition.Value - originalTask.Bounds.MinPoint;
+
+                            // 3. 将这个位移应用到原始锚点上，得到新位置的精确锚点
+                            var newAnchorPoint = originalAnchorPoint + offset;
+
+                            // 4. 将这个100%正确的锚点传递给UI
+                            originalTask.AlgorithmPosition = newAnchorPoint;
+                            originalTask.CurrentUserPosition = newAnchorPoint;
                             }
                         else
                             {

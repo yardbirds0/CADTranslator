@@ -1,4 +1,5 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using CADTranslator.Models.CAD;
 using System;
@@ -43,6 +44,7 @@ namespace CADTranslator.Models.CAD
         public TextHorizontalMode HorizontalMode { get; }
         public TextVerticalMode VerticalMode { get; }
         public List<ObjectId> SourceObjectIds { get; private set; } = new List<ObjectId>();
+        public ObjectId TemplateObjectId { get; set; }
 
         #endregion
 
@@ -68,6 +70,26 @@ namespace CADTranslator.Models.CAD
             this.Bounds = entity.GeometricExtents;
             this.SourceObjectIds.Add(entity.ObjectId);
 
+            // 【新增】检查并读取XData中的模板ID
+            this.TemplateObjectId = entity.ObjectId; // 默认是自己
+            if (entity.XData != null)
+                {
+                var rb = entity.XData;
+                var values = rb.AsArray();
+                if (values.Length > 1 && values[0].Value.ToString() == "CADTranslator")
+                    {
+                    try
+                        {
+                        var handle = new Handle(Convert.ToInt64(values[1].Value.ToString(), 16));
+                        var db = Application.DocumentManager.MdiActiveDocument.Database;
+                        if (db.TryGetObjectId(handle, out ObjectId templateId))
+                            {
+                            this.TemplateObjectId = templateId;
+                            }
+                        }
+                    catch { /* 转换失败则忽略 */ }
+                    }
+                }
             if (entity is DBText dbText)
                 {
                 OriginalText = dbText.TextString;
@@ -163,6 +185,7 @@ namespace CADTranslator.Models.CAD
             FailureReason = other.FailureReason;
             CollisionDetails = new Dictionary<Point3d, ObjectId>(other.CollisionDetails);
             SourceObjectIds = new List<ObjectId>(other.SourceObjectIds);
+            TemplateObjectId = other.TemplateObjectId;
             }
 
         #endregion

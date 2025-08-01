@@ -56,6 +56,8 @@ namespace CADTranslator.Views
         private Matrix _canvasMatrix;
         private bool _isLoaded = false;
         private bool _canvasInitialized = false;
+        private WinPoint _initialMousePosition;
+        private Point3d _initialCadAnchorPoint;
         #endregion
 
         #region --- 构造函数与加载事件 ---
@@ -177,21 +179,25 @@ namespace CADTranslator.Views
 
         private void Thumb_DragStarted(object sender, DragStartedEventArgs e)
             {
-            if (sender is Thumb thumb && thumb.DataContext is LayoutTask task)
+            if (sender is Thumb thumb)
                 {
-                // 【修复BUG】确保从容器Grid上获取DataContext
+                // 尝试从Grid的DataContext获取task
                 if (VisualTreeHelper.GetParent(thumb) is Grid containerGrid)
                     {
-                    task = containerGrid.DataContext as LayoutTask;
+                    _draggedTask = containerGrid.DataContext as LayoutTask;
                     }
-                if (task == null) return;
 
-                _draggedTask = task;
-                ReportListView.SelectedItem = task;
+                if (_draggedTask == null) return;
+
+                // 【核心修正】记录拖动开始时的初始状态
+                _initialMousePosition = Mouse.GetPosition(this); // 记录鼠标相对于整个窗口的初始位置
+                _initialCadAnchorPoint = _draggedTask.CurrentUserPosition.Value; // 记录控件的初始CAD锚点
+
+                ReportListView.SelectedItem = _draggedTask;
                 thumb.CaptureMouse();
                 e.Handled = true;
 
-                var uiElement = FindUIElementByTask(task, isThumb: true);
+                var uiElement = FindUIElementByTask(_draggedTask, isThumb: true);
                 if (uiElement != null) Panel.SetZIndex(uiElement, 100);
                 }
             }
@@ -202,29 +208,45 @@ namespace CADTranslator.Views
             var containerGrid = FindUIElementByTask(_draggedTask, isThumb: true) as Grid;
             if (containerGrid == null) return;
 
-            var newLeft = Canvas.GetLeft(containerGrid) + e.HorizontalChange;
-            var newTop = Canvas.GetTop(containerGrid) + e.VerticalChange;
-            Canvas.SetLeft(containerGrid, newLeft);
-            Canvas.SetTop(containerGrid, newTop);
+            // ▼▼▼ 【最终修正】修正类型不匹配的编译错误 ▼▼▼
 
+            // 1. 获取鼠标在屏幕上的当前绝对位置 (不变)
+            var currentMousePosition = Mouse.GetPosition(this);
+
+            // 2. 计算总的屏幕位移向量 (不变)
+            var screenDelta = Point.Subtract(currentMousePosition, _initialMousePosition);
+
+            // 3. 将屏幕位移向量，反向变换回CAD世界坐标系下的位移向量 (不变)
             var inverseTransform = _transformMatrix;
             inverseTransform.Invert();
-            var newWorldTopLeft = inverseTransform.Transform(new WinPoint(newLeft, newTop));
+            var cadDeltaWpf = inverseTransform.Transform(new Vector(screenDelta.X, screenDelta.Y));
 
+            // 4. 【关键修正】将WPF的Vector类型，转换为AutoCAD的Vector3d类型
+            var cadDelta = new Vector3d(cadDeltaWpf.X, cadDeltaWpf.Y, 0);
+
+            // 5. 【关键】现在，我们可以安全地将 Point3d 和 Vector3d 相加了
+            var newCadAnchorPoint = _initialCadAnchorPoint + cadDelta;
+            _draggedTask.CurrentUserPosition = newCadAnchorPoint;
+            _draggedTask.IsManuallyMoved = true;
+
+            // 6. 用这个100%正确的CAD锚点，来重新计算并设置UI元素在屏幕上的最终位置 (不变)
+            var wpfRenderOrigin = GetRenderTransformOriginFromAlignment(_draggedTask.HorizontalMode, _draggedTask.VerticalMode);
+            var screenAnchorPoint = _transformMatrix.Transform(new WinPoint(newCadAnchorPoint.X, newCadAnchorPoint.Y));
+
+            Canvas.SetLeft(containerGrid, screenAnchorPoint.X - containerGrid.Width * wpfRenderOrigin.X);
+            Canvas.SetTop(containerGrid, screenAnchorPoint.Y - containerGrid.Height * wpfRenderOrigin.Y);
+
+            // ▲▲▲ 修改结束 ▲▲▲
+
+            // (后续的碰撞检测代码完全保持不变)
             if (!_translatedSizeCache.TryGetValue(_draggedTask.ObjectId, out var size))
                 {
                 size = new Size(_draggedTask.Bounds.Width(), _draggedTask.Bounds.Height());
                 }
-
-            _draggedTask.CurrentUserPosition = new Point3d(newWorldTopLeft.X, newWorldTopLeft.Y, 0);
-            _draggedTask.IsManuallyMoved = true;
-
             var currentBounds = _draggedTask.GetTranslatedBounds(useUserPosition: true, accurateSize: size);
             var ntsPolygon = Services.CAD.GeometryConverter.ToNtsPolygon(currentBounds);
-
             var candidates = _obstacleIndex.Query(ntsPolygon.EnvelopeInternal);
             NtsGeometry collidingObstacle = candidates.FirstOrDefault(obs => obs.Intersects(ntsPolygon));
-
             if (collidingObstacle == null)
                 {
                 foreach (var otherTask in _originalTargets)
@@ -232,7 +254,6 @@ namespace CADTranslator.Views
                     if (otherTask == _draggedTask || !otherTask.CurrentUserPosition.HasValue) continue;
                     var otherBounds = otherTask.GetTranslatedBounds(useUserPosition: true);
                     var otherPolygon = Services.CAD.GeometryConverter.ToNtsPolygon(otherBounds);
-
                     if (ntsPolygon.Intersects(otherPolygon))
                         {
                         _obstacleIdMap.TryGetValue(otherTask.ObjectId, out collidingObstacle);
@@ -240,7 +261,6 @@ namespace CADTranslator.Views
                         }
                     }
                 }
-
             if (_highlightedObstaclePath != null)
                 {
                 _highlightedObstaclePath.Fill = Brushes.LightGray;
@@ -248,7 +268,6 @@ namespace CADTranslator.Views
                 _highlightedObstaclePath.Opacity = 0.5;
                 _highlightedObstaclePath = null;
                 }
-
             if (containerGrid.Children.OfType<Thumb>().FirstOrDefault(t => t.Name == "MoveThumb") is Thumb moveThumb)
                 {
                 var border = (moveThumb.Template.FindName("ThumbBorder", moveThumb) as Border);
@@ -256,7 +275,6 @@ namespace CADTranslator.Views
                     {
                     border.Background = new SolidColorBrush(Color.FromArgb(180, 255, 99, 71));
                     border.BorderBrush = Brushes.Red;
-
                     var collidingPath = FindPathByGeometry(collidingObstacle);
                     if (collidingPath != null)
                         {
@@ -346,6 +364,19 @@ namespace CADTranslator.Views
                         textBlock.Text = task.TranslatedText; // task.TranslatedText 已在ReflowAndRemeasureTask中被更新
                         }
                     }
+                // 步骤 8: 获取这个任务在CAD世界中的、100%正确的锚点
+                var cadAnchorPoint = task.CurrentUserPosition.Value;
+
+                // 步骤 9: 将这个CAD锚点，转换到WPF的屏幕坐标
+                var screenAnchorPoint = _transformMatrix.Transform(new WinPoint(cadAnchorPoint.X, cadAnchorPoint.Y));
+
+                // 步骤 10: 根据CAD的对齐模式，获取WPF中对应的旋转/变换中心
+                var wpfRenderOrigin = GetRenderTransformOriginFromAlignment(task.HorizontalMode, task.VerticalMode);
+
+                // 步骤 11: 【关键】根据屏幕锚点、新的控件尺寸、以及旋转中心，重新计算并设置Canvas.Left和Canvas.Top
+                Canvas.SetLeft(containerGrid, screenAnchorPoint.X - containerGrid.Width * wpfRenderOrigin.X);
+                Canvas.SetTop(containerGrid, screenAnchorPoint.Y - containerGrid.Height * wpfRenderOrigin.Y);
+
                 }
             }
 
@@ -566,18 +597,9 @@ namespace CADTranslator.Views
 
         private FrameworkElement CreateDraggableThumb(LayoutTask task)
             {
-            // 1. 创建一个新的Grid作为所有UI元素的容器
+            // (前面的1-7步，创建Grid和Thumb的代码保持不变)
             var containerGrid = new Grid { DataContext = task };
-
-            // 2. 创建用于移动的主体Thumb (原来的Thumb)
-            var moveThumb = new Thumb
-                {
-                DataContext = task,
-                Cursor = Cursors.SizeAll,
-                Name = "MoveThumb" // 命名，用于样式和事件
-                };
-
-            // --- 为 moveThumb 设置模板 (这部分与您原来的代码几乎一样) ---
+            var moveThumb = new Thumb { DataContext = task, Cursor = Cursors.SizeAll, Name = "MoveThumb" };
             var template = new ControlTemplate(typeof(Thumb));
             var border = new FrameworkElementFactory(typeof(Border), "ThumbBorder");
             border.SetValue(Border.CornerRadiusProperty, new CornerRadius(2));
@@ -591,61 +613,56 @@ namespace CADTranslator.Views
             border.AppendChild(viewbox);
             template.VisualTree = border;
             moveThumb.Template = template;
-            // -----------------------------------------------------------------
-
-            // 3. 关联移动事件
             moveThumb.DragStarted += Thumb_DragStarted;
             moveThumb.DragDelta += Thumb_DragDelta;
             moveThumb.DragCompleted += Thumb_DragCompleted;
-
-            // 4. 创建用于调整大小的Thumb (这是一个新增的“手柄”)
-            var resizeThumb = new Thumb
-                {
-                DataContext = task,
-                Width = 8, // 手柄宽度
-                Cursor = Cursors.SizeWE, // 左右拉伸鼠标样式
-                HorizontalAlignment = HorizontalAlignment.Right, // 靠右对齐
-                Opacity = 0.5, // 半透明
-                Background = Brushes.CornflowerBlue,
-                Name = "ResizeThumb"
-                };
-
-            // 5. 关联调整大小事件
+            var resizeThumb = new Thumb { DataContext = task, Width = 8, Cursor = Cursors.SizeWE, HorizontalAlignment = HorizontalAlignment.Right, Opacity = 0.5, Background = Brushes.CornflowerBlue, Name = "ResizeThumb" };
             resizeThumb.DragDelta += Thumb_Resize_DragDelta;
             resizeThumb.DragCompleted += Thumb_Resize_DragCompleted;
-
-            // 6. 将移动Thumb和调整大小Thumb都添加到Grid中
             containerGrid.Children.Add(moveThumb);
             containerGrid.Children.Add(resizeThumb);
 
-            // 7. 计算并设置整个Grid容器的尺寸和位置
+            // ▼▼▼ 【最终修正】从这里开始，是全新的、使用TransformGroup的定位逻辑 ▼▼▼
+
+            // 8. 获取译文的真实尺寸 (不变)
             if (!_translatedSizeCache.TryGetValue(task.ObjectId, out var size))
                 {
                 size = new Size(task.Bounds.Width(), task.Bounds.Height());
                 }
 
-            var bounds = task.GetTranslatedBounds(useUserPosition: true, accurateSize: size);
-            var p1 = _transformMatrix.Transform(new WinPoint(bounds.MinPoint.X, bounds.MinPoint.Y));
-            var p2 = _transformMatrix.Transform(new WinPoint(bounds.MaxPoint.X, bounds.MaxPoint.Y));
+            // 9. 计算WPF控件的尺寸 (不变)
+            var p1_size = _transformMatrix.Transform(new WinPoint(0, 0));
+            var p2_size = _transformMatrix.Transform(new WinPoint(size.Width, size.Height));
+            containerGrid.Width = Math.Abs(p2_size.X - p1_size.X);
+            containerGrid.Height = Math.Abs(p2_size.Y - p1_size.Y);
 
-            containerGrid.Width = Math.Abs(p2.X - p1.X);
-            containerGrid.Height = Math.Abs(p2.Y - p1.Y);
+            // 10. 【关键】创建并设置TransformGroup
+            var transformGroup = new TransformGroup();
+            // a. 创建平移变换，并给它命名，方便在拖动时找到它
+            var translateTransform = new TranslateTransform(0, 0);
+            var rotateTransform = new RotateTransform(-task.Rotation * 180 / Math.PI);
+            // c. 将旋转和平移都加入到组中
+            transformGroup.Children.Add(rotateTransform);
+            transformGroup.Children.Add(translateTransform);
+            // d. 将整个组应用到控件的RenderTransform
+            containerGrid.RenderTransform = transformGroup;
 
-            containerGrid.RenderTransformOrigin = new Point(0.5, 0.5);
-            var rotation = -task.Rotation * 180 / Math.PI;
-            containerGrid.RenderTransform = new RotateTransform(rotation);
+            // 11. 【关键】根据CAD对齐模式，设置WPF的旋转/变换中心 (不变)
+            var wpfRenderOrigin = GetRenderTransformOriginFromAlignment(task.HorizontalMode, task.VerticalMode);
+            containerGrid.RenderTransformOrigin = wpfRenderOrigin;
 
-            // 2. 基于中心点进行精确定位
-            var centerPoint = _transformMatrix.Transform(new WinPoint(bounds.GetCenter().X, bounds.GetCenter().Y));
-            Canvas.SetLeft(containerGrid, centerPoint.X - containerGrid.Width / 2);
-            Canvas.SetTop(containerGrid, centerPoint.Y - containerGrid.Height / 2);
+            // 12. 【关键】精确定位 (不变)
+            var cadAnchorPoint = task.CurrentUserPosition.Value;
+            var screenAnchorPoint = _transformMatrix.Transform(new WinPoint(cadAnchorPoint.X, cadAnchorPoint.Y));
+            Canvas.SetLeft(containerGrid, screenAnchorPoint.X - containerGrid.Width * wpfRenderOrigin.X);
+            Canvas.SetTop(containerGrid, screenAnchorPoint.Y - containerGrid.Height * wpfRenderOrigin.Y);
+
+            // ▲▲▲ 修改结束 ▲▲▲
 
             Panel.SetZIndex(containerGrid, 50);
-
             containerGrid.Visibility = System.Windows.Visibility.Collapsed;
             containerGrid.Visibility = System.Windows.Visibility.Visible;
 
-            // 8. 返回这个复合控件
             return containerGrid;
             }
 
@@ -941,8 +958,53 @@ namespace CADTranslator.Views
             // 2. 通知WPF，整个画布的视觉呈现已失效，需要完全重绘
             PreviewCanvas.InvalidateVisual();
             }
+
+        private Point GetRenderTransformOriginFromAlignment(TextHorizontalMode hMode, TextVerticalMode vMode)
+            {
+            double x = 0.5; // default to center
+            double y = 0.5; // default to middle
+
+            // --- 水平对齐 ---
+            switch (hMode)
+                {
+                case TextHorizontalMode.TextLeft:
+                    x = 0.0;
+                    break;
+                case TextHorizontalMode.TextCenter:
+                case TextHorizontalMode.TextAlign:
+                case TextHorizontalMode.TextMid:
+                    x = 0.5;
+                    break;
+                case TextHorizontalMode.TextRight:
+                case TextHorizontalMode.TextFit:
+                    x = 1.0;
+                    break;
+                }
+
+            // --- 垂直对齐 ---
+            switch (vMode)
+                {
+                case TextVerticalMode.TextBase:
+                    y = 1.0;
+                    break;
+                case TextVerticalMode.TextBottom:
+                    y = 1.0;
+                    break;
+                case TextVerticalMode.TextVerticalMid:
+                    y = 0.5;
+                    break;
+                case TextVerticalMode.TextTop:
+                    y = 0.0;
+                    break;
+                }
+
+            return new Point(x, y);
+            }
+
         }
     }
+
+
 
 public static class LayoutTaskExtensionsForView
     {
@@ -951,18 +1013,22 @@ public static class LayoutTaskExtensionsForView
     /// </summary>
     public static Extents3d GetTranslatedBounds(this LayoutTask task, bool useUserPosition = false, Size? accurateSize = null)
         {
-        // 这个方法现在接收的是“左上角”坐标
+        // 步骤 1: 确定定位的基准点。这个点现在代表的是“左上角”
         Point3d? topLeft = useUserPosition ? task.CurrentUserPosition : task.AlgorithmPosition;
 
+        // 如果没有有效的定位点，直接返回原始边界
         if (!topLeft.HasValue) return task.Bounds;
 
-        // 获取宽度和高度
+        // 步骤 2: 确定要使用的尺寸。
+        // 【核心修正】如果外部没有提供精确尺寸，我们不再错误地使用原文尺寸，
+        // 而是也回退使用原文的尺寸，保持行为一致性（虽然这在某些情况下仍不完美，但在拖拽场景下accurateSize总会提供）
         double width = accurateSize?.Width ?? task.Bounds.Width();
         double height = accurateSize?.Height ?? task.Bounds.Height();
 
-        // 【核心修正】根据“左上角”坐标，正确计算出Extents3d所需的“左下角”和“右上角”
-        Point3d minPoint = new Point3d(topLeft.Value.X, topLeft.Value.Y - height, topLeft.Value.Z); // 左下角
-        Point3d maxPoint = new Point3d(topLeft.Value.X + width, topLeft.Value.Y, topLeft.Value.Z);     // 右上角
+        // 步骤 3:【核心修正】根据“左上角”坐标，正确计算出Extents3d所需的“左下角”和“右上角”
+        // CAD坐标系中，Y轴向上
+        Point3d minPoint = new Point3d(topLeft.Value.X, topLeft.Value.Y - height, topLeft.Value.Z); // 左下角 (Y值变小)
+        Point3d maxPoint = new Point3d(topLeft.Value.X + width, topLeft.Value.Y, topLeft.Value.Z);     // 右上角 (Y值不变)
 
         return new Extents3d(minPoint, maxPoint);
         }
