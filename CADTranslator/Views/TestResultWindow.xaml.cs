@@ -52,6 +52,7 @@ namespace CADTranslator.Views
         private bool _isDrawing = false;
         private LayoutTask _draggedTask = null;
         private Path _highlightedObstaclePath = null;
+        private readonly List<Path> _highlightedObstaclePaths = new List<Path>();
         private WinPoint _lastMousePosition;
         private Matrix _canvasMatrix;
         private bool _isLoaded = false;
@@ -185,13 +186,17 @@ namespace CADTranslator.Views
                 if (VisualTreeHelper.GetParent(thumb) is Grid containerGrid)
                     {
                     _draggedTask = containerGrid.DataContext as LayoutTask;
+                    var a = Canvas.GetLeft(containerGrid);
+                    var b = Canvas.GetTop(containerGrid);
                     }
 
                 if (_draggedTask == null) return;
 
                 // 【核心修正】记录拖动开始时的初始状态
-                _initialMousePosition = Mouse.GetPosition(this); // 记录鼠标相对于整个窗口的初始位置
-                _initialCadAnchorPoint = _draggedTask.CurrentUserPosition.Value; // 记录控件的初始CAD锚点
+                // 1. 记录鼠标相对于整个窗口的初始位置
+                _initialMousePosition = Mouse.GetPosition(this);
+                // 2. 记录控件的初始CAD锚点 (这是我们的“几何真理”)
+                _initialCadAnchorPoint = _draggedTask.CurrentUserPosition.Value;
 
                 ReportListView.SelectedItem = _draggedTask;
                 thumb.CaptureMouse();
@@ -203,94 +208,91 @@ namespace CADTranslator.Views
             }
 
         private void Thumb_DragDelta(object sender, DragDeltaEventArgs e)
-            {
+        {
             if (_draggedTask == null) return;
             var containerGrid = FindUIElementByTask(_draggedTask, isThumb: true) as Grid;
             if (containerGrid == null) return;
 
-            // ▼▼▼ 【最终修正】修正类型不匹配的编译错误 ▼▼▼
-
-            // 1. 获取鼠标在屏幕上的当前绝对位置 (不变)
+            // (步骤 1-5: 定位逻辑保持我们之前修复好的状态，完全不变)
             var currentMousePosition = Mouse.GetPosition(this);
-
-            // 2. 计算总的屏幕位移向量 (不变)
             var screenDelta = Point.Subtract(currentMousePosition, _initialMousePosition);
-
-            // 3. 将屏幕位移向量，反向变换回CAD世界坐标系下的位移向量 (不变)
             var inverseTransform = _transformMatrix;
             inverseTransform.Invert();
             var cadDeltaWpf = inverseTransform.Transform(new Vector(screenDelta.X, screenDelta.Y));
-
-            // 4. 【关键修正】将WPF的Vector类型，转换为AutoCAD的Vector3d类型
             var cadDelta = new Vector3d(cadDeltaWpf.X, cadDeltaWpf.Y, 0);
-
-            // 5. 【关键】现在，我们可以安全地将 Point3d 和 Vector3d 相加了
             var newCadAnchorPoint = _initialCadAnchorPoint + cadDelta;
             _draggedTask.CurrentUserPosition = newCadAnchorPoint;
             _draggedTask.IsManuallyMoved = true;
+            var cadTopLeft = GetCadTopLeftFromCurrentUserPosition(_draggedTask);
+            var screenTopLeft = _transformMatrix.Transform(new WinPoint(cadTopLeft.X, cadTopLeft.Y));
+            Canvas.SetLeft(containerGrid, screenTopLeft.X);
+            Canvas.SetTop(containerGrid, screenTopLeft.Y);
 
-            // 6. 用这个100%正确的CAD锚点，来重新计算并设置UI元素在屏幕上的最终位置 (不变)
-            var wpfRenderOrigin = GetRenderTransformOriginFromAlignment(_draggedTask.HorizontalMode, _draggedTask.VerticalMode);
-            var screenAnchorPoint = _transformMatrix.Transform(new WinPoint(newCadAnchorPoint.X, newCadAnchorPoint.Y));
-
-            Canvas.SetLeft(containerGrid, screenAnchorPoint.X - containerGrid.Width * wpfRenderOrigin.X);
-            Canvas.SetTop(containerGrid, screenAnchorPoint.Y - containerGrid.Height * wpfRenderOrigin.Y);
-
-            // ▲▲▲ 修改结束 ▲▲▲
-
-            // (后续的碰撞检测代码完全保持不变)
+            // (步骤 6: 碰撞检测的核心逻辑保持不变)
             if (!_translatedSizeCache.TryGetValue(_draggedTask.ObjectId, out var size))
-                {
+            {
                 size = new Size(_draggedTask.Bounds.Width(), _draggedTask.Bounds.Height());
-                }
+            }
             var currentBounds = _draggedTask.GetTranslatedBounds(useUserPosition: true, accurateSize: size);
             var ntsPolygon = Services.CAD.GeometryConverter.ToNtsPolygon(currentBounds);
             var candidates = _obstacleIndex.Query(ntsPolygon.EnvelopeInternal);
-            NtsGeometry collidingObstacle = candidates.FirstOrDefault(obs => obs.Intersects(ntsPolygon));
-            if (collidingObstacle == null)
+
+            var collidingGeometries = candidates.Where(obs => obs.Intersects(ntsPolygon)).ToList();
+            foreach (var otherTask in _originalTargets)
+            {
+                if (otherTask == _draggedTask || !otherTask.CurrentUserPosition.HasValue) continue;
+                var otherBounds = otherTask.GetTranslatedBounds(useUserPosition: true);
+                var otherPolygon = Services.CAD.GeometryConverter.ToNtsPolygon(otherBounds);
+                if (ntsPolygon.Intersects(otherPolygon))
                 {
-                foreach (var otherTask in _originalTargets)
+                    if (_obstacleIdMap.TryGetValue(otherTask.ObjectId, out var collidingGeom))
                     {
-                    if (otherTask == _draggedTask || !otherTask.CurrentUserPosition.HasValue) continue;
-                    var otherBounds = otherTask.GetTranslatedBounds(useUserPosition: true);
-                    var otherPolygon = Services.CAD.GeometryConverter.ToNtsPolygon(otherBounds);
-                    if (ntsPolygon.Intersects(otherPolygon))
-                        {
-                        _obstacleIdMap.TryGetValue(otherTask.ObjectId, out collidingObstacle);
-                        break;
-                        }
-                    }
-                }
-            if (_highlightedObstaclePath != null)
-                {
-                _highlightedObstaclePath.Fill = Brushes.LightGray;
-                _highlightedObstaclePath.Stroke = Brushes.DarkGray;
-                _highlightedObstaclePath.Opacity = 0.5;
-                _highlightedObstaclePath = null;
-                }
-            if (containerGrid.Children.OfType<Thumb>().FirstOrDefault(t => t.Name == "MoveThumb") is Thumb moveThumb)
-                {
-                var border = (moveThumb.Template.FindName("ThumbBorder", moveThumb) as Border);
-                if (collidingObstacle != null)
-                    {
-                    border.Background = new SolidColorBrush(Color.FromArgb(180, 255, 99, 71));
-                    border.BorderBrush = Brushes.Red;
-                    var collidingPath = FindPathByGeometry(collidingObstacle);
-                    if (collidingPath != null)
-                        {
-                        collidingPath.Fill = new SolidColorBrush(Color.FromArgb(180, 255, 99, 71));
-                        collidingPath.Stroke = Brushes.Red;
-                        collidingPath.Opacity = 1.0;
-                        _highlightedObstaclePath = collidingPath;
-                        }
-                    }
-                else
-                    {
-                    border.Background = new SolidColorBrush(Color.FromArgb(180, 147, 112, 219));
-                    border.BorderBrush = Brushes.DarkViolet;
+                        collidingGeometries.Add(collidingGeom);
                     }
                 }
             }
+
+            // 【核心修正 #1】先将上一帧所有高亮的对象，根据我们的“记账本”恢复原色
+            foreach (var path in _highlightedObstaclePaths)
+            {
+                path.Fill = Brushes.LightGray;
+                path.Stroke = Brushes.DarkGray;
+                path.Opacity = 0.5;
+            }
+            // 清空“记账本”，为本轮高亮做准备
+            _highlightedObstaclePaths.Clear();
+
+            // 【核心修正 #2】根据本次的碰撞结果，决定是高亮新的碰撞体还是设置默认颜色
+            if (containerGrid.Children.OfType<Thumb>().FirstOrDefault(t => t.Name == "MoveThumb") is Thumb moveThumb)
+            {
+                var border = (moveThumb.Template.FindName("ThumbBorder", moveThumb) as Border);
+                if (collidingGeometries.Any())
+                {
+                    border.Background = new SolidColorBrush(Color.FromArgb(180, 255, 99, 71));
+                    border.BorderBrush = Brushes.Red;
+
+                    // 遍历所有新碰撞的几何体
+                    foreach (var collidingGeom in collidingGeometries)
+                    {
+                        var collidingPath = FindPathByGeometry(collidingGeom);
+                        if (collidingPath != null)
+                        {
+                            // 标红
+                            collidingPath.Fill = new SolidColorBrush(Color.FromArgb(180, 255, 99, 71));
+                            collidingPath.Stroke = Brushes.Red;
+                            collidingPath.Opacity = 1.0;
+                            // 【核心修正 #3】将标红的对象加入到我们的“记账本”中
+                            _highlightedObstaclePaths.Add(collidingPath);
+                        }
+                    }
+                }
+                else
+                {
+                    border.Background = new SolidColorBrush(Color.FromArgb(180, 147, 112, 219));
+                    border.BorderBrush = Brushes.DarkViolet;
+                }
+            }
+        }
 
         private void Thumb_DragCompleted(object sender, DragCompletedEventArgs e)
             {
@@ -330,41 +332,27 @@ namespace CADTranslator.Views
             {
             if (sender is Thumb resizeThumb && VisualTreeHelper.GetParent(resizeThumb) is Grid containerGrid && containerGrid.DataContext is LayoutTask task)
                 {
-                // 步骤 1: 【新增】在所有计算开始前，先“记住”当前控件视觉左上角的CAD世界坐标
-                var currentCadTopLeft = GetCadTopLeftFromCurrentUserPosition(task);
-
-                // 步骤 2: 获取最终的WPF像素宽度 (逻辑不变)
+                // 步骤 1 & 2: 获取新的CAD宽度 (逻辑不变)
                 double finalWpfWidth = containerGrid.Width;
-
-                // 步骤 3: 将WPF宽度转换为CAD世界单位下的宽度 (逻辑不变)
                 var inverseTransform = _transformMatrix;
                 inverseTransform.Invert();
                 var cadWidthVector = inverseTransform.Transform(new Vector(finalWpfWidth, 0));
                 double newMaxWidthInCadUnits = cadWidthVector.Length;
 
-                // 步骤 4: 使用CAD单位宽度，进行文本重排和精确尺寸测量 (逻辑不变)
+                // 步骤 3 & 4: 重新计算文本换行和精确尺寸 (逻辑不变)
                 ReflowAndRemeasureTask(task, newMaxWidthInCadUnits);
-
-                // 步骤 5: 从缓存中获取最新的、精确的CAD尺寸 (逻辑不变)
                 Size newAccurateCadSize = _translatedSizeCache[task.ObjectId];
 
-                // 步骤 6: 【核心】根据“不变的左上角”和“新的尺寸”，反算出正确的几何锚点，并更新它
-                task.CurrentUserPosition = GetNewAnchorPointFromTopLeft(
-                    currentCadTopLeft,
-                    newAccurateCadSize, // 传递包含新宽度和高度的完整尺寸
-                    task.HorizontalMode,
-                    task.VerticalMode,
-                    task.Rotation
-                );
-                task.IsManuallyMoved = true; // 标记为手动修改
+                // 步骤 5: 【核心】坚守原则：不修改锚点，只标记状态
+                task.IsManuallyMoved = true;
 
-                // 步骤 7: 使用新的CAD尺寸，更新WPF控件的像素尺寸 (逻辑不变)
+                // 步骤 6: 使用新尺寸更新UI控件的大小 (逻辑不变)
                 double scaleX = _transformMatrix.M11;
                 double scaleY = Math.Abs(_transformMatrix.M22);
                 containerGrid.Width = newAccurateCadSize.Width * scaleX;
                 containerGrid.Height = newAccurateCadSize.Height * scaleY;
 
-                // 步骤 8: 更新文本框中的换行，以匹配最终的计算结果 (逻辑不变)
+                // 步骤 7: 更新UI文本内容 (逻辑不变)
                 if (containerGrid.Children.OfType<Thumb>().FirstOrDefault(t => t.Name == "MoveThumb") is Thumb moveThumb && moveThumb.Template.FindName("ThumbBorder", moveThumb) is Border border)
                     {
                     if (border.Child is Viewbox viewbox && viewbox.Child is TextBlock textBlock)
@@ -373,13 +361,24 @@ namespace CADTranslator.Views
                         }
                     }
 
-                // 步骤 9: 【关键】使用我们刚刚计算出的、100%正确的几何锚点，来重新定位UI控件
-                var cadAnchorPoint = task.CurrentUserPosition.Value;
-                var screenAnchorPoint = _transformMatrix.Transform(new WinPoint(cadAnchorPoint.X, cadAnchorPoint.Y));
+                // 步骤 8: 【最终修正的定位逻辑】
+                // a. 获取那个绝对不变的几何锚点的屏幕坐标
+                var screenAnchorPoint = _transformMatrix.Transform(new WinPoint(task.CurrentUserPosition.Value.X, task.CurrentUserPosition.Value.Y));
+
+                // b. 获取锚点在UI控件内的相对位置 (这个逻辑只对单行正确，但我们只用它来处理第一行)
                 var wpfRenderOrigin = GetRenderTransformOriginFromAlignment(task.HorizontalMode, task.VerticalMode);
 
-                Canvas.SetLeft(containerGrid, screenAnchorPoint.X - containerGrid.Width * wpfRenderOrigin.X);
-                Canvas.SetTop(containerGrid, screenAnchorPoint.Y - containerGrid.Height * wpfRenderOrigin.Y);
+                // c. 【关键】计算出第一行文字的高度在屏幕上的像素值
+                double firstLineHeightInPixels = task.Height * scaleY;
+
+                // d. 计算出UI控件的视觉顶部Y坐标。
+                //    这个公式的意义是：从锚点的屏幕Y坐标开始，减去它在第一行内部的相对偏移量。
+                //    这样无论总高度如何变化，这个“顶部”的计算结果都是恒定的！
+                double newCanvasTop = screenAnchorPoint.Y - (firstLineHeightInPixels * wpfRenderOrigin.Y);
+
+                // e. 使用计算出的正确坐标来定位控件
+                Canvas.SetLeft(containerGrid, screenAnchorPoint.X - containerGrid.Width * wpfRenderOrigin.X); // X轴定位不变
+                Canvas.SetTop(containerGrid, newCanvasTop);
                 }
             }
 
@@ -600,7 +599,7 @@ namespace CADTranslator.Views
 
         private FrameworkElement CreateDraggableThumb(LayoutTask task)
             {
-            // (前面的1-7步，创建Grid和Thumb的代码保持不变)
+            // (创建Grid和Thumb的代码保持不变)
             var containerGrid = new Grid { DataContext = task };
             var moveThumb = new Thumb { DataContext = task, Cursor = Cursors.SizeAll, Name = "MoveThumb" };
             var template = new ControlTemplate(typeof(Thumb));
@@ -625,42 +624,32 @@ namespace CADTranslator.Views
             containerGrid.Children.Add(moveThumb);
             containerGrid.Children.Add(resizeThumb);
 
-            // ▼▼▼ 【最终修正】从这里开始，是全新的、使用TransformGroup的定位逻辑 ▼▼▼
-
-            // 8. 获取译文的真实尺寸 (不变)
+            // 步骤 8: 获取译文的真实尺寸
             if (!_translatedSizeCache.TryGetValue(task.ObjectId, out var size))
                 {
                 size = new Size(task.Bounds.Width(), task.Bounds.Height());
                 }
 
-            // 9. 计算WPF控件的尺寸 (不变)
+            // 步骤 9: 计算WPF控件的尺寸
             var p1_size = _transformMatrix.Transform(new WinPoint(0, 0));
             var p2_size = _transformMatrix.Transform(new WinPoint(size.Width, size.Height));
             containerGrid.Width = Math.Abs(p2_size.X - p1_size.X);
             containerGrid.Height = Math.Abs(p2_size.Y - p1_size.Y);
 
-            // 10. 【关键】创建并设置TransformGroup
-            var transformGroup = new TransformGroup();
-            // a. 创建平移变换，并给它命名，方便在拖动时找到它
-            var translateTransform = new TranslateTransform(0, 0);
-            var rotateTransform = new RotateTransform(-task.Rotation * 180 / Math.PI);
-            // c. 将旋转和平移都加入到组中
-            transformGroup.Children.Add(rotateTransform);
-            transformGroup.Children.Add(translateTransform);
-            // d. 将整个组应用到控件的RenderTransform
-            containerGrid.RenderTransform = transformGroup;
+            // 步骤 10: 【最终修正的定位逻辑】
+            // a. 应用旋转变换。旋转中心总是几何中心，这与定位无关，只负责“姿态”。
+            containerGrid.RenderTransform = new RotateTransform(-task.Rotation * 180 / Math.PI);
+            containerGrid.RenderTransformOrigin = new Point(0.5, 0.5);
 
-            // 11. 【关键】根据CAD对齐模式，设置WPF的旋转/变换中心 (不变)
-            var wpfRenderOrigin = GetRenderTransformOriginFromAlignment(task.HorizontalMode, task.VerticalMode);
-            containerGrid.RenderTransformOrigin = wpfRenderOrigin;
+            // b. 根据固定的锚点和当前尺寸，计算出视觉左上角的精确CAD坐标
+            var cadTopLeft = GetCadTopLeftFromCurrentUserPosition(task);
 
-            // 12. 【关键】精确定位 (不变)
-            var cadAnchorPoint = task.CurrentUserPosition.Value;
-            var screenAnchorPoint = _transformMatrix.Transform(new WinPoint(cadAnchorPoint.X, cadAnchorPoint.Y));
-            Canvas.SetLeft(containerGrid, screenAnchorPoint.X - containerGrid.Width * wpfRenderOrigin.X);
-            Canvas.SetTop(containerGrid, screenAnchorPoint.Y - containerGrid.Height * wpfRenderOrigin.Y);
+            // c. 将这个CAD坐标转换为屏幕像素坐标
+            var screenTopLeft = _transformMatrix.Transform(new WinPoint(cadTopLeft.X, cadTopLeft.Y));
 
-            // ▲▲▲ 修改结束 ▲▲▲
+            // d. 直接将UI控件的左上角“钉”在这个精确的位置上
+            Canvas.SetLeft(containerGrid, screenTopLeft.X);
+            Canvas.SetTop(containerGrid, screenTopLeft.Y);
 
             Panel.SetZIndex(containerGrid, 50);
             containerGrid.Visibility = System.Windows.Visibility.Collapsed;
@@ -1006,24 +995,24 @@ namespace CADTranslator.Views
         /// <summary>
         /// 【新增的辅助方法】根据当前的几何锚点、尺寸和对齐方式，计算出文本框视觉左上角的CAD世界坐标。
         /// </summary>
-        /// <summary>
-        /// 【新增的辅助方法】根据当前的几何锚点、尺寸和对齐方式，计算出文本框视觉左上角的CAD世界坐标。
-        /// </summary>
+        /// 
         private Point3d GetCadTopLeftFromCurrentUserPosition(LayoutTask task)
             {
             var anchor = task.CurrentUserPosition.Value;
-            // 【修正】确保使用最新的精确尺寸
             if (!_translatedSizeCache.TryGetValue(task.ObjectId, out var size))
                 {
                 size = new Size(task.Bounds.Width(), task.Bounds.Height());
                 }
+
+            // 使用整个文本块的最大宽度来计算水平偏移
             double width = size.Width;
-            double height = size.Height;
+            // 【核心修正】只使用第一行文字的固定高度来计算垂直偏移
+            double firstLineHeight = task.Height;
 
             double offsetX = 0;
             double offsetY = 0;
 
-            // --- 水平偏移 ---
+            // --- 水平偏移 (逻辑不变) ---
             switch (task.HorizontalMode)
                 {
                 case TextHorizontalMode.TextCenter:
@@ -1037,16 +1026,17 @@ namespace CADTranslator.Views
                     break;
                 }
 
-            // --- 垂直偏移 ---
+            // --- 垂直偏移 (使用正确的高度) ---
             switch (task.VerticalMode)
                 {
                 case TextVerticalMode.TextBase:
                 case TextVerticalMode.TextBottom:
-                    offsetY = height;
+                    offsetY = firstLineHeight; // 从第一行底部到顶部，偏移一个行高
                     break;
                 case TextVerticalMode.TextVerticalMid:
-                    offsetY = height / 2.0;
+                    offsetY = firstLineHeight / 2.0; // 从第一行中心到顶部，偏移半个行高
                     break;
+                    // 如果是顶部对齐(TextTop)，则无需垂直偏移，offsetY保持为0
                 }
 
             var offsetVector = new Vector3d(offsetX, offsetY, 0);
@@ -1102,7 +1092,6 @@ namespace CADTranslator.Views
             return topLeft - rotatedOffset;
             }
 
-
         }
 
     }
@@ -1114,23 +1103,69 @@ public static class LayoutTaskExtensionsForView
     /// </summary>
     public static Extents3d GetTranslatedBounds(this LayoutTask task, bool useUserPosition = false, Size? accurateSize = null)
         {
-        // 步骤 1: 确定定位的基准点。这个点现在代表的是“左上角”
-        Point3d? topLeft = useUserPosition ? task.CurrentUserPosition : task.AlgorithmPosition;
+        // 步骤 1: 获取正确的几何锚点。
+        Point3d? anchorPoint = useUserPosition ? task.CurrentUserPosition : task.AlgorithmPosition;
+        if (!anchorPoint.HasValue)
+            {
+            return task.Bounds;
+            }
 
-        // 如果没有有效的定位点，直接返回原始边界
-        if (!topLeft.HasValue) return task.Bounds;
-
-        // 步骤 2: 确定要使用的尺寸。
-        // 【核心修正】如果外部没有提供精确尺寸，我们不再错误地使用原文尺寸，
-        // 而是也回退使用原文的尺寸，保持行为一致性（虽然这在某些情况下仍不完美，但在拖拽场景下accurateSize总会提供）
+        // 步骤 2: 确定正确的尺寸。
         double width = accurateSize?.Width ?? task.Bounds.Width();
-        double height = accurateSize?.Height ?? task.Bounds.Height();
+        double height = accurateSize?.Height ?? task.Bounds.Height(); // 这是整个多行文本框的总高度
+        double firstLineHeight = task.Height; // 这是第一行文字的固定高度
 
-        // 步骤 3:【核心修正】根据“左上角”坐标，正确计算出Extents3d所需的“左下角”和“右上角”
-        // CAD坐标系中，Y轴向上
-        Point3d minPoint = new Point3d(topLeft.Value.X, topLeft.Value.Y - height, topLeft.Value.Z); // 左下角 (Y值变小)
-        Point3d maxPoint = new Point3d(topLeft.Value.X + width, topLeft.Value.Y, topLeft.Value.Z);     // 右上角 (Y值不变)
+        // 步骤 3: 【核心】精确计算从“几何锚点”到“视觉左上角”的偏移量。
+        //         此逻辑与我们之前验证过的 GetCadTopLeftFromCurrentUserPosition 方法完全一致。
+        double offsetX = 0;
+        double offsetY = 0;
 
-        return new Extents3d(minPoint, maxPoint);
+        // 根据总宽度计算水平偏移
+        switch (task.HorizontalMode)
+            {
+            case TextHorizontalMode.TextCenter:
+            case TextHorizontalMode.TextAlign:
+            case TextHorizontalMode.TextMid:
+                offsetX = -width / 2.0;
+                break;
+            case TextHorizontalMode.TextRight:
+            case TextHorizontalMode.TextFit:
+                offsetX = -width;
+                break;
+            }
+
+        // 【关键】根据第一行的高度计算垂直偏移
+        switch (task.VerticalMode)
+            {
+            case TextVerticalMode.TextBase:
+            case TextVerticalMode.TextBottom:
+                offsetY = firstLineHeight;
+                break;
+            case TextVerticalMode.TextVerticalMid:
+                offsetY = firstLineHeight / 2.0;
+                break;
+            }
+
+        var offsetVector = new Vector3d(offsetX, offsetY, 0);
+        // 将偏移向量旋转到与文字相同的角度
+        var rotatedOffset = offsetVector.TransformBy(Matrix3d.Rotation(task.Rotation, Vector3d.ZAxis, Point3d.Origin));
+
+        // 步骤 4: 计算出100%正确的“视觉左上角”的CAD坐标。
+        Point3d topLeft = anchorPoint.Value + rotatedOffset;
+
+        // 步骤 5: 根据正确的左上角和总尺寸，创建最终的、与视觉匹配的碰撞检测框。
+        //         为了生成一个Extents3d（轴对齐边界框），我们需要计算旋转后矩形的四个角点。
+        var topRight = topLeft + new Vector3d(width, 0, 0).TransformBy(Matrix3d.Rotation(task.Rotation, Vector3d.ZAxis, Point3d.Origin));
+        var bottomLeft = topLeft + new Vector3d(0, -height, 0).TransformBy(Matrix3d.Rotation(task.Rotation, Vector3d.ZAxis, Point3d.Origin));
+        var bottomRight = topRight + (bottomLeft - topLeft);
+
+        // Extents3d 会自动计算能包围这四个角点的、最小的、没有旋转的矩形。
+        var bounds = new Extents3d();
+        bounds.AddPoint(topLeft);
+        bounds.AddPoint(topRight);
+        bounds.AddPoint(bottomLeft);
+        bounds.AddPoint(bottomRight);
+
+        return bounds;
         }
     }
